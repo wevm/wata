@@ -11,6 +11,11 @@
 - **`.js` extensions** — all imports include `.js` for ESM compatibility.
 - **Classes for errors only** — all other APIs use factory functions.
 - **Errors live next to the code that throws them** — `core/Errors.ts` only carries genuinely cross-cutting errors (`BaseError`, `ProtocolError`). Module-specific failure classes (e.g. `Aead.OpenError`, `Rpc.RpcError`, `Transport.ClosedError` / `TransportError` / `UnsupportedError`) live inside the module that owns the failure mode. Place each error class **at the bottom of the module** so the public functions and types are what the reader sees first. Set `name` to the namespaced form (`'Aead.OpenError'`, `'Transport.ClosedError'`, …) so stack traces and `instanceof`-by-name parity reads naturally.
+- **Zod schemas live in a `schema` namespace per module** — when a module owns runtime Zod definitions (e.g. wire formats, discovery documents, JSON-RPC envelopes), expose them as `export namespace schema { ... }` inside that module. Sibling members can reference each other by bare name; consumers reach them via `Module.schema.foo` (e.g. `Envelope.schema.envelope`, `Rpc.schema.request`, `Discovery.schema.hostDocument`). Keeps schema bundles co-located with the parsers/constructors that depend on them and avoids inventing a separate `*.schema.ts` file per module.
+- **Zod 4 idioms** — use the modern top-level / native forms instead of the deprecated `.method()` chains:
+  - URLs: `z.url({ protocol: /^https$/ })` (not `z.string().url()`).
+  - Hex strings: `z.templateLiteral(['0x', z.string().regex(/^([0-9a-fA-F]{2})*$/)])` (not `z.custom<\`0x${string}\`>` or `z.string().regex(...)`). `templateLiteral` natively infers `` `0x${string}` `` (= `Hex.Hex`), composes with other schemas, and feeds the standard validation pipeline. Reach for `z.custom` only when Zod can't express the type.
+  - Other top-level helpers: `z.email()`, `z.uuid()`, etc. over their `z.string().*` counterparts.
 - **No enums** — use `as const` objects for fixed sets.
 - **`const` generic modifier** — use to preserve literal types for full inference.
 - **camelCase generics** — `<const args extends z.ZodObject<any>>` not `<T>`.
