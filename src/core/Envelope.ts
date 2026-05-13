@@ -14,37 +14,46 @@
  * 96-bit nonce values survive `JSON.parse` without precision loss.
  */
 
+import type { Hex } from 'ox'
 import { z } from 'zod'
 import { ProtocolError } from './Errors.js'
 
-const hexSchema = z.custom<`0x${string}`>(
-  (value) => typeof value === 'string' && /^0x[0-9a-fA-F]*$/.test(value),
-  { message: 'expected 0x-prefixed hex' },
-)
+/** Zod schemas for the on-the-wire envelope shapes. */
+export namespace schema {
+  /** Hex-encoded byte string (`0x` followed by an even-length run of hex chars). */
+  export const hex = z.templateLiteral(
+    ['0x', z.string().regex(/^([0-9a-fA-F]{2})*$/)],
+    'expected 0x-prefixed even-length hex',
+  )
 
-const counterSchema = z
-  .string()
-  .regex(/^\d+$/, { message: 'counter must be a non-negative decimal string' })
+  /** Decimal-string AEAD counter (preserves 96-bit values across `JSON.parse`). */
+  export const counter = z
+    .string()
+    .regex(/^\d+$/, { message: 'counter must be a non-negative decimal string' })
 
-const plainSchema = z.object({
-  type: z.literal('plain'),
-  payload: z.unknown(),
-})
+  /** Plain (cleartext) envelope variant. */
+  export const plain = z.object({
+    type: z.literal('plain'),
+    payload: z.unknown(),
+  })
 
-const encryptedSchema = z.object({
-  type: z.literal('encrypted'),
-  counter: counterSchema,
-  ciphertext: hexSchema,
-})
+  /** Encrypted envelope variant. */
+  export const encrypted = z.object({
+    type: z.literal('encrypted'),
+    counter,
+    ciphertext: hex,
+  })
 
-const envelopeSchema = z.discriminatedUnion('type', [plainSchema, encryptedSchema])
+  /** Discriminated union of every envelope variant. */
+  export const envelope = z.discriminatedUnion('type', [plain, encrypted])
+}
 
 /**
  * Discriminated union of the two v1 envelope variants. Use {@link plain}
  * and {@link encrypted} to construct values; {@link parse} to validate
  * inbound frames.
  */
-export type Envelope = z.output<typeof envelopeSchema>
+export type Envelope = z.output<typeof schema.envelope>
 
 /** Construct a `plain` envelope around an arbitrary JSON-serializable payload. */
 export function plain(payload: unknown): Extract<Envelope, { type: 'plain' }> {
@@ -69,7 +78,7 @@ export declare namespace encrypted {
     /** Frame counter (matches the AEAD nonce counter). */
     counter: bigint
     /** AEAD ciphertext (with the 16-byte tag appended). */
-    ciphertext: `0x${string}`
+    ciphertext: Hex.Hex
   }
 }
 
@@ -86,7 +95,7 @@ export declare namespace encrypted {
  * ```
  */
 export function parse(value: unknown): Envelope {
-  const result = envelopeSchema.safeParse(value)
+  const result = schema.envelope.safeParse(value)
   if (!result.success)
     throw new ProtocolError('invalid envelope', {
       details: result.error.issues.map((issue) => issue.message).join('; '),
