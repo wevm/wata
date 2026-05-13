@@ -1,0 +1,70 @@
+{
+  "scripts": {
+    "build": "zile",
+    "changeset:publish": "zile publish:prepare && changeset publish && zile publish:post",
+    "changeset:version": "changeset version",
+    "check": "vp lint --fix --ignore-pattern package.json && vp fmt src test",
+    "check:types": "tsc -b",
+    "dev": "zile dev",
+    "test": "vp test",
+    "test:browser": "vp test --project browser",
+    "test:node": "vp test --project node",
+    "vp": "vp"
+  },
+  "devDependencies": {
+    "@changesets/cli": "catalog:",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "playwright": "catalog:",
+    "typescript": "catalog:",
+    "vp": "catalog:",
+    "zile": "catalog:"
+  },
+  "packageManager": "pnpm@11.1.0",
+  "[!start-pkg]": "",
+  "name": "handshakes",
+  "type": "module",
+  "version": "0.0.0",
+  "main": "./dist/index.js",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "dependencies": {
+    "@noble/ciphers": "catalog:",
+    "@noble/hashes": "catalog:",
+    "ox": "catalog:",
+    "rettime": "catalog:",
+    "zod": "catalog:"
+  },
+  "sideEffects": false,
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "react-native": "./dist/index.js",
+      "src": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./host": {
+      "types": "./dist/host/index.d.ts",
+      "react-native": "./dist/host/index.js",
+      "src": "./src/host/index.ts",
+      "default": "./dist/host/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "react-native": "./dist/server/index.js",
+      "src": "./src/server/index.ts",
+      "default": "./dist/server/index.js"
+    },
+    "./shared/loopback": {
+      "types": "./dist/shared/loopback.d.ts",
+      "react-native": "./dist/shared/loopback.js",
+      "src": "./src/shared/loopback.ts",
+      "default": "./dist/shared/loopback.js"
+    }
+  }
+}
