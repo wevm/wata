@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.base.json",
+  "include": [
+    "./**/*",
+    "../src/**/*.test.ts",
+    "../src/**/*.test-d.ts",
+    "../src/**/*.browser.test.ts"
+  ],
+  "compilerOptions": {
+    "moduleResolution": "nodenext",
+    "noEmit": true
+  }
+}

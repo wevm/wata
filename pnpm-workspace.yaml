@@ -1,0 +1,37 @@
+allowBuilds:
+  esbuild: true
+  workerd: true
+
+blockExoticSubdeps: true
+
+catalog:
+  '@changesets/cli': ^2.31.0
+  '@noble/ciphers': ^2.2.0
+  '@noble/hashes': ^2.2.0
+  '@types/node': ^25.6.0
+  '@vitest/coverage-v8': 4.1.5
+  ox: ~0.14.20
+  playwright: ^1.60.0
+  rettime: ^0.11.11
+  typescript: ^5.9.3
+  vp: npm:vite-plus@~0.1.20
+  zile: ^0.0.25
+  zod: ^4.4.3
+
+minimumReleaseAge: 1440
+
+minimumReleaseAgeExclude:
+  - vite-plus
+  - vp
+  - zile
+
+nodeOptions: '--disable-warning=ExperimentalWarning --disable-warning=DeprecationWarning'
+
+packages:
+  - .
+
+shellEmulator: true
+
+strictDepBuilds: true
+
+trustPolicy: no-downgrade
