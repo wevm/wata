@@ -14,7 +14,8 @@
  */
 
 import { z } from 'zod'
-import { ProtocolError } from './Errors.js'
+
+import * as Errors from './Errors.js'
 
 const wellKnownPath = '/.well-known/tempocp'
 
@@ -164,19 +165,19 @@ async function fetchJson(
       ...(options.signal ? { signal: options.signal } : {}),
     })
   } catch (cause) {
-    throw new ProtocolError('discovery fetch failed', {
+    throw new Errors.ProtocolError('discovery fetch failed', {
       details: `${url}: ${(cause as Error).message}`,
       cause: cause as Error,
     })
   }
   if (!response.ok)
-    throw new ProtocolError('discovery fetch returned non-2xx', {
+    throw new Errors.ProtocolError('discovery fetch returned non-2xx', {
       details: `${url}: ${response.status} ${response.statusText}`,
     })
   try {
     return await response.json()
   } catch (cause) {
-    throw new ProtocolError('discovery response is not valid JSON', {
+    throw new Errors.ProtocolError('discovery response is not valid JSON', {
       details: `${url}: ${(cause as Error).message}`,
       cause: cause as Error,
     })
@@ -194,7 +195,7 @@ function assertParse<schema extends z.ZodType>(
 ): z.output<schema> {
   const result = schema.safeParse(value)
   if (!result.success)
-    throw new ProtocolError(`invalid ${label}`, {
+    throw new Errors.ProtocolError(`invalid ${label}`, {
       details: result.error.issues
         .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
         .join('; '),

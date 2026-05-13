@@ -16,7 +16,8 @@
 
 import type { Hex } from 'ox'
 import { z } from 'zod'
-import { ProtocolError } from './Errors.js'
+
+import * as Errors from './Errors.js'
 
 /** Zod schemas for the on-the-wire envelope shapes. */
 export namespace schema {
@@ -84,7 +85,7 @@ export declare namespace encrypted {
 
 /**
  * Validate an inbound JSON value and narrow it to {@link Envelope}. Throws
- * {@link ProtocolError} on shape errors so callers can map straight to a
+ * {@link Errors.ProtocolError} on shape errors so callers can map straight to a
  * protocol-level rejection.
  *
  * @example
@@ -97,7 +98,7 @@ export declare namespace encrypted {
 export function parse(value: unknown): Envelope {
   const result = schema.envelope.safeParse(value)
   if (!result.success)
-    throw new ProtocolError('invalid envelope', {
+    throw new Errors.ProtocolError('invalid envelope', {
       details: result.error.issues.map((issue) => issue.message).join('; '),
     })
   return result.data

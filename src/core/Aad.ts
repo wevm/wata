@@ -22,7 +22,8 @@
  */
 
 import { Bytes, Hex } from 'ox'
-import { ProtocolError } from './Errors.js'
+
+import * as Errors from './Errors.js'
 import * as Nonce from './Nonce.js'
 
 /** Current AAD layout version. Bumped if the bound fields ever change. */
@@ -62,7 +63,7 @@ export type Direction = (typeof direction)[keyof typeof direction]
 export function encode(options: encode.Options): Hex.Hex {
   const sessionId = Bytes.from(options.sessionId)
   if (sessionId.length !== sessionIdSize)
-    throw new ProtocolError('sessionId must be 16 bytes', {
+    throw new Errors.ProtocolError('sessionId must be 16 bytes', {
       details: `received ${sessionId.length} bytes`,
     })
   const out = new Uint8Array(size)
@@ -87,7 +88,7 @@ export declare namespace encode {
 
 /**
  * Parse a 30-byte AAD blob back into its structured fields. Throws
- * {@link ProtocolError} on malformed inputs (wrong length, wrong version,
+ * {@link Errors.ProtocolError} on malformed inputs (wrong length, wrong version,
  * invalid direction byte).
  *
  * @example
@@ -100,17 +101,17 @@ export declare namespace encode {
 export function decode(aad: Hex.Hex | Bytes.Bytes): decode.ReturnType {
   const bytes = Bytes.from(aad)
   if (bytes.length !== size)
-    throw new ProtocolError('aad must be exactly 30 bytes', {
+    throw new Errors.ProtocolError('aad must be exactly 30 bytes', {
       details: `received ${bytes.length} bytes`,
     })
   const versionByte = bytes[0]!
   if (versionByte !== version)
-    throw new ProtocolError('aad version mismatch', {
+    throw new Errors.ProtocolError('aad version mismatch', {
       details: `expected ${version}, received ${versionByte}`,
     })
   const directionByte = bytes[1]!
   if (directionByte !== direction.c2h && directionByte !== direction.h2c)
-    throw new ProtocolError('aad direction byte invalid', {
+    throw new Errors.ProtocolError('aad direction byte invalid', {
       details: `received 0x${directionByte.toString(16).padStart(2, '0')}`,
     })
   return {

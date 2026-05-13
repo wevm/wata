@@ -13,7 +13,8 @@
  */
 
 import { z } from 'zod'
-import { BaseError, ProtocolError } from './Errors.js'
+
+import * as Errors from './Errors.js'
 
 /** JSON-RPC version literal. */
 export const version = '2.0'
@@ -42,10 +43,7 @@ export type Params = readonly unknown[] | Record<string, unknown>
  * const message = Rpc.request({ id: 1, method: 'eth_blockNumber', params: [] })
  * ```
  */
-export type Request<
-  method extends string = string,
-  params extends Params = Params,
-> = {
+export type Request<method extends string = string, params extends Params = Params> = {
   jsonrpc: typeof version
   id: Id
   method: method
@@ -53,10 +51,7 @@ export type Request<
 }
 
 /** A typed JSON-RPC notification (no `id`). */
-export type Notification<
-  method extends string = string,
-  params extends Params = Params,
-> = {
+export type Notification<method extends string = string, params extends Params = Params> = {
   jsonrpc: typeof version
   method: method
   params: params
@@ -84,11 +79,7 @@ export type ErrorResponse<data = unknown> = {
 export type Response<result = unknown, data = unknown> = Success<result> | ErrorResponse<data>
 
 /** Discriminated union of every shape {@link parse} can return. */
-export type Envelope =
-  | Request
-  | Notification
-  | Success
-  | ErrorResponse
+export type Envelope = Request | Notification | Success | ErrorResponse
 
 /**
  * Construct a typed JSON-RPC request.
@@ -173,9 +164,7 @@ export declare namespace success {
  * Rpc.error({ id: 1, code: -32601, message: 'method not found' })
  * ```
  */
-export function error<const data = undefined>(
-  options: error.Options<data>,
-): ErrorResponse<data> {
+export function error<const data = undefined>(options: error.Options<data>): ErrorResponse<data> {
   const { id, code, message, data } = options
   return {
     jsonrpc: version,
@@ -263,8 +252,9 @@ export namespace schema {
  */
 export function parse(value: unknown): Envelope {
   if (typeof value !== 'object' || value === null)
-    throw new ProtocolError('JSON-RPC message must be an object')
-  if ('error' in value) return assertParse(schema.errorResponse, value, 'error response') as ErrorResponse
+    throw new Errors.ProtocolError('JSON-RPC message must be an object')
+  if ('error' in value)
+    return assertParse(schema.errorResponse, value, 'error response') as ErrorResponse
   if ('result' in value) return assertParse(schema.success, value, 'success response') as Success
   if ('id' in value) return assertParse(schema.request, value, 'request') as Request
   return assertParse(schema.notification, value, 'notification') as Notification
@@ -277,8 +267,10 @@ function assertParse<schema extends z.ZodType>(
 ): z.output<schema> {
   const result = schema.safeParse(value)
   if (!result.success)
-    throw new ProtocolError(`invalid ${label}`, {
-      details: result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '),
+    throw new Errors.ProtocolError(`invalid ${label}`, {
+      details: result.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
     })
   return result.data
 }
@@ -288,7 +280,7 @@ function assertParse<schema extends z.ZodType>(
  * mirror the JSON-RPC error object so callers can branch on standard codes
  * (e.g. `-32601` method not found) without parsing the message.
  */
-export class RpcError extends BaseError {
+export class RpcError extends Errors.BaseError {
   override name = 'Rpc.RpcError'
 
   /** JSON-RPC error code (per [JSON-RPC 2.0 §5.1](https://www.jsonrpc.org/specification#error_object)). */
@@ -306,7 +298,7 @@ export class RpcError extends BaseError {
 
 export declare namespace RpcError {
   /** Options for {@link RpcError}. */
-  type Options = BaseError.Options<undefined> & {
+  type Options = Errors.BaseError.Options<undefined> & {
     /** JSON-RPC error code returned by the peer. */
     code: number
     /** JSON-RPC error `data` payload returned by the peer (opaque). */

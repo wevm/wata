@@ -30,6 +30,8 @@ describe('HostDocument', () => {
 describe('ConsumerDocument', () => {
   test('identity_pubkey is hex; callback_urls optional', () => {
     expectTypeOf<Discovery.ConsumerDocument['identity_pubkey']>().toEqualTypeOf<Hex.Hex>()
-    expectTypeOf<Discovery.ConsumerDocument['callback_urls']>().toEqualTypeOf<string[] | undefined>()
+    expectTypeOf<Discovery.ConsumerDocument['callback_urls']>().toEqualTypeOf<
+      string[] | undefined
+    >()
   })
 })

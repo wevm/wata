@@ -23,8 +23,8 @@
  * transport boundary stays stable across schema and protocol revisions.
  */
 
-import type * as Envelope from './Envelope.js'
-import { BaseError } from './Errors.js'
+import * as Envelope from './Envelope.js'
+import * as Errors from './Errors.js'
 
 /** Side of the protocol this transport speaks for. */
 export type Role = 'consumer' | 'host'
@@ -74,7 +74,7 @@ export type Transport<role extends Role = Role> = {
  */
 export class TransportError<
   cause extends Error | undefined = Error | undefined,
-> extends BaseError<cause> {
+> extends Errors.BaseError<cause> {
   override name = 'Transport.TransportError'
 }
 
@@ -85,7 +85,7 @@ export class TransportError<
  */
 export class ClosedError<
   cause extends Error | undefined = Error | undefined,
-> extends BaseError<cause> {
+> extends Errors.BaseError<cause> {
   override name = 'Transport.ClosedError'
 }
 
@@ -96,6 +96,6 @@ export class ClosedError<
  */
 export class UnsupportedError<
   cause extends Error | undefined = Error | undefined,
-> extends BaseError<cause> {
+> extends Errors.BaseError<cause> {
   override name = 'Transport.UnsupportedError'
 }

@@ -17,9 +17,8 @@ describe('plain', () => {
 
 describe('encrypted', () => {
   test('serializes counter as a decimal string', () => {
-    expect(
-      Envelope.encrypted({ counter: 12345n, ciphertext: '0xdeadbeef' }),
-    ).toMatchInlineSnapshot(`
+    expect(Envelope.encrypted({ counter: 12345n, ciphertext: '0xdeadbeef' }))
+      .toMatchInlineSnapshot(`
       {
         "ciphertext": "0xdeadbeef",
         "counter": "12345",
@@ -61,9 +60,7 @@ describe('parse', () => {
   })
 
   test('rejects an unknown type', () => {
-    expect(() =>
-      Envelope.parse({ type: 'bogus', payload: 1 }),
-    ).toThrowErrorMatchingInlineSnapshot(
+    expect(() => Envelope.parse({ type: 'bogus', payload: 1 })).toThrowErrorMatchingInlineSnapshot(
       `
       [ProtocolError: invalid envelope
       Details: Invalid discriminator value. Expected 'plain' | 'encrypted']

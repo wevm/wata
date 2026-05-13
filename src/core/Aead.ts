@@ -15,7 +15,8 @@
 
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { Bytes, Hex } from 'ox'
-import { BaseError } from './Errors.js'
+
+import * as Errors from './Errors.js'
 
 /** Length of the ChaCha20-Poly1305 key in bytes. */
 export const keySize = 32
@@ -123,6 +124,6 @@ export declare namespace open {
  */
 export class OpenError<
   cause extends Error | undefined = Error | undefined,
-> extends BaseError<cause> {
+> extends Errors.BaseError<cause> {
   override name = 'Aead.OpenError'
 }
