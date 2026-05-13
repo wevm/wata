@@ -11,9 +11,7 @@ describe('fromCounter', () => {
   })
 
   test('encodes a large counter big-endian', () => {
-    expect(Nonce.fromCounter(0xdeadbeefn)).toMatchInlineSnapshot(
-      '"0x0000000000000000deadbeef"',
-    )
+    expect(Nonce.fromCounter(0xdeadbeefn)).toMatchInlineSnapshot('"0x0000000000000000deadbeef"')
   })
 
   test('rejects negative counters', () => {

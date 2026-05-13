@@ -1,14 +1,17 @@
-import { Aad, Aead, Envelope, Nonce, Transport } from 'handshakes'
+import { Aad, Aead, Envelope, Handshake, Nonce, Schema, Transport } from 'handshakes'
+import { Handshake as HostHandshake } from 'handshakes/host'
 import type { Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
-import { loopback } from './loopback.js'
+import { z } from 'zod'
+
+import * as Loopback from './loopback.js'
 
 const sessionKey: Hex.Hex = `0x${'11'.repeat(32)}`
 const sessionId: Hex.Hex = `0x${'22'.repeat(16)}`
 
 describe('loopback', () => {
   test('round trips a plain envelope from consumer to host', async () => {
-    const { consumer, host } = loopback()
+    const { consumer, host } = Loopback.loopback()
     await consumer.start()
     await host.start()
 
@@ -31,7 +34,7 @@ describe('loopback', () => {
   })
 
   test('round trips a plain envelope from host to consumer', async () => {
-    const { consumer, host } = loopback()
+    const { consumer, host } = Loopback.loopback()
     await consumer.start()
     await host.start()
 
@@ -51,7 +54,7 @@ describe('loopback', () => {
   })
 
   test('survives a synthetic Aead.seal/open round trip end-to-end', async () => {
-    const { consumer, host } = loopback()
+    const { consumer, host } = Loopback.loopback()
     await consumer.start()
     await host.start()
 
@@ -89,7 +92,7 @@ describe('loopback', () => {
   })
 
   test('buffers frames delivered before onMessage is attached', async () => {
-    const { consumer, host } = loopback()
+    const { consumer, host } = Loopback.loopback()
     await consumer.start()
     await host.start()
 
@@ -110,7 +113,7 @@ describe('loopback', () => {
   })
 
   test('close cascades to the peer and fires onClose on both sides', async () => {
-    const { consumer, host } = loopback()
+    const { consumer, host } = Loopback.loopback()
     await consumer.start()
     await host.start()
 
@@ -126,7 +129,7 @@ describe('loopback', () => {
   })
 
   test('send after close throws ClosedError', async () => {
-    const { consumer, host } = loopback()
+    const { consumer, host } = Loopback.loopback()
     await consumer.start()
     await host.start()
     await consumer.close()
@@ -135,12 +138,12 @@ describe('loopback', () => {
   })
 
   test('send before start throws ClosedError', async () => {
-    const { consumer } = loopback()
+    const { consumer } = Loopback.loopback()
     await expect(consumer.send(Envelope.plain('nope'))).rejects.toThrowError(Transport.ClosedError)
   })
 
   test('exposes role and exchange', () => {
-    const { consumer, host } = loopback()
+    const { consumer, host } = Loopback.loopback()
     expect(consumer.role).toBe('consumer')
     expect(host.role).toBe('host')
     expect(consumer.exchange).toBe('ongoing')
@@ -148,7 +151,7 @@ describe('loopback', () => {
   })
 
   test('unsubscribe removes the listener', async () => {
-    const { consumer, host } = loopback()
+    const { consumer, host } = Loopback.loopback()
     await consumer.start()
     await host.start()
 
@@ -165,5 +168,120 @@ describe('loopback', () => {
         "first",
       ]
     `)
+  })
+})
+
+const integrationSchema = Schema.create({
+  methods: {
+    eth_blockNumber: Schema.method({
+      params: z.tuple([]),
+      result: z.string(),
+    }),
+    eth_chainId: Schema.method({
+      params: z.tuple([]),
+      result: z.string(),
+    }),
+  },
+})
+
+/**
+ * High-level integration tests — exercises the full
+ * `Handshake.create` ↔ `loopback` ↔ `Handshake.create` pipeline so the
+ * outermost contract (typed `send` / `'request'` flow with a real schema)
+ * is locked down on top of the loopback transport.
+ */
+describe('handshake + loopback integration', () => {
+  test('round-trips a single typed request', async () => {
+    const { consumer: cT, host: hT } = Loopback.loopback()
+    const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
+    const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
+
+    await consumer.bootstrap()
+    await host.connect()
+
+    host.on('request', (event) => {
+      if (event.method === 'eth_blockNumber') event.respond('0x1')
+    })
+
+    const out = await consumer.send({ method: 'eth_blockNumber', params: [] })
+    expect(out).toMatchInlineSnapshot(`
+      {
+        "id": 1,
+        "result": "0x1",
+      }
+    `)
+  })
+
+  test('correlates concurrent requests by id', async () => {
+    const { consumer: cT, host: hT } = Loopback.loopback()
+    const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
+    const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
+
+    await consumer.bootstrap()
+    await host.connect()
+
+    host.on('request', async (event) => {
+      // Reverse-order responses to verify id correlation rather than
+      // sequential dispatch.
+      if (event.method === 'eth_blockNumber') {
+        await new Promise((r) => setTimeout(r, 20))
+        event.respond('0xa')
+      }
+      if (event.method === 'eth_chainId') {
+        event.respond('0x1')
+      }
+    })
+
+    const [a, b] = await Promise.all([
+      consumer.send({ method: 'eth_blockNumber', params: [] }),
+      consumer.send({ method: 'eth_chainId', params: [] }),
+    ])
+
+    expect({ a: a.result, b: b.result }).toMatchInlineSnapshot(`
+      {
+        "a": "0xa",
+        "b": "0x1",
+      }
+    `)
+  })
+
+  test('host listener throwing surfaces as Rpc.RpcError on consumer', async () => {
+    const { consumer: cT, host: hT } = Loopback.loopback()
+    const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
+    const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
+
+    await consumer.bootstrap()
+    await host.connect()
+
+    host.on('request', () => {
+      throw new Error('kaboom')
+    })
+
+    await expect(
+      consumer.send({ method: 'eth_blockNumber', params: [] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: internal error]`)
+  })
+
+  test('cascading close rejects in-flight requests on both sides', async () => {
+    const { consumer: cT, host: hT } = Loopback.loopback()
+    const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
+    const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
+
+    await consumer.bootstrap()
+    await host.connect()
+
+    let consumerClosed = false
+    let hostClosed = false
+    consumer.on('close', () => (consumerClosed = true))
+    host.on('close', () => (hostClosed = true))
+
+    // Host receives the request but never settles it.
+    host.on('request', () => undefined)
+    const inflight = consumer.send({ method: 'eth_blockNumber', params: [] })
+
+    await consumer.close()
+    await expect(inflight).rejects.toBeInstanceOf(Error)
+    expect(consumerClosed).toBe(true)
+    expect(hostClosed).toBe(true)
   })
 })

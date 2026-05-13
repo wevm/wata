@@ -16,7 +16,8 @@
  */
 
 import { Bytes, Hex } from 'ox'
-import { ProtocolError } from './Errors.js'
+
+import * as Errors from './Errors.js'
 
 /** Length of a TempoCP AEAD nonce in bytes (matches ChaCha20-Poly1305). */
 export const size = 12
@@ -36,8 +37,8 @@ export const max = 2n ** 96n - 1n
  * ```
  */
 export function fromCounter(counter: bigint): Hex.Hex {
-  if (counter < 0n) throw new ProtocolError('counter must be non-negative')
-  if (counter > max) throw new ProtocolError('counter exceeds 96-bit nonce space')
+  if (counter < 0n) throw new Errors.ProtocolError('counter must be non-negative')
+  if (counter > max) throw new Errors.ProtocolError('counter exceeds 96-bit nonce space')
   return Hex.fromNumber(counter, { size })
 }
 
@@ -55,7 +56,7 @@ export function fromCounter(counter: bigint): Hex.Hex {
 export function toCounter(nonce: Hex.Hex | Bytes.Bytes): bigint {
   const bytes = Bytes.from(nonce)
   if (bytes.length !== size)
-    throw new ProtocolError('nonce must be exactly 12 bytes', {
+    throw new Errors.ProtocolError('nonce must be exactly 12 bytes', {
       details: `received ${bytes.length} bytes`,
     })
   return Hex.toBigInt(Hex.fromBytes(bytes))
@@ -64,7 +65,7 @@ export function toCounter(nonce: Hex.Hex | Bytes.Bytes): bigint {
 /**
  * Create an outbound nonce encoder. `.next()` returns a fresh 12-byte nonce
  * each call, starting from 0 (or `start`) and incrementing by 1. Throws
- * {@link ProtocolError} when the 96-bit counter space is exhausted.
+ * {@link Errors.ProtocolError} when the 96-bit counter space is exhausted.
  *
  * @example
  * ```ts
@@ -130,7 +131,7 @@ export function decoder(options: decoder.Options = {}): decoder.ReturnType {
     accept(nonce) {
       const counter = toCounter(nonce)
       if (counter !== next)
-        throw new ProtocolError('nonce out of order', {
+        throw new Errors.ProtocolError('nonce out of order', {
           details: `expected counter=${next}, received counter=${counter}`,
         })
       next += 1n
@@ -152,7 +153,7 @@ export declare namespace decoder {
   type ReturnType = {
     /**
      * Verify that `nonce` matches the next expected counter. Throws
-     * {@link ProtocolError} on replay or out-of-order delivery and advances
+     * {@link Errors.ProtocolError} on replay or out-of-order delivery and advances
      * the counter on success.
      */
     accept: (nonce: Hex.Hex | Bytes.Bytes) => void

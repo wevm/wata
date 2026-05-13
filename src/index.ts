@@ -5,7 +5,7 @@
 // - Phase 0 exposes the low-level toolkit (`Crypto`, `Aad`, `Aead`, `Nonce`,
 //   `Envelope`, `Rpc`, `Schema`, `Discovery`, `Errors`, `Transport`) and the
 //   in-process `loopback` transport factory.
-// - Phase 1 adds `Handshake.create` and the consumer `window` transport.
+// - Phase 1 adds `Handshake.create` and the consumer `postMessage` transport.
 // - Later phases add the remaining consumer-side transports.
 
 export * as Aad from './core/Aad.js'
@@ -20,4 +20,8 @@ export * as Rpc from './core/Rpc.js'
 export * as Schema from './core/Schema.js'
 export * as Transport from './core/Transport.js'
 
+export * as Handshake from './Handshake.js'
+
 export { loopback } from './core/transports/loopback.js'
+export { postMessage } from './consumer/transports/postMessage.js'
+export * as PostMessage from './consumer/transports/postMessage.js'

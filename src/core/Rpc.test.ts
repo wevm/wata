@@ -102,9 +102,8 @@ describe('error', () => {
   })
 
   test('includes data when provided', () => {
-    expect(
-      Rpc.error({ id: 1, code: -32602, message: 'invalid params', data: { method: 'foo' } }),
-    ).toMatchInlineSnapshot(`
+    expect(Rpc.error({ id: 1, code: -32602, message: 'invalid params', data: { method: 'foo' } }))
+      .toMatchInlineSnapshot(`
       {
         "error": {
           "code": -32602,
@@ -122,9 +121,7 @@ describe('error', () => {
 
 describe('parse', () => {
   test('discriminates a request', () => {
-    expect(
-      Rpc.parse({ jsonrpc: '2.0', id: 1, method: 'ping', params: [] }),
-    ).toMatchInlineSnapshot(`
+    expect(Rpc.parse({ jsonrpc: '2.0', id: 1, method: 'ping', params: [] })).toMatchInlineSnapshot(`
       {
         "id": 1,
         "jsonrpc": "2.0",
@@ -159,9 +156,8 @@ describe('parse', () => {
   })
 
   test('discriminates an error response', () => {
-    expect(
-      Rpc.parse({ jsonrpc: '2.0', id: 1, error: { code: -1, message: 'nope' } }),
-    ).toMatchInlineSnapshot(`
+    expect(Rpc.parse({ jsonrpc: '2.0', id: 1, error: { code: -1, message: 'nope' } }))
+      .toMatchInlineSnapshot(`
       {
         "error": {
           "code": -1,

@@ -56,10 +56,7 @@ describe('decode', () => {
 
   test('rejects a wrong AAD version byte', () => {
     // version = 0x02 (we're at 0x01), rest stays valid 30-byte length
-    const aad = ('0x02' +
-      '00' +
-      sessionId.slice(2) +
-      '000000000000000000000000') as `0x${string}`
+    const aad = ('0x02' + '00' + sessionId.slice(2) + '000000000000000000000000') as `0x${string}`
     expect(() => Aad.decode(aad)).toThrowErrorMatchingInlineSnapshot(
       `
       [ProtocolError: aad version mismatch
@@ -69,10 +66,7 @@ describe('decode', () => {
   })
 
   test('rejects an invalid direction byte', () => {
-    const aad = ('0x01' +
-      '02' +
-      sessionId.slice(2) +
-      '000000000000000000000000') as `0x${string}`
+    const aad = ('0x01' + '02' + sessionId.slice(2) + '000000000000000000000000') as `0x${string}`
     expect(() => Aad.decode(aad)).toThrowError(Errors.ProtocolError)
   })
 })

@@ -17,7 +17,8 @@
  */
 
 import { z } from 'zod'
-import { ProtocolError } from './Errors.js'
+
+import * as Errors from './Errors.js'
 
 /**
  * Definition of a single method. `params` validates the request `params`
@@ -25,10 +26,7 @@ import { ProtocolError } from './Errors.js'
  *
  * Construct with {@link method} so the generics are pinned correctly.
  */
-export type Method<
-  params extends z.ZodType = z.ZodType,
-  result extends z.ZodType = z.ZodType,
-> = {
+export type Method<params extends z.ZodType = z.ZodType, result extends z.ZodType = z.ZodType> = {
   params: params
   result: result
 }
@@ -152,7 +150,7 @@ export function validate<const schema extends z.ZodType>(
 ): Inferred<schema> {
   const result = schema.safeParse(value)
   if (!result.success)
-    throw new ProtocolError('schema validation failed', {
+    throw new Errors.ProtocolError('schema validation failed', {
       details: result.error.issues
         .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
         .join('; '),
