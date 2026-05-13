@@ -55,9 +55,9 @@ describe('parseHost', () => {
   })
 
   test('rejects an invalid version', () => {
-    expect(() =>
-      Discovery.parseHost({ ...validHostJson, version: 2 }),
-    ).toThrowError(Errors.ProtocolError)
+    expect(() => Discovery.parseHost({ ...validHostJson, version: 2 })).toThrowError(
+      Errors.ProtocolError,
+    )
   })
 
   test('rejects a non-hex identity_pubkey', () => {
