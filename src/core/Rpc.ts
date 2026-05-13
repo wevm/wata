@@ -198,38 +198,50 @@ export declare namespace error {
   }
 }
 
-const idSchema = z.union([z.string(), z.number()])
-const paramsSchema = z.union([z.array(z.unknown()), z.record(z.string(), z.unknown())])
-const versionSchema = z.literal(version)
+/** Zod schemas for the on-the-wire JSON-RPC 2.0 message variants. */
+export namespace schema {
+  /** Request id (string or number). */
+  export const id = z.union([z.string(), z.number()])
 
-const requestSchema = z.object({
-  jsonrpc: versionSchema,
-  id: idSchema,
-  method: z.string(),
-  params: paramsSchema,
-})
+  /** Params slot — positional array or named object. */
+  export const params = z.union([z.array(z.unknown()), z.record(z.string(), z.unknown())])
 
-const notificationSchema = z.object({
-  jsonrpc: versionSchema,
-  method: z.string(),
-  params: paramsSchema,
-})
+  /** `jsonrpc` discriminator literal. */
+  export const jsonrpc = z.literal('2.0')
 
-const successSchema = z.object({
-  jsonrpc: versionSchema,
-  id: idSchema.nullable(),
-  result: z.unknown(),
-})
+  /** JSON-RPC 2.0 request. */
+  export const request = z.object({
+    jsonrpc,
+    id,
+    method: z.string(),
+    params,
+  })
 
-const errorResponseSchema = z.object({
-  jsonrpc: versionSchema,
-  id: idSchema.nullable(),
-  error: z.object({
-    code: z.number(),
-    message: z.string(),
-    data: z.unknown().optional(),
-  }),
-})
+  /** JSON-RPC 2.0 notification (no `id`). */
+  export const notification = z.object({
+    jsonrpc,
+    method: z.string(),
+    params,
+  })
+
+  /** JSON-RPC 2.0 success response. */
+  export const success = z.object({
+    jsonrpc,
+    id: id.nullable(),
+    result: z.unknown(),
+  })
+
+  /** JSON-RPC 2.0 error response. */
+  export const errorResponse = z.object({
+    jsonrpc,
+    id: id.nullable(),
+    error: z.object({
+      code: z.number(),
+      message: z.string(),
+      data: z.unknown().optional(),
+    }),
+  })
+}
 
 /**
  * Parse and narrow an inbound JSON value into one of the four envelope
@@ -252,10 +264,10 @@ const errorResponseSchema = z.object({
 export function parse(value: unknown): Envelope {
   if (typeof value !== 'object' || value === null)
     throw new ProtocolError('JSON-RPC message must be an object')
-  if ('error' in value) return assertParse(errorResponseSchema, value, 'error response') as ErrorResponse
-  if ('result' in value) return assertParse(successSchema, value, 'success response') as Success
-  if ('id' in value) return assertParse(requestSchema, value, 'request') as Request
-  return assertParse(notificationSchema, value, 'notification') as Notification
+  if ('error' in value) return assertParse(schema.errorResponse, value, 'error response') as ErrorResponse
+  if ('result' in value) return assertParse(schema.success, value, 'success response') as Success
+  if ('id' in value) return assertParse(schema.request, value, 'request') as Request
+  return assertParse(schema.notification, value, 'notification') as Notification
 }
 
 function assertParse<schema extends z.ZodType>(

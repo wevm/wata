@@ -18,54 +18,62 @@ import { ProtocolError } from './Errors.js'
 
 const wellKnownPath = '/.well-known/tempocp'
 
-const hexPubkeySchema = z
-  .string()
-  .regex(/^0x[0-9a-fA-F]{64}$/, { message: 'expected 32-byte 0x-prefixed hex pubkey' })
+/** Zod schemas for the published discovery documents. */
+export namespace schema {
+  /** 32-byte `0x`-prefixed hex public key. */
+  export const hexPubkey = z.templateLiteral(
+    ['0x', z.string().regex(/^[0-9a-fA-F]{64}$/)],
+    'expected 32-byte 0x-prefixed hex pubkey',
+  )
 
-const httpsUrlSchema = z
-  .string()
-  .url()
-  .refine((value) => value.startsWith('https://'), { message: 'expected an https:// URL' })
+  /** Plain `https://`-only URL. */
+  export const httpsUrl = z.url({
+    protocol: /^https$/,
+    error: 'expected an https:// URL',
+  })
 
-const hostDocumentSchema = z.object({
-  /** Spec version of the document (currently `1`). */
-  version: z.literal(1),
-  /** Host's long-term Ed25519 identity public key, 32 bytes hex. */
-  identity_pubkey: hexPubkeySchema,
-  /**
-   * Optional relay endpoint the host advertises for `relay`-based pairing.
-   * Required for `relay()` consumer-side bootstrap; ignored otherwise.
-   */
-  relay_url: httpsUrlSchema.optional(),
-  /**
-   * Optional deep-link / Universal-Link URL the host listens on for
-   * `mobileLink`. Required for `mobileLink({ host })` flow.
-   */
-  deep_link_url: httpsUrlSchema.optional(),
-  /**
-   * Allowlist of `webhook_url` prefixes the host will deliver outbound
-   * `webhookCallback` traffic to. Required for `webhookCallback()` host-side.
-   */
-  callback_urls: z.array(httpsUrlSchema).optional(),
-})
+  /** Host-side discovery manifest published at `host.json`. */
+  export const hostDocument = z.object({
+    /** Spec version of the document (currently `1`). */
+    version: z.literal(1),
+    /** Host's long-term Ed25519 identity public key, 32 bytes hex. */
+    identity_pubkey: hexPubkey,
+    /**
+     * Optional relay endpoint the host advertises for `relay`-based pairing.
+     * Required for `relay()` consumer-side bootstrap; ignored otherwise.
+     */
+    relay_url: httpsUrl.optional(),
+    /**
+     * Optional deep-link / Universal-Link URL the host listens on for
+     * `mobileLink`. Required for `mobileLink({ host })` flow.
+     */
+    deep_link_url: httpsUrl.optional(),
+    /**
+     * Allowlist of `webhook_url` prefixes the host will deliver outbound
+     * `webhookCallback` traffic to. Required for `webhookCallback()` host-side.
+     */
+    callback_urls: z.array(httpsUrl).optional(),
+  })
 
-const consumerDocumentSchema = z.object({
-  /** Spec version of the document (currently `1`). */
-  version: z.literal(1),
-  /** Consumer's long-term Ed25519 identity public key, 32 bytes hex. */
-  identity_pubkey: hexPubkeySchema,
-  /**
-   * Allowlist of `webhook_url` prefixes the consumer accepts. Hosts MUST
-   * verify the consumer's `webhook_url` matches one of these.
-   */
-  callback_urls: z.array(httpsUrlSchema).optional(),
-})
+  /** Consumer-side discovery manifest published at `consumer.json`. */
+  export const consumerDocument = z.object({
+    /** Spec version of the document (currently `1`). */
+    version: z.literal(1),
+    /** Consumer's long-term Ed25519 identity public key, 32 bytes hex. */
+    identity_pubkey: hexPubkey,
+    /**
+     * Allowlist of `webhook_url` prefixes the consumer accepts. Hosts MUST
+     * verify the consumer's `webhook_url` matches one of these.
+     */
+    callback_urls: z.array(httpsUrl).optional(),
+  })
+}
 
 /** Parsed `host.json`. */
-export type HostDocument = z.output<typeof hostDocumentSchema>
+export type HostDocument = z.output<typeof schema.hostDocument>
 
 /** Parsed `consumer.json`. */
-export type ConsumerDocument = z.output<typeof consumerDocumentSchema>
+export type ConsumerDocument = z.output<typeof schema.consumerDocument>
 
 /**
  * Compose the full discovery URL for a host's `host.json`.
@@ -91,14 +99,14 @@ export function consumerUrl(origin: string): string {
  * Validate an arbitrary JSON value as a {@link HostDocument}.
  */
 export function parseHost(value: unknown): HostDocument {
-  return assertParse(hostDocumentSchema, value, 'host.json')
+  return assertParse(schema.hostDocument, value, 'host.json')
 }
 
 /**
  * Validate an arbitrary JSON value as a {@link ConsumerDocument}.
  */
 export function parseConsumer(value: unknown): ConsumerDocument {
-  return assertParse(consumerDocumentSchema, value, 'consumer.json')
+  return assertParse(schema.consumerDocument, value, 'consumer.json')
 }
 
 /**
