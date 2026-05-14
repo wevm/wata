@@ -74,6 +74,12 @@ export type PendingRecord = {
   deviceCode: string
   /** Epoch-ms expiry. */
   expiresAt: number
+  /**
+   * Epoch-ms of the most recent `/token` poll for this `device_code`,
+   * used by the `slow_down` rate limiter (RFC 8628 §3.5). `undefined`
+   * before the first poll.
+   */
+  lastPolledAt?: number | undefined
   /** Pending JSON-RPC `rpc-requests` envelope queued by the consumer. */
   message: Envelope.Envelope
   /** Host's `rpc-responses` envelope, populated once the user approves. */
@@ -111,9 +117,10 @@ export type Options = {
   /**
    * Suggested poll interval (milliseconds) returned to the consumer in
    * the `/register` response (converted to seconds on the wire to
-   * match the OAuth device-code spec). Consumers may honour or ignore
-   * this; the transport doesn't enforce server-side rate limiting
-   * itself. Defaults to 2000.
+   * match RFC 8628 §3.2). Consumers MUST honour the larger of this
+   * value and any `slow_down`-derived cadence (RFC 8628 §3.5).
+   * Defaults to 5000, matching the RFC 8628 §3.5 default that
+   * consumers apply when the host omits `interval`.
    */
   pollingInterval?: number | undefined
   /** Pluggable persistence for {@link PendingRecord}s. Use {@link Kv.memory} for tests. */
@@ -209,7 +216,7 @@ export function deviceCode(options: Options): DeviceCodeTransport {
     expiresIn = 600,
     html,
     path,
-    pollingInterval = 2000,
+    pollingInterval = 5000,
     store,
   } = options
   const origin = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
@@ -260,9 +267,21 @@ export function deviceCode(options: Options): DeviceCodeTransport {
   // also keep their own router and mount under any prefix they want.
   const app = path ? new Hono().basePath(path) : new Hono()
 
+  // RFC 8628 §3.2 / §3.5 (via RFC 6749 §5.1, §5.2) and uRPC Device
+  // Code §6.7 — every registration, token, and verification response
+  // MUST set `Cache-Control: no-store` and `Pragma: no-cache` so that
+  // intermediaries (CDNs, reverse proxies, browser caches) cannot
+  // cache them. Apply via global middleware so every route, including
+  // the `onError` 500 fallback, gets the headers.
+  app.use('*', async (c, next) => {
+    await next()
+    c.res.headers.set('Cache-Control', 'no-store')
+    c.res.headers.set('Pragma', 'no-cache')
+  })
+
   app.onError((cause, c) => {
     emitter.emit('error', cause as Error)
-    return c.json({ error: 'server_error', message: (cause as Error).message }, { status: 500 })
+    return c.json({ error: 'server_error', error_description: (cause as Error).message }, { status: 500 })
   })
 
   app.post('/register', async (c) => {
@@ -271,17 +290,17 @@ export function deviceCode(options: Options): DeviceCodeTransport {
       | undefined
     if (!body || typeof body !== 'object')
       return c.json(
-        { error: 'invalid_request', message: 'expected JSON object body' },
+        { error: 'invalid_request', error_description: 'expected JSON object body' },
         { status: 400 },
       )
     if (typeof body.code_challenge !== 'string' || body.code_challenge.length === 0)
       return c.json(
-        { error: 'invalid_request', message: 'expected non-empty `code_challenge`' },
+        { error: 'invalid_request', error_description: 'expected non-empty `code_challenge`' },
         { status: 400 },
       )
     if (body.code_challenge_method !== 'S256')
       return c.json(
-        { error: 'invalid_request', message: 'expected `code_challenge_method` of `S256`' },
+        { error: 'invalid_request', error_description: 'expected `code_challenge_method` of `S256`' },
         { status: 400 },
       )
 
@@ -290,13 +309,13 @@ export function deviceCode(options: Options): DeviceCodeTransport {
       envelope = Envelope.parse(body.message)
     } catch (cause) {
       return c.json(
-        { error: 'invalid_request', message: (cause as Error).message },
+        { error: 'invalid_request', error_description: (cause as Error).message },
         { status: 400 },
       )
     }
     if (envelope.type !== 'rpc-requests')
       return c.json(
-        { error: 'invalid_request', message: '`message` must be an `rpc-requests` envelope' },
+        { error: 'invalid_request', error_description: '`message` must be an `rpc-requests` envelope' },
         { status: 400 },
       )
 
@@ -329,38 +348,48 @@ export function deviceCode(options: Options): DeviceCodeTransport {
 
   app.post('/token', async (c) => {
     const body = (await c.req.json().catch(() => undefined)) as
-      | { code_verifier?: unknown; device_code?: unknown }
+      | { code_verifier?: unknown; device_code?: unknown; grant_type?: unknown }
       | undefined
     if (!body || typeof body !== 'object')
       return c.json(
-        { error: 'invalid_request', message: 'expected JSON object body' },
+        { error: 'invalid_request', error_description: 'expected JSON object body' },
+        { status: 400 },
+      )
+    // RFC 8628 §3.4 + uRPC §3.3.1 — `grant_type` is REQUIRED and must
+    // be exactly the device-code grant URN. Validate before any
+    // device-code lookup so malformed callers cannot probe for
+    // identifiers.
+    if (body.grant_type !== 'urn:ietf:params:oauth:grant-type:device_code')
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description:
+            'expected `grant_type` of `urn:ietf:params:oauth:grant-type:device_code`',
+        },
         { status: 400 },
       )
     if (typeof body.device_code !== 'string' || body.device_code.length === 0)
       return c.json(
-        { error: 'invalid_request', message: 'expected non-empty `device_code`' },
+        { error: 'invalid_request', error_description: 'expected non-empty `device_code`' },
         { status: 400 },
       )
     if (typeof body.code_verifier !== 'string' || body.code_verifier.length === 0)
       return c.json(
-        { error: 'invalid_request', message: 'expected non-empty `code_verifier`' },
+        { error: 'invalid_request', error_description: 'expected non-empty `code_verifier`' },
         { status: 400 },
       )
 
+    // RFC 8628 §3.5 + uRPC §3.3.2 step 1 — unknown, expired, or
+    // already-consumed `device_code`s collapse into a single response
+    // (`400` + `{ error: "expired_token" }`) so the host doesn't leak
+    // which polling identifiers were once valid.
     const record = await store.get<PendingRecord>(deviceCodeKey(body.device_code))
-    if (!record)
-      return c.json(
-        { error: 'expired_token', message: 'unknown or expired `device_code`' },
-        { status: 404 },
-      )
+    if (!record) return c.json({ error: 'expired_token' }, { status: 400 })
 
     if (Date.now() >= record.expiresAt) {
       await store.delete(deviceCodeKey(record.deviceCode))
       await store.delete(userCodeKey(record.userCode))
-      return c.json(
-        { error: 'expired_token', message: '`device_code` has expired' },
-        { status: 410 },
-      )
+      return c.json({ error: 'expired_token' }, { status: 400 })
     }
 
     // PKCE verification — must be checked on every poll, atomically with
@@ -368,27 +397,50 @@ export function deviceCode(options: Options): DeviceCodeTransport {
     // used to fetch the response without the consumer's `code_verifier`.
     const computed = pkceChallenge(body.code_verifier)
     if (!constantTimeEqual(computed, record.codeChallenge))
+      // RFC 7636 §4.6 + uRPC §3.3.2 step 3 — PKCE failure returns
+      // `400` + `{ error: "invalid_grant" }`. Diagnostic text goes in
+      // `error_description` per RFC 6749 §5.2; the non-standard
+      // `message` field MUST NOT be used.
       return c.json(
-        { error: 'invalid_grant', message: 'PKCE verifier does not match recorded challenge' },
+        {
+          error: 'invalid_grant',
+          error_description: 'PKCE verifier does not match recorded challenge',
+        },
         { status: 400 },
       )
 
-    if (record.status === 'pending')
-      return c.json(
-        { error: 'authorization_pending', interval: Math.max(1, Math.round(pollingInterval / 1000)) },
-        { status: 202 },
-      )
+    if (record.status === 'pending') {
+      // RFC 8628 §3.5 — `slow_down` is a variant of
+      // `authorization_pending` returned when the consumer polls faster
+      // than the advertised cadence. Heuristic: a poll arriving within
+      // half of the registration `interval` of the previous poll for
+      // this `device_code` is "too fast". Always update `lastPolledAt`
+      // before responding so the next poll measures from this moment.
+      const now = Date.now()
+      const pollingIntervalMs = pollingInterval
+      const last = record.lastPolledAt
+      const tooFast = last !== undefined && now - last < pollingIntervalMs / 2
+      record.lastPolledAt = now
+      await store.set(deviceCodeKey(record.deviceCode), record)
+      await store.set(userCodeKey(record.userCode), record)
+      if (tooFast) return c.json({ error: 'slow_down' }, { status: 400 })
+      // RFC 8628 §3.5 — pending polls return `400` + the OAuth-style
+      // `{ error: "authorization_pending" }`. The polling cadence is
+      // carried in `/register`'s `interval`, not echoed here.
+      return c.json({ error: 'authorization_pending' }, { status: 400 })
+    }
     if (record.status === 'denied')
-      return c.json({ error: 'access_denied', message: 'user denied the request' }, { status: 403 })
+      // RFC 8628 §3.5 — denied polls return `400` + the OAuth-style
+      // `{ error: "access_denied" }`. Body MUST NOT carry any other
+      // field; the human-readable text belongs in `error_description`
+      // if present at all.
+      return c.json({ error: 'access_denied' }, { status: 400 })
     if (record.status === 'expired')
-      return c.json(
-        { error: 'expired_token', message: '`device_code` has expired' },
-        { status: 410 },
-      )
+      return c.json({ error: 'expired_token' }, { status: 400 })
 
     if (!record.response)
       return c.json(
-        { error: 'server_error', message: 'approved but no response queued' },
+        { error: 'server_error', error_description: 'approved but no response queued' },
         { status: 500 },
       )
 
