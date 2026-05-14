@@ -184,17 +184,22 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     emitter.emit('close', cause)
   }
 
-  function postRaw(data: unknown) {
+  function postRaw(data: object) {
     if (!handle) throw new Transport.ClosedError('postMessage transport has no handle')
+    // Per the uRPC window-transport spec, every outbound frame
+    // (control or envelope) carries a sender-generated v4 UUID `id`.
+    // Decoration happens at the wire boundary so callers never have to
+    // think about it.
+    const wire = protocol.withId(data)
     if (protocol.isPortLike(handle)) {
-      handle.postMessage(data)
+      handle.postMessage(wire)
       return
     }
     if (!options.targetOrigin)
       throw new TargetOriginRequiredError(
         '`targetOrigin` is required for Window / WindowProxy targets',
       )
-    handle.postMessage(data, options.targetOrigin)
+    handle.postMessage(wire, options.targetOrigin)
   }
 
   function attachListener() {
@@ -230,13 +235,29 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
   }
 
   function handleInbound(data: unknown) {
-    if (protocol.isControlFrame(data)) {
-      if (data.type === handshake.expect) markReady()
+    // Per the uRPC window-transport spec, every inbound frame must
+    // carry a top-level v4 UUID `id`. Frames missing or malforming `id`
+    // are a protocol violation; we surface them as `error` and drop the
+    // frame (no JSON-RPC response — the peer might be a stale tab still
+    // emitting non-spec frames, and the handshake-level mode discipline
+    // gate covers the keyed-phase tear-down case).
+    const inbound = protocol.readFrame(data)
+    if (!inbound) {
+      emitError(
+        new InvalidFrameError(
+          'inbound postMessage frame is missing or has malformed v4 UUID `id`',
+        ),
+      )
+      return
+    }
+    const { frame } = inbound
+    if (protocol.isControlFrame(frame)) {
+      if (frame.type === handshake.expect) markReady()
       return
     }
     let envelope: Envelope.Envelope
     try {
-      envelope = Envelope.parse(data)
+      envelope = Envelope.parse(frame)
     } catch (error) {
       emitError(error as Error)
       return
@@ -380,4 +401,17 @@ export class InvalidTargetError<
   cause extends Error | undefined = Error | undefined,
 > extends Errors.ProtocolError<cause> {
   override name = 'PostMessage.InvalidTargetError'
+}
+
+/**
+ * Surfaced via the transport's `error` event when an inbound `message`
+ * frame is missing the spec-mandated top-level `{ id: <uuid v4> }`, or
+ * the value is not a syntactically valid v4 UUID. The frame is dropped
+ * — non-conforming peers (or stale tabs) shouldn't be able to inject
+ * envelopes into the handshake by accident.
+ */
+export class InvalidFrameError<
+  cause extends Error | undefined = Error | undefined,
+> extends Errors.ProtocolError<cause> {
+  override name = 'PostMessage.InvalidFrameError'
 }

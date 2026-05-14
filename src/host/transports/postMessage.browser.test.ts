@@ -31,13 +31,10 @@ describe('postMessage (host)', () => {
     await transport.start()
     await new Promise((resolve) => setTimeout(resolve, 10))
 
-    expect(peerSeen).toMatchInlineSnapshot(`
-      [
-        {
-          "type": "urpc.ready",
-        },
-      ]
-    `)
+    expect(peerSeen).toHaveLength(1)
+    const ready = peerSeen[0] as { type: string; id: string }
+    expect(ready.type).toBe('urpc.ready')
+    expect(protocol.isUuidV4(ready.id)).toBe(true)
 
     await transport.close()
   })
@@ -46,9 +43,10 @@ describe('postMessage (host)', () => {
     const { port1, port2 } = new MessageChannel()
     const transport = postMessage({ target: () => port1 })
 
+    // Strip the wire `id` so snapshots stay stable across runs.
     const peerSeen: unknown[] = []
     port2.addEventListener('message', (event) => {
-      peerSeen.push(event.data)
+      peerSeen.push(protocol.readFrame(event.data)?.frame ?? event.data)
     })
     port2.start()
 
@@ -64,7 +62,7 @@ describe('postMessage (host)', () => {
     // the buffered user frames.
     peerSeen.length = 0
 
-    port2.postMessage(protocol.consumerHello)
+    port2.postMessage(protocol.withId(protocol.consumerHello))
 
     await new Promise((resolve) => setTimeout(resolve, 10))
 
