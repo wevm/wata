@@ -44,27 +44,21 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "react-native": "./dist/index.js",
       "src": "./src/index.ts",
+      "react-native": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./host": {
       "types": "./dist/host/index.d.ts",
-      "react-native": "./dist/host/index.js",
       "src": "./src/host/index.ts",
+      "react-native": "./dist/host/index.js",
       "default": "./dist/host/index.js"
     },
     "./server": {
       "types": "./dist/server/index.d.ts",
-      "react-native": "./dist/server/index.js",
       "src": "./src/server/index.ts",
+      "react-native": "./dist/server/index.js",
       "default": "./dist/server/index.js"
-    },
-    "./shared/loopback": {
-      "types": "./dist/shared/loopback.d.ts",
-      "react-native": "./dist/shared/loopback.js",
-      "src": "./src/shared/loopback.ts",
-      "default": "./dist/shared/loopback.js"
     }
   }
 }

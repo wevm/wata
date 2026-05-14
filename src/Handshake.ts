@@ -20,6 +20,7 @@
 
 import * as Envelope from './core/Envelope.js'
 import * as Errors from './core/Errors.js'
+import * as Events from './core/Events.js'
 import * as Rpc from './core/Rpc.js'
 import * as Schema from './core/Schema.js'
 import * as Transport from './core/Transport.js'
@@ -38,13 +39,15 @@ export type SendResult<result> = {
 
 /**
  * Listener supplied to {@link Consumer.on} (and to {@link "./host/Handshake".Host.on}).
- * Receives the typed payload for the subscribed event.
+ * Receives the typed payload for the subscribed event directly — the
+ * underlying `rettime` `TypedEvent` is unwrapped to keep call sites
+ * focused on the data they care about.
  */
 export type Listener<payload> = (payload: payload) => unknown
 
 /** Lifecycle events emitted on every `Handshake` (consumer + host). */
 export type LifecycleEventMap = {
-  /** Emitted after `bootstrap()` (consumer) / `connect()` (host) completes. */
+  /** Emitted after `start()` completes (both consumer and host). */
   open: void
   /** Emitted exactly once when the session closes, cleanly or with cause. */
   close: Error | undefined
@@ -63,14 +66,19 @@ export type Consumer<schema extends Schema.Schema | undefined = undefined> = {
   /** Optional method-registry schema flowed through `send` / `notify`. */
   schema: schema
   /**
-   * Bring the session up. Starts the transport and resolves once it is
-   * ready to send and receive frames. Emits `'open'` on success.
+   * Explicitly bring the session up — starts the transport and resolves
+   * once it is ready to send and receive frames. Emits `'open'` on success.
+   *
+   * Optional: {@link Consumer.send} and {@link Consumer.notify} call
+   * `start` internally on first use, so most callers can skip it.
+   * Reach for it when the open handshake should overlap other work, or
+   * when a UI wants to surface the connecting state before any traffic.
    */
-  bootstrap: () => Promise<void>
+  start: () => Promise<void>
   /**
-   * Send a typed JSON-RPC request. Resolves with the host's `result` (or
-   * rejects with {@link Rpc.RpcError} if the host returned an error
-   * response).
+   * Send a typed JSON-RPC request. Auto-{@link Consumer.start}s on
+   * first use. Resolves with the host's `result` (or rejects with
+   * {@link Rpc.RpcError} if the host returned an error response).
    */
   send: <
     const method extends Consumer.MethodName<schema>,
@@ -78,7 +86,10 @@ export type Consumer<schema extends Schema.Schema | undefined = undefined> = {
   >(
     options: Consumer.SendOptions<method, params>,
   ) => Promise<SendResult<Consumer.ResultOf<schema, method>>>
-  /** Send a typed JSON-RPC notification (no response expected). */
+  /**
+   * Send a typed JSON-RPC notification (no response expected).
+   * Auto-{@link Consumer.start}s on first use.
+   */
   notify: <
     const method extends Consumer.MethodName<schema>,
     const params extends Consumer.ParamsOf<schema, method>,
@@ -87,7 +98,10 @@ export type Consumer<schema extends Schema.Schema | undefined = undefined> = {
   ) => Promise<void>
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
-  /** Subscribe to a lifecycle event. Returns an `AbortController`. */
+  /**
+   * Subscribe to a lifecycle event. Returns an `AbortController` so the
+   * subscription can be cancelled (or composed with an external signal).
+   */
   on: <type extends keyof LifecycleEventMap>(
     type: type,
     listener: Listener<LifecycleEventMap[type]>,
@@ -154,7 +168,7 @@ export declare namespace Consumer {
  * const { consumer } = loopback()
  * const handshake = Handshake.create({ transport: consumer })
  *
- * await handshake.bootstrap()
+ * await handshake.start()
  * const { result } = await handshake.send({ method: 'ping', params: [] })
  * ```
  */
@@ -164,7 +178,8 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   const { transport } = options
   const schema = options.schema as schema
 
-  const bus = createBus<LifecycleEventMap>()
+  const emitter = Events.create<LifecycleEventMap>()
+
   const pending = new Map<Rpc.Id, Pending>()
   const methodById = new Map<Rpc.Id, string>()
   const state = { started: false, closed: false }
@@ -176,11 +191,13 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     methodById.clear()
   }
 
-  transport.onMessage((envelope) => {
+  transport.on('message', (envelope) => {
     if (envelope.type !== 'plain') {
-      bus.emit(
+      emitter.emit(
         'error',
-        new Errors.ProtocolError('consumer received an encrypted envelope on a plain transport'),
+        new Errors.ProtocolError(
+          'consumer received an encrypted envelope on a plain transport',
+        ),
       )
       return
     }
@@ -188,7 +205,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     try {
       message = Rpc.parse(envelope.payload)
     } catch (cause) {
-      bus.emit('error', cause as Error)
+      emitter.emit('error', cause as Error)
       return
     }
     if ('error' in message) {
@@ -221,31 +238,31 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     }
   })
 
-  transport.onClose((cause) => {
+  transport.on('close', (cause) => {
     if (state.closed) return
     state.closed = true
     rejectPending(cause ?? new Transport.ClosedError('handshake transport closed'))
-    bus.emit('close', cause)
+    emitter.emit('close', cause)
   })
 
-  transport.onError((error) => {
-    bus.emit('error', error)
+  transport.on('error', (error) => {
+    emitter.emit('error', error)
   })
 
   return {
     role: 'consumer',
     transport,
     schema,
-    async bootstrap() {
+    async start() {
       if (state.closed) throw new Transport.ClosedError('handshake already closed')
       if (state.started) return
       state.started = true
       await transport.start()
-      bus.emit('open', undefined)
+      emitter.emit('open', undefined)
     },
     async send(opts) {
       if (state.closed) throw new Transport.ClosedError('handshake already closed')
-      if (!state.started) throw new BootstrapRequiredError('call `bootstrap()` before `send()`')
+      if (!state.started) await this.start()
 
       const id = opts.id ?? nextId++
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
@@ -269,7 +286,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     },
     async notify(opts) {
       if (state.closed) throw new Transport.ClosedError('handshake already closed')
-      if (!state.started) throw new BootstrapRequiredError('call `bootstrap()` before `notify()`')
+      if (!state.started) await this.start()
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
       await transport.send(
         Envelope.plain(Rpc.notification({ method: opts.method, params: opts.params })),
@@ -280,10 +297,14 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       state.closed = true
       rejectPending(cause ?? new Transport.ClosedError('handshake closed locally'))
       await transport.close(cause)
-      bus.emit('close', cause)
+      emitter.emit('close', cause)
     },
-    on: bus.on,
-    off: bus.off,
+    on(type, listener) {
+      const controller = new AbortController()
+      emitter.on(type, listener, { signal: controller.signal })
+      return controller
+    },
+    off: emitter.off,
   }
 }
 
@@ -300,74 +321,6 @@ export declare namespace create {
 type Pending = {
   resolve: (result: SendResult<unknown>) => void
   reject: (error: Error) => void
-}
-
-/**
- * Outcome of a single listener invocation — value when it returned, error
- * when it threw. Used by both consumer and host event loops to decide
- * ordering (the host's "first non-`undefined` listener wins" dispatch
- * loop relies on this).
- */
-export type ListenerOutcome = { kind: 'value'; value: unknown } | { kind: 'error'; error: Error }
-
-/** Event-bus contract used internally by both consumer and host handshakes. */
-export type EventBus<map> = {
-  on: <type extends keyof map>(type: type, listener: Listener<map[type]>) => AbortController
-  off: <type extends keyof map>(type: type, listener: Listener<map[type]>) => void
-  /**
-   * Invoke every listener for `type` synchronously. Each listener's
-   * return value (or thrown `Error`) is captured into a
-   * {@link ListenerOutcome} so the caller can decide ordering.
-   */
-  emit: <type extends keyof map>(type: type, payload: map[type]) => readonly ListenerOutcome[]
-}
-
-/**
- * Create a typed event bus. Re-used by both consumer and host handshakes;
- * exported so the host module in `src/host/Handshake.ts` can build its
- * own bus without duplicating the implementation.
- *
- * @internal
- */
-export function createBus<map extends Record<string, unknown>>(): EventBus<map> {
-  const listeners = new Map<keyof map, Set<Listener<unknown>>>()
-  return {
-    on(type, listener) {
-      let set = listeners.get(type)
-      if (!set) {
-        set = new Set()
-        listeners.set(type, set)
-      }
-      set.add(listener as Listener<unknown>)
-      const controller = new AbortController()
-      controller.signal.addEventListener(
-        'abort',
-        () => {
-          listeners.get(type)?.delete(listener as Listener<unknown>)
-        },
-        { once: true },
-      )
-      return controller
-    },
-    off(type, listener) {
-      listeners.get(type)?.delete(listener as Listener<unknown>)
-    },
-    emit(type, payload) {
-      const set = listeners.get(type)
-      if (!set || set.size === 0) return []
-      const outcomes: ListenerOutcome[] = []
-      // Snapshot via Array.from so listeners that unsubscribe (or subscribe
-      // siblings) during dispatch don't mutate the iterator under us.
-      for (const listener of Array.from(set)) {
-        try {
-          outcomes.push({ kind: 'value', value: listener(payload) })
-        } catch (error) {
-          outcomes.push({ kind: 'error', error: error as Error })
-        }
-      }
-      return outcomes
-    },
-  }
 }
 
 /**
@@ -396,15 +349,4 @@ function validateResultIfKnown(
   const definition = schema.methods[method]
   if (!definition) return result
   return Schema.validate(definition.result, result)
-}
-
-/**
- * Thrown when a {@link Consumer.send} or {@link Consumer.notify} call is
- * made before {@link Consumer.bootstrap} has resolved. The transport is
- * not started yet, so there's no wire to write to.
- */
-export class BootstrapRequiredError<
-  cause extends Error | undefined = Error | undefined,
-> extends Errors.BaseError<cause> {
-  override name = 'Handshake.BootstrapRequiredError'
 }

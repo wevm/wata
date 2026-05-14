@@ -20,12 +20,13 @@
  * await consumer.start()
  * await host.start()
  *
- * host.onMessage((envelope) => console.log('host received', envelope))
+ * host.on('message', (envelope) => console.log('host received', envelope))
  * await consumer.send(Envelope.plain({ method: 'ping' }))
  * ```
  */
 
 import * as Envelope from '../Envelope.js'
+import * as Events from '../Events.js'
 import * as Transport from '../Transport.js'
 
 /**
@@ -66,35 +67,24 @@ type Peer = {
 }
 
 function createSide<role extends 'consumer' | 'host'>(role: role) {
-  const messageListeners = new Set<Transport.MessageListener>()
-  const closeListeners = new Set<Transport.CloseListener>()
-  const errorListeners = new Set<Transport.ErrorListener>()
+  const emitter = Events.create<Transport.EventMap>()
   const state = { started: false, closed: false }
 
   // Frames delivered to this side before it has subscribed are buffered so
-  // the test ordering doesn't depend on whether `onMessage` happens before
-  // or after the first `send`.
+  // the test ordering doesn't depend on whether a `message` listener is
+  // attached before or after the first `send`.
   const buffered: Envelope.Envelope[] = []
 
   let peer: Peer | undefined
 
   function deliver(envelope: Envelope.Envelope) {
     if (state.closed) return
-    if (messageListeners.size === 0) {
+    if (emitter.listenerCount('message') === 0) {
       buffered.push(envelope)
       return
     }
-    for (const listener of messageListeners) listener(envelope)
+    emitter.emit('message', envelope)
   }
-
-  const subscribe =
-    <listener>(set: Set<listener>) =>
-    (listener: listener): Transport.Unsubscribe => {
-      set.add(listener)
-      return () => {
-        set.delete(listener)
-      }
-    }
 
   const transport: Transport.Transport<role> = {
     role,
@@ -112,21 +102,21 @@ function createSide<role extends 'consumer' | 'host'>(role: role) {
     async close(cause) {
       if (state.closed) return
       state.closed = true
-      for (const listener of closeListeners) listener(cause)
+      emitter.emit('close', cause)
       // Cascade to peer so both sides observe the close.
       if (peer && !peer.state.closed) await peer.transport.close(cause)
     },
-    onMessage(listener) {
-      const unsubscribe = subscribe(messageListeners)(listener)
-      // Drain any frames queued before subscription happened.
-      while (buffered.length > 0) {
-        const next = buffered.shift()
-        if (next !== undefined) listener(next)
-      }
-      return unsubscribe
+    on(type, listener, options) {
+      emitter.on(type, listener, options)
+      // Drain any frames queued before the first `message` listener
+      // attached. Done after `emitter.on` returns so the freshly-added
+      // listener is part of the dispatch set.
+      if (type === 'message')
+        while (buffered.length > 0) {
+          const next = buffered.shift()
+          if (next !== undefined) emitter.emit('message', next)
+        }
     },
-    onClose: subscribe(closeListeners),
-    onError: subscribe(errorListeners),
   }
 
   return {

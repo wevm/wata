@@ -1,0 +1,25 @@
+{
+  "name": "postmessage-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview"
+  },
+  "dependencies": {
+    "handshakes": "workspace:*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "regen-ui": "^0.4.0",
+    "tailwindcss": "^4.1.18",
+    "use-sync-external-store": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "typescript": "catalog:",
+    "vp": "catalog:"
+  }
+}
