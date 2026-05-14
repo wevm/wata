@@ -1,21 +1,21 @@
 /**
- * Additional Authenticated Data (AAD) construction for the TempoCP AEAD layer.
+ * Additional Authenticated Data (AAD) construction for the uRPC AEAD layer.
  *
- * Per [TempoCP `core.md` §6](https://github.com/tempoxyz/tempocp/blob/main/specs/core.md#encrypted-message-envelope-aead),
+ * Per [uRPC `core.md` §6](https://github.com/tempoxyz/urpc/blob/main/specs/core.md#encrypted-message-envelope-aead),
  * every sealed frame binds a deterministic AAD blob to the ciphertext so the
  * recipient can detect cross-session, cross-direction, or cross-version
  * replay attempts even if the attacker has the right key.
  *
- * Wire layout (43 bytes total):
+ * Wire layout (40 bytes total):
  *
  * ```diagram
  * ╭─────────────┬─────────────────────────────┬───────╮
- * │ "tempocp/v1"│  pubkey_consumer (32 bytes) │ role  │
- * │   10 bytes  │    raw X25519 public key    │ 1 byte│
+ * │  "urpc/v1"  │  pubkey_consumer (32 bytes) │ role  │
+ * │   7 bytes   │    raw X25519 public key    │ 1 byte│
  * ╰─────────────┴─────────────────────────────┴───────╯
  * ```
  *
- * - `"tempocp/v1"` — ASCII version prefix, pinned for the v1 protocol.
+ * - `"urpc/v1"` — ASCII version prefix, pinned for the v1 protocol.
  * - `publicKey`       — the spec's `pubkey_consumer`: raw 32-byte X25519
  *                    public key, the session anchor (spec §4). Identical
  *                    for both directions of the same session.
@@ -32,16 +32,16 @@ import { Bytes, Hex } from 'ox'
 import * as Errors from './Errors.js'
 
 /** ASCII version prefix bound to every AAD blob. */
-export const prefix = 'tempocp/v1'
+export const prefix = 'urpc/v1'
 
 /** Length of the version prefix in bytes. */
-export const prefixSize = 10
+export const prefixSize = 7
 
 /** Length of the `publicKey` (= spec's `pubkey_consumer`) field in bytes. */
 export const publicKeySize = 32
 
 /** Total AAD length in bytes (`prefixSize + publicKeySize + 1`). */
-export const size = 43
+export const size = 40
 
 /** Allowed values for the trailing `role` byte. */
 export const role = {
@@ -111,7 +111,7 @@ export declare namespace encode {
 export function decode(aad: Hex.Hex | Bytes.Bytes): decode.ReturnType {
   const bytes = Bytes.from(aad)
   if (bytes.length !== size)
-    throw new Errors.ProtocolError('aad must be exactly 43 bytes', {
+    throw new Errors.ProtocolError('aad must be exactly 40 bytes', {
       details: `received ${bytes.length} bytes`,
     })
   for (let i = 0; i < prefixSize; i++)

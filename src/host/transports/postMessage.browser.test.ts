@@ -17,7 +17,7 @@ import * as protocol from '../../consumer/transports/internal/protocol.js'
  * tests cover the host-specific bits (role + inverted handshake direction).
  */
 describe('postMessage (host)', () => {
-  test('emits `tempocp.ready` on start and waits for the consumer hello', async () => {
+  test('emits `urpc.ready` on start and waits for the consumer hello', async () => {
     const { port1, port2 } = new MessageChannel()
     const transport = postMessage({ target: () => port1 })
 
@@ -33,7 +33,7 @@ describe('postMessage (host)', () => {
     expect(peerSeen).toMatchInlineSnapshot(`
       [
         {
-          "type": "tempocp.ready",
+          "type": "urpc.ready",
         },
       ]
     `)
@@ -59,7 +59,7 @@ describe('postMessage (host)', () => {
     await transport.send(Envelope.plain({ method: 'one' }))
     await transport.send(Envelope.plain({ method: 'two' }))
 
-    // Drop the host's hello (`tempocp.ready`) so the snapshot only shows
+    // Drop the host's hello (`urpc.ready`) so the snapshot only shows
     // the buffered user frames.
     peerSeen.length = 0
 

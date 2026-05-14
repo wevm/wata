@@ -6,25 +6,25 @@ const publicKey = '0x00112233445566778899aabbccddeeff00112233445566778899aabbccd
 describe('encode', () => {
   test('encodes a consumer-originated AAD', () => {
     expect(Aad.encode({ publicKey, role: Aad.role.consumer })).toMatchInlineSnapshot(
-      '"0x74656d706f63702f763100112233445566778899aabbccddeeff00112233445566778899aabbccddeeff01"',
+      '"0x757270632f763100112233445566778899aabbccddeeff00112233445566778899aabbccddeeff01"',
     )
   })
 
   test('encodes a host-originated AAD', () => {
     expect(Aad.encode({ publicKey, role: Aad.role.host })).toMatchInlineSnapshot(
-      '"0x74656d706f63702f763100112233445566778899aabbccddeeff00112233445566778899aabbccddeeff02"',
+      '"0x757270632f763100112233445566778899aabbccddeeff00112233445566778899aabbccddeeff02"',
     )
   })
 
-  test('always returns 43 bytes', () => {
+  test('always returns 40 bytes', () => {
     const aad = Aad.encode({ publicKey, role: Aad.role.consumer })
     expect(aad.length / 2 - 1).toBe(Aad.size)
   })
 
-  test('always begins with the ASCII `tempocp/v1` prefix', () => {
+  test('always begins with the ASCII `urpc/v1` prefix', () => {
     const aad = Aad.encode({ publicKey, role: Aad.role.host })
-    // 10-byte ASCII "tempocp/v1" → hex "74656d706f63702f7631"
-    expect(aad.slice(2, 2 + Aad.prefixSize * 2)).toBe('74656d706f63702f7631')
+    // 7-byte ASCII "urpc/v1" → hex "757270632f7631"
+    expect(aad.slice(2, 2 + Aad.prefixSize * 2)).toBe('757270632f7631')
   })
 
   test('rejects a publicKey that is not 32 bytes', () => {
@@ -63,28 +63,28 @@ describe('decode', () => {
   test('rejects a wrong-length AAD', () => {
     expect(() => Aad.decode('0xdead')).toThrowErrorMatchingInlineSnapshot(
       `
-      [ProtocolError: aad must be exactly 43 bytes
+      [ProtocolError: aad must be exactly 40 bytes
       Details: received 2 bytes]
     `,
     )
   })
 
   test('rejects a wrong AAD version prefix', () => {
-    // Mutate the first prefix byte (`t` → `T`).
-    const aad = ('0x54' +
-      '656d706f63702f7631' +
+    // Mutate the first prefix byte (`u` → `U`).
+    const aad = ('0x55' +
+      '7270632f7631' +
       publicKey.slice(2) +
       '01') as `0x${string}`
     expect(() => Aad.decode(aad)).toThrowErrorMatchingInlineSnapshot(
       `
       [ProtocolError: aad version prefix mismatch
-      Details: expected "tempocp/v1"]
+      Details: expected "urpc/v1"]
     `,
     )
   })
 
   test('rejects an invalid role byte', () => {
-    const aad = ('0x74656d706f63702f7631' +
+    const aad = ('0x757270632f7631' +
       publicKey.slice(2) +
       '03') as `0x${string}`
     expect(() => Aad.decode(aad)).toThrowError(Errors.ProtocolError)

@@ -24,13 +24,13 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 describe('hostUrl', () => {
   test('appends the well-known path', () => {
     expect(Discovery.hostUrl('https://wallet.example')).toMatchInlineSnapshot(
-      '"https://wallet.example/.well-known/tempocp/host.json"',
+      '"https://wallet.example/.well-known/urpc/host.json"',
     )
   })
 
   test('strips trailing slashes from the origin', () => {
     expect(Discovery.hostUrl('https://wallet.example//')).toMatchInlineSnapshot(
-      '"https://wallet.example/.well-known/tempocp/host.json"',
+      '"https://wallet.example/.well-known/urpc/host.json"',
     )
   })
 })
@@ -38,7 +38,7 @@ describe('hostUrl', () => {
 describe('consumerUrl', () => {
   test('appends the well-known path', () => {
     expect(Discovery.consumerUrl('https://app.example')).toMatchInlineSnapshot(
-      '"https://app.example/.well-known/tempocp/consumer.json"',
+      '"https://app.example/.well-known/urpc/consumer.json"',
     )
   })
 })
@@ -99,7 +99,7 @@ describe('fetchHost', () => {
     const host = await Discovery.fetchHost('https://wallet.example', { fetch: fetchFn })
     expect(host.identity_pubkey).toBe(validHostJson.identity_pubkey)
     expect((fetchFn as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0]).toBe(
-      'https://wallet.example/.well-known/tempocp/host.json',
+      'https://wallet.example/.well-known/urpc/host.json',
     )
   })
 

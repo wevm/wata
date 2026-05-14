@@ -5,10 +5,10 @@
  * Two control frames live alongside the normalized {@link "../../../core/Envelope".Envelope}
  * frames on the wire:
  *
- * - `tempocp.hello` — sent by the consumer after it acquires its handle.
- * - `tempocp.ready` — sent by the host once it observes the consumer's
- *                     hello (or as soon as its own handle is acquired in
- *                     opener-supplied flows).
+ * - `urpc.hello` — sent by the consumer after it acquires its handle.
+ * - `urpc.ready` — sent by the host once it observes the consumer's
+ *                  hello (or as soon as its own handle is acquired in
+ *                  opener-supplied flows).
  *
  * Until each side has seen the peer's frame, outbound envelopes are
  * buffered locally; the buffer is drained the moment readiness is
@@ -16,10 +16,10 @@
  */
 
 /** Outbound consumer-hello control frame. */
-export const consumerHello = { type: 'tempocp.hello' as const }
+export const consumerHello = { type: 'urpc.hello' as const }
 
 /** Outbound host-ready control frame. */
-export const hostReady = { type: 'tempocp.ready' as const }
+export const hostReady = { type: 'urpc.ready' as const }
 
 /** Discriminated union of every control frame the wire understands. */
 export type WireFrame = typeof consumerHello | typeof hostReady

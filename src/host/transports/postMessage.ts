@@ -4,8 +4,8 @@
  *
  * The host side is the mirror of the consumer transport: same `target`
  * callback shape, same origin pinning, but the ready handshake is
- * inverted (host emits `tempocp.ready`, waits for the consumer's
- * `tempocp.hello`). Unlike the consumer, the host's `target` is
+ * inverted (host emits `urpc.ready`, waits for the consumer's
+ * `urpc.hello`). Unlike the consumer, the host's `target` is
  * **optional** — it defaults to `window.opener ?? window.parent`, the
  * peer that opened this page (popup or iframe). Pass an explicit
  * `target` when you need a `MessagePort` or a non-default Window.
