@@ -1,7 +1,7 @@
 /**
- * Low-level crypto primitives used by the TempoCP transport layer.
+ * Low-level crypto primitives used by the uRPC transport layer.
  *
- * Per [TempoCP `core.md` §3–4](https://github.com/tempoxyz/tempocp/blob/main/specs/core.md),
+ * Per [uRPC `core.md` §3–4](https://github.com/tempoxyz/urpc/blob/main/specs/core.md),
  * each peer generates **one ephemeral Ed25519 keypair per session**. The same
  * keypair signs transport-level proofs (relay RFC 9421 auth, mobile-link
  * `identity_sig`, …) AND, converted to Montgomery form via the standard
