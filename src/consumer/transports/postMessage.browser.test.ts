@@ -282,7 +282,7 @@ describe('postMessage (consumer)', () => {
     expect(seen).toMatchInlineSnapshot(`
       [
         {
-          "type": "tempocp.hello",
+          "type": "urpc.hello",
         },
       ]
     `)
@@ -370,7 +370,7 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
     })
 
     // Start the consumer first; host is still un-connected. The transport
-    // should buffer the request until the host sends `tempocp.ready`.
+    // should buffer the request until the host sends `urpc.ready`.
     await consumer.start()
     const inflight = consumer.send({ method: 'ping', params: [] })
 

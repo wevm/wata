@@ -1,12 +1,12 @@
 /**
- * TempoCP discovery-document fetcher and parser.
+ * uRPC discovery-document fetcher and parser.
  *
  * Each peer publishes a small JSON manifest at a well-known path so the
  * other side can pin its identity key, allowed callback URLs, and (for
  * relay-using hosts) its preferred relay endpoint:
  *
- * - `https://<host>/.well-known/tempocp/host.json`     ({@link HostDocument})
- * - `https://<consumer>/.well-known/tempocp/consumer.json` ({@link ConsumerDocument})
+ * - `https://<host>/.well-known/urpc/host.json`     ({@link HostDocument})
+ * - `https://<consumer>/.well-known/urpc/consumer.json` ({@link ConsumerDocument})
  *
  * Phases that auto-fetch (e.g. `mobileLink({ host: 'https://wallet.example' })`)
  * call {@link fetchHost} / {@link fetchConsumer}. Pre-parsed callers can
@@ -17,7 +17,7 @@ import { z } from 'zod'
 
 import * as Errors from './Errors.js'
 
-const wellKnownPath = '/.well-known/tempocp'
+const wellKnownPath = '/.well-known/urpc'
 
 /** Zod schemas for the published discovery documents. */
 export namespace schema {
@@ -82,7 +82,7 @@ export type ConsumerDocument = z.output<typeof schema.consumerDocument>
  * @example
  * ```ts
  * Discovery.hostUrl('https://wallet.example')
- * // 'https://wallet.example/.well-known/tempocp/host.json'
+ * // 'https://wallet.example/.well-known/urpc/host.json'
  * ```
  */
 export function hostUrl(origin: string): string {
