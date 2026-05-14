@@ -64,15 +64,6 @@ export type Target = Window | MessagePort
  */
 export type CommonOptions<target extends Target> = {
   /**
-   * Called lazily on `start()` to acquire the postMessage target — the
-   * `Window` / `MessagePort` the transport will postMessage to. Lazy so
-   * popup-blocker-sensitive callers can wire `start()` to a user-gesture
-   * handler (button click). On the host side this typically just returns
-   * `window.opener` / `window.parent`; on the consumer it usually opens
-   * a popup or iframe.
-   */
-  target: () => target | Promise<target>
-  /**
    * Optional cleanup. Called from `close()` after the transport
    * unsubscribes its `message` listener. Defaults to `handle.close?.()`.
    */
@@ -82,6 +73,15 @@ export type CommonOptions<target extends Target> = {
    * received. Defaults to the global `window`.
    */
   source?: WindowLike | undefined
+  /**
+   * Called lazily on `start()` to acquire the postMessage target — the
+   * `Window` / `MessagePort` the transport will postMessage to. Lazy so
+   * popup-blocker-sensitive callers can wire `start()` to a user-gesture
+   * handler (button click). On the host side this typically just returns
+   * `window.opener` / `window.parent`; on the consumer it usually opens
+   * a popup or iframe.
+   */
+  target: () => target | Promise<target>
 }
 
 /**
@@ -107,10 +107,10 @@ export type Options<target extends Target> = target extends MessagePort
 
 /** Minimal `Window`-shaped contract used internally. */
 export type WindowLike = {
-  postMessage: (data: unknown, targetOrigin: string) => void
   addEventListener: Window['addEventListener']
-  removeEventListener: Window['removeEventListener']
   closed?: boolean
+  postMessage: (data: unknown, targetOrigin: string) => void
+  removeEventListener: Window['removeEventListener']
 }
 
 /**
@@ -130,9 +130,9 @@ export function postMessage<const target extends Target>(
   options: Options<target>,
 ): Transport.Transport<'consumer'> {
   return createSide({
-    role: 'consumer',
-    handshake: { send: protocol.consumerHello, expect: protocol.hostReady.type },
+    handshake: { expect: protocol.hostReady.type, send: protocol.consumerHello },
     options,
+    role: 'consumer',
   })
 }
 
@@ -154,7 +154,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
   // listeners attached, hello sent). After close, drops back to `false`,
   // and `start()` / `send()` can re-acquire — popups closing externally
   // is a normal end-of-session event, not a permanent transport failure.
-  const state = { started: false, ready: false }
+  const state = { ready: false, started: false }
   let buffered: Envelope.Envelope[] = []
   let startPromise: Promise<void> | undefined
   // Widened to `Target` internally — the public `target` generic constrains
@@ -324,17 +324,6 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
   }
 
   return {
-    role,
-    exchange: 'ongoing',
-    start,
-    async send(envelope) {
-      if (!state.started) await start()
-      if (!state.ready) {
-        buffered.push(envelope)
-        return
-      }
-      postRaw(envelope)
-    },
     async close(cause) {
       if (!state.started) return
       const handle_local = handle
@@ -353,7 +342,18 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
         emitClose(cause)
       }
     },
+    exchange: 'ongoing',
     on: emitter.on,
+    role,
+    async send(envelope) {
+      if (!state.started) await start()
+      if (!state.ready) {
+        buffered.push(envelope)
+        return
+      }
+      postRaw(envelope)
+    },
+    start,
   }
 }
 
@@ -362,12 +362,12 @@ type PostMessageOptions<target extends Target> = Options<target>
 export declare namespace createSide {
   /** Parameters for {@link createSide}. */
   type Options<role extends 'consumer' | 'host', target extends Target> = {
-    /** Side of the protocol this transport speaks for. */
-    role: role
     /** Outbound control frame and the inbound frame type to wait for. */
-    handshake: { send: protocol.WireFrame; expect: protocol.WireFrame['type'] }
+    handshake: { expect: protocol.WireFrame['type']; send: protocol.WireFrame }
     /** Caller-supplied options for the underlying `postMessage` transport. */
     options: PostMessageOptions<target>
+    /** Side of the protocol this transport speaks for. */
+    role: role
   }
 }
 

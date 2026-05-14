@@ -40,12 +40,12 @@ export type Exchange = 'ongoing' | 'single_exchange'
  * carries the transport-level failure.
  */
 export type EventMap = {
-  /** Inbound envelope frame. */
-  message: Envelope.Envelope
   /** Transport closed (cleanly or with cause). */
   close: Error | undefined
   /** Transport-level failure. */
   error: Error
+  /** Inbound envelope frame. */
+  message: Envelope.Envelope
 }
 
 /**
@@ -53,22 +53,22 @@ export type EventMap = {
  * host-side, role-agnostic loopback — implements this shape.
  */
 export type Transport<role extends Role = Role> = {
-  /** Side of the protocol this transport speaks for. */
-  role: role
-  /** Lifetime model — see {@link Exchange}. */
-  exchange: Exchange
-  /** Open the transport. Resolves once the wire is ready to send and receive. */
-  start: () => Promise<void>
-  /** Send a single envelope frame to the peer. */
-  send: (envelope: Envelope.Envelope) => Promise<void>
   /** Close the transport. Idempotent. */
   close: (cause?: Error) => Promise<void>
+  /** Lifetime model — see {@link Exchange}. */
+  exchange: Exchange
   /**
    * Subscribe to a transport event. Listener receives the typed payload
    * directly. Pass `{ signal }` to scope the subscription to an
    * `AbortController`.
    */
   on: Events.Emitter<EventMap>['on']
+  /** Side of the protocol this transport speaks for. */
+  role: role
+  /** Send a single envelope frame to the peer. */
+  send: (envelope: Envelope.Envelope) => Promise<void>
+  /** Open the transport. Resolves once the wire is ready to send and receive. */
+  start: () => Promise<void>
 }
 
 /**

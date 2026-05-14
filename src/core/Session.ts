@@ -112,7 +112,7 @@ export declare namespace shared {
  * ```
  */
 export function derive(options: derive.Options): derive.ReturnType {
-  const { role, self, peer, transportId, transportContext } = options
+  const { peer, role, self, transportContext, transportId } = options
 
   const publicKey_consumer = role === 'consumer' ? self.publicKey : peer.publicKey
   const publicKey_host = role === 'consumer' ? peer.publicKey : self.publicKey
@@ -122,9 +122,9 @@ export function derive(options: derive.Options): derive.ReturnType {
   function deriveOne(tag: Direction): Hex.Hex {
     return Kdf.derive({
       ikm,
-      salt: publicKey_consumer,
-      info: buildInfo({ transportId, direction: tag, publicKey_host, transportContext }),
+      info: buildInfo({ direction: tag, publicKey_host, transportContext, transportId }),
       length: keySize,
+      salt: publicKey_consumer,
     })
   }
 
@@ -134,19 +134,19 @@ export function derive(options: derive.Options): derive.ReturnType {
 export declare namespace derive {
   /** Options for {@link derive}. */
   type Options = {
+    /** Peer X25519 public key. */
+    peer: { publicKey: Hex.Hex | Bytes.Bytes }
     /** Local role (`'consumer'` or `'host'`). */
     role: 'consumer' | 'host'
     /** Local X25519 keypair (typically `Crypto.randomKeypair().x25519`). */
     self: {
-      publicKey: Hex.Hex | Bytes.Bytes
       privateKey: Hex.Hex | Bytes.Bytes
+      publicKey: Hex.Hex | Bytes.Bytes
     }
-    /** Peer X25519 public key. */
-    peer: { publicKey: Hex.Hex | Bytes.Bytes }
-    /** Per-transport ASCII identifier (`'relay'`, `'mobile-link'`, …). */
-    transportId: string
     /** Per-transport anti-MITM material (default: empty bytes). */
     transportContext?: Hex.Hex | Bytes.Bytes | undefined
+    /** Per-transport ASCII identifier (`'relay'`, `'mobile-link'`, …). */
+    transportId: string
   }
 
   /** Result of {@link derive}. */
@@ -170,7 +170,7 @@ export declare namespace derive {
  * same context).
  */
 export function buildInfo(options: buildInfo.Options): Hex.Hex {
-  const { transportId, direction: tag, publicKey_host, transportContext } = options
+  const { direction: tag, publicKey_host, transportContext, transportId } = options
   const prefix = encoder.encode(`${infoPrefix}${transportId}/${tag}`)
   const hostBytes = Bytes.from(publicKey_host)
   const ctxBytes = transportContext === undefined ? new Uint8Array(0) : Bytes.from(transportContext)
@@ -185,13 +185,13 @@ export function buildInfo(options: buildInfo.Options): Hex.Hex {
 export declare namespace buildInfo {
   /** Options for {@link buildInfo}. */
   type Options = {
-    /** Per-transport ASCII identifier. */
-    transportId: string
     /** Direction tag (`c2h` or `h2c`). */
     direction: Direction
     /** Host's X25519 public key. */
     publicKey_host: Hex.Hex | Bytes.Bytes
     /** Per-transport anti-MITM material (default: empty). */
     transportContext?: Hex.Hex | Bytes.Bytes | undefined
+    /** Per-transport ASCII identifier. */
+    transportId: string
   }
 }

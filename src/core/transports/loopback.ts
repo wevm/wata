@@ -61,14 +61,14 @@ export declare namespace loopback {
 }
 
 type Peer = {
-  transport: Transport.Transport
   deliver: (envelope: Envelope.Envelope) => void
-  state: { started: boolean; closed: boolean }
+  state: { closed: boolean; started: boolean }
+  transport: Transport.Transport
 }
 
 function createSide<role extends 'consumer' | 'host'>(role: role) {
   const emitter = Events.create<Transport.EventMap>()
-  const state = { started: false, closed: false }
+  const state = { closed: false, started: false }
 
   // Frames delivered to this side before it has subscribed are buffered so
   // the test ordering doesn't depend on whether a `message` listener is
@@ -87,18 +87,6 @@ function createSide<role extends 'consumer' | 'host'>(role: role) {
   }
 
   const transport: Transport.Transport<role> = {
-    role,
-    exchange: 'ongoing',
-    async start() {
-      if (state.closed) throw new Transport.ClosedError('loopback transport already closed')
-      state.started = true
-    },
-    async send(envelope) {
-      if (state.closed) throw new Transport.ClosedError('loopback transport already closed')
-      if (!state.started) throw new Transport.ClosedError('loopback transport not started')
-      if (!peer) throw new Transport.ClosedError('loopback transport has no peer')
-      peer.deliver(envelope)
-    },
     async close(cause) {
       if (state.closed) return
       state.closed = true
@@ -106,6 +94,7 @@ function createSide<role extends 'consumer' | 'host'>(role: role) {
       // Cascade to peer so both sides observe the close.
       if (peer && !peer.state.closed) await peer.transport.close(cause)
     },
+    exchange: 'ongoing',
     on(type, listener, options) {
       emitter.on(type, listener, options)
       // Drain any frames queued before the first `message` listener
@@ -117,14 +106,25 @@ function createSide<role extends 'consumer' | 'host'>(role: role) {
           if (next !== undefined) emitter.emit('message', next)
         }
     },
+    role,
+    async send(envelope) {
+      if (state.closed) throw new Transport.ClosedError('loopback transport already closed')
+      if (!state.started) throw new Transport.ClosedError('loopback transport not started')
+      if (!peer) throw new Transport.ClosedError('loopback transport has no peer')
+      peer.deliver(envelope)
+    },
+    async start() {
+      if (state.closed) throw new Transport.ClosedError('loopback transport already closed')
+      state.started = true
+    },
   }
 
   return {
-    transport,
     deliver,
-    state,
     setPeer(value: Peer) {
       peer = value
     },
+    state,
+    transport,
   }
 }

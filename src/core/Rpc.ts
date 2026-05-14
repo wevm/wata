@@ -44,8 +44,8 @@ export type Params = readonly unknown[] | Record<string, unknown>
  * ```
  */
 export type Request<method extends string = string, params extends Params = Params> = {
-  jsonrpc: typeof version
   id: Id
+  jsonrpc: typeof version
   method: method
   params: params
 }
@@ -59,20 +59,20 @@ export type Notification<method extends string = string, params extends Params =
 
 /** A typed JSON-RPC success response. */
 export type Success<result = unknown> = {
-  jsonrpc: typeof version
   id: Id | null
+  jsonrpc: typeof version
   result: result
 }
 
 /** A typed JSON-RPC error response. */
 export type ErrorResponse<data = unknown> = {
-  jsonrpc: typeof version
-  id: Id | null
   error: {
     code: number
-    message: string
     data?: data
+    message: string
   }
+  id: Id | null
+  jsonrpc: typeof version
 }
 
 /** Either flavour of JSON-RPC response. */
@@ -93,7 +93,7 @@ export function request<const method extends string, const params extends Params
   options: request.Options<method, params>,
 ): Request<method, params> {
   const { id, method, params } = options
-  return { jsonrpc: version, id, method, params }
+  return { id, jsonrpc: version, method, params }
 }
 
 export declare namespace request {
@@ -143,7 +143,7 @@ export declare namespace notification {
  */
 export function success<const result>(options: success.Options<result>): Success<result> {
   const { id, result } = options
-  return { jsonrpc: version, id, result }
+  return { id, jsonrpc: version, result }
 }
 
 export declare namespace success {
@@ -165,25 +165,25 @@ export declare namespace success {
  * ```
  */
 export function error<const data = undefined>(options: error.Options<data>): ErrorResponse<data> {
-  const { id, code, message, data } = options
+  const { code, data, id, message } = options
   return {
-    jsonrpc: version,
+    error: data === undefined ? { code, message } : { code, data, message },
     id,
-    error: data === undefined ? { code, message } : { code, message, data },
+    jsonrpc: version,
   }
 }
 
 export declare namespace error {
   /** Options for {@link error}. */
   type Options<data> = {
-    /** Id of the request being answered (or `null` if the request id couldn't be parsed). */
-    id: Id | null
     /** JSON-RPC error code. */
     code: number
-    /** Human-readable error message. */
-    message: string
     /** Optional opaque error data. */
     data?: data
+    /** Id of the request being answered (or `null` if the request id couldn't be parsed). */
+    id: Id | null
+    /** Human-readable error message. */
+    message: string
   }
 }
 
@@ -200,8 +200,8 @@ export namespace schema {
 
   /** JSON-RPC 2.0 request. */
   export const request = z.object({
-    jsonrpc,
     id,
+    jsonrpc,
     method: z.string(),
     params,
   })
@@ -215,20 +215,20 @@ export namespace schema {
 
   /** JSON-RPC 2.0 success response. */
   export const success = z.object({
-    jsonrpc,
     id: id.nullable(),
+    jsonrpc,
     result: z.unknown(),
   })
 
   /** JSON-RPC 2.0 error response. */
   export const errorResponse = z.object({
-    jsonrpc,
-    id: id.nullable(),
     error: z.object({
       code: z.number(),
-      message: z.string(),
       data: z.unknown().optional(),
+      message: z.string(),
     }),
+    id: id.nullable(),
+    jsonrpc,
   })
 }
 

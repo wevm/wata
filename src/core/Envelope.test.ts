@@ -200,8 +200,8 @@ describe('parse', () => {
   test('rejects an unknown envelope type', () => {
     expect(() => Envelope.parse({ type: 'plain', payload: 1 })).toThrowErrorMatchingInlineSnapshot(
       `
-      [ProtocolError: invalid envelope
-      Details: type: Invalid discriminator value. Expected 'rpc-requests' | 'rpc-responses' | 'ready' | 'hello' | 'encrypted']
+    	[ProtocolError: invalid envelope
+    	Details: type: Invalid discriminator value. Expected 'encrypted' | 'hello' | 'ready' | 'rpc-requests' | 'rpc-responses']
     `,
     )
   })

@@ -94,7 +94,7 @@ function randomUuidV4(): string {
 /** Best-effort `Window` / `WindowProxy` shape detection. */
 export function isWindowLike(value: unknown): value is Window {
   if (typeof value !== 'object' || value === null) return false
-  const candidate = value as { postMessage?: unknown; addEventListener?: unknown }
+  const candidate = value as { addEventListener?: unknown; postMessage?: unknown }
   if (typeof candidate.postMessage !== 'function') return false
   try {
     return typeof candidate.addEventListener === 'function'
@@ -111,9 +111,9 @@ export function isWindowLike(value: unknown): value is Window {
 export function isPortLike(value: unknown): value is MessagePort {
   if (typeof value !== 'object' || value === null) return false
   const candidate = value as {
+    addEventListener?: unknown
     postMessage?: unknown
     start?: unknown
-    addEventListener?: unknown
   }
   if (typeof candidate.postMessage !== 'function') return false
   try {
