@@ -1,7 +1,7 @@
 /**
- * TempoCP session-key derivation.
+ * uRPC session-key derivation.
  *
- * Per [TempoCP `core.md` §5](https://github.com/tempoxyz/tempocp/blob/main/specs/core.md#key-agreement-and-derivation),
+ * Per [uRPC `core.md` §5](https://github.com/tempoxyz/urpc/blob/main/specs/core.md#key-agreement-and-derivation),
  * each peer derives a pair of 32-byte ChaCha20-Poly1305 keys — one per
  * direction — from a single X25519 ECDH shared secret:
  *
@@ -11,7 +11,7 @@
  * enc_key_consumer_to_host = HKDF-SHA256(
  *   IKM  = shared,
  *   salt = pubkey_consumer,                  ← raw 32 bytes (X25519 form)
- *   info = "tempocp/v1/" || transport_id || "/c2h"
+ *   info = "urpc/v1/" || transport_id || "/c2h"
  *          || pubkey_host || transport_context,
  *   L = 32
  * )
@@ -41,7 +41,7 @@ import * as Kdf from './Kdf.js'
 export const keySize = 32
 
 /** ASCII version prefix bound to every `info` blob. */
-export const infoPrefix = 'tempocp/v1/'
+export const infoPrefix = 'urpc/v1/'
 
 /** Direction tag values used in the HKDF `info` blob. */
 export const direction = {
@@ -162,7 +162,7 @@ export declare namespace derive {
  * Build the spec's HKDF `info` blob:
  *
  * ```text
- * "tempocp/v1/" || transport_id || "/" || direction || pubkey_host || transport_context
+ * "urpc/v1/" || transport_id || "/" || direction || pubkey_host || transport_context
  * ```
  *
  * Exposed for testing and for transport-specific helpers that need the

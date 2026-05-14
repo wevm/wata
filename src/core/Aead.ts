@@ -1,6 +1,6 @@
 /**
  * AEAD (Authenticated Encryption with Associated Data) primitives used by
- * the TempoCP transport layer.
+ * the uRPC transport layer.
  *
  * Pinned to **ChaCha20-Poly1305** (RFC 8439): 32-byte key, 12-byte nonce,
  * 16-byte authentication tag appended to the ciphertext. The protocol does

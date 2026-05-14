@@ -1,7 +1,7 @@
 /**
- * Per-direction nonce discipline for the TempoCP AEAD layer.
+ * Per-direction nonce discipline for the uRPC AEAD layer.
  *
- * Per [TempoCP `core.md` §6](https://github.com/tempoxyz/tempocp/blob/main/specs/core.md#encrypted-message-envelope-aead),
+ * Per [uRPC `core.md` §6](https://github.com/tempoxyz/urpc/blob/main/specs/core.md#encrypted-message-envelope-aead),
  * each direction maintains a 12-byte big-endian counter that is
  * **pre-incremented** before sealing — the very first wire nonce is
  * `0x00…01`, the second `0x00…02`, etc. The receiver enforces strictly-
@@ -25,7 +25,7 @@ import { Bytes, Hex } from 'ox'
 
 import * as Errors from './Errors.js'
 
-/** Length of a TempoCP AEAD nonce in bytes (matches ChaCha20-Poly1305). */
+/** Length of a uRPC AEAD nonce in bytes (matches ChaCha20-Poly1305). */
 export const size = 12
 
 /** Maximum 96-bit counter value before {@link encoder} refuses to emit further nonces. */
