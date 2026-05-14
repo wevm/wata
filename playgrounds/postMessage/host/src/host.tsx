@@ -1,47 +1,23 @@
 /**
  * Host-side React app for the postMessage playground.
  *
- * Minimal UI: status pill + a single "respond" button per pending
- * request + a compact log. Hardcoded result for `ping`; everything
- * else gets `{}`. The `request` listener stashes the raw event id and
- * `handshake.respond(id, result)` answers it later. No explicit
- * `start()` — `handshake.on(...)` lazy-starts the transport.
+ * Runs on its own dev server (5182) so it lives on a different origin
+ * from the consumer (5181) — exercising real cross-origin postMessage
+ * behavior. Detects the consumer (iframe parent or popup opener), opens
+ * a `Handshake` session, and lets the user manually respond/reject each
+ * inbound request via a text input + buttons. Renders its own log
+ * directly in the host window since cross-origin pages can't share a
+ * `BroadcastChannel`.
  */
 
 import { Handshake, postMessage } from 'handshakes/host'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Button, Input, Tag } from 'regen-ui'
 
 import * as Log from './Log.js'
 
 import './styles.css'
-
-/**
- * Mirrors {@link Log.useLog} but, for every push, also broadcasts the
- * entry on a same-origin `BroadcastChannel` so the consumer page can
- * render a host-side log panel under the host window chrome. We use a
- * `BroadcastChannel` (not `window.postMessage`) so the relay traffic
- * doesn't reach the handshake transport's envelope parser.
- */
-function useRelayLog(): Log.Log {
-  const base = Log.useLog()
-  return useMemo<Log.Log>(
-    () => ({
-      entries: base.entries,
-      clear: base.clear,
-      push: (entry) => {
-        base.push(entry)
-        try {
-          const channel = new BroadcastChannel('handshakes-host-log')
-          channel.postMessage(entry)
-          channel.close()
-        } catch {}
-      },
-    }),
-    [base],
-  )
-}
 
 const stateIntent = {
   idle: 'neutral',
@@ -58,7 +34,7 @@ function App() {
   const [state, setState] = useState<State>('idle')
   const [pending, setPending] = useState<readonly Pending[]>([])
   const [pongs, setPongs] = useState<Record<string, string>>({})
-  const log = useRelayLog()
+  const log = Log.useLog()
   const handshakeRef = useRef<Handshake.Host | undefined>(undefined)
   const startedRef = useRef(false)
 
@@ -75,8 +51,7 @@ function App() {
     const handshake = Handshake.create({
       transport: postMessage<Window>({
         targetOrigin: peer.origin ?? '*',
-        open: () => peer.window,
-        close: () => {},
+        target: () => peer.window,
       }),
     })
     handshakeRef.current = handshake
@@ -154,43 +129,54 @@ function App() {
   )
 
   return (
-    <div className="flex h-screen flex-col bg-surface">
-      {pending.length === 0 ? (
-        <div className="flex items-center gap-[8px] p-[12px]">
-          <Tag intent={stateIntent[state]} dot>
-            {state}
-          </Tag>
-          <span className="copy-13 text-foreground-tertiary">no pending requests</span>
-        </div>
-      ) : (
-        pending.map((item) => {
-          const key = String(item.id)
-          return (
-            <div
-              key={key}
-              className="flex items-center gap-[8px] border-b border-border px-[12px] py-[8px] min-w-0"
-            >
-              <span className="copy-13 flex-1 truncate text-foreground min-w-0">
-                {consumerMessage(item.params)}
-              </span>
-              <Input
-                size="small"
-                value={pongs[key] ?? ''}
-                onChange={(event) =>
-                  setPongs((prev) => ({ ...prev, [key]: event.target.value }))
-                }
-                placeholder="pong from host"
-              />
-              <Button variant="primary" size="small" onClick={() => respond(item)}>
-                respond
-              </Button>
-              <Button variant="secondary" size="small" onClick={() => reject(item)}>
-                reject
-              </Button>
-            </div>
-          )
-        })
-      )}
+    <div className="flex flex-col bg-background">
+      <header className="flex items-center gap-[8px] border-b border-border px-[14px] py-[10px]">
+        <strong className="copy-13">handshakes · postMessage · host</strong>
+        <Tag intent={stateIntent[state]} dot>
+          {state}
+        </Tag>
+      </header>
+
+      <section className="flex flex-col">
+        {pending.length === 0 ? (
+          <div className="copy-13 px-[14px] py-[12px] text-foreground-tertiary">
+            no pending requests
+          </div>
+        ) : (
+          pending.map((item) => {
+            const key = String(item.id)
+            return (
+              <div
+                key={key}
+                className="flex items-center gap-[8px] border-b border-border px-[14px] py-[8px] min-w-0"
+              >
+                <span className="copy-13 flex-1 truncate text-foreground min-w-0">
+                  {consumerMessage(item.params)}
+                </span>
+                <Input
+                  size="small"
+                  value={pongs[key] ?? ''}
+                  onChange={(event) =>
+                    setPongs((prev) => ({ ...prev, [key]: event.target.value }))
+                  }
+                  placeholder="pong from host"
+                />
+                <Button variant="primary" size="small" onClick={() => respond(item)}>
+                  respond
+                </Button>
+                <Button variant="secondary" size="small" onClick={() => reject(item)}>
+                  reject
+                </Button>
+              </div>
+            )
+          })
+        )}
+      </section>
+
+      <section className="border-t border-border p-[16px]">
+        <div className="copy-13 mb-[8px] font-medium text-foreground-secondary">host log</div>
+        <Log.LogView log={log} />
+      </section>
     </div>
   )
 }

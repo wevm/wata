@@ -7,19 +7,23 @@ declare const portHandle: MessagePort
 describe('postMessage (host)', () => {
   test('returns a host-role transport', () => {
     const transport = postMessage({
-      open: () => popupHandle,
+      target: () => popupHandle,
       targetOrigin: 'https://app.example',
     })
     expectTypeOf(transport).toEqualTypeOf<Transport.Transport<'host'>>()
     expectTypeOf(transport.role).toEqualTypeOf<'host'>()
   })
 
-  test('Window targets require targetOrigin', () => {
-    // @ts-expect-error `targetOrigin` is required for Window targets
-    postMessage({ open: () => popupHandle })
+  test('targetOrigin is optional (defaults to "*")', () => {
+    postMessage({ target: () => popupHandle })
+  })
+
+  test('target is optional (defaults to window.opener / window.parent)', () => {
+    postMessage()
+    postMessage({ targetOrigin: 'https://app.example' })
   })
 
   test('MessagePort targets allow targetOrigin to be omitted', () => {
-    postMessage({ open: () => portHandle })
+    postMessage({ target: () => portHandle })
   })
 })

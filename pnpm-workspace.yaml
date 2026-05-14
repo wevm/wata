@@ -20,6 +20,9 @@ catalog:
 
 minimumReleaseAge: 1440
 
+overrides:
+  handshakes: workspace:*
+
 minimumReleaseAgeExclude:
   - regen-ui
   - vite-plus
@@ -30,6 +33,7 @@ nodeOptions: '--disable-warning=ExperimentalWarning --disable-warning=Deprecatio
 
 packages:
   - .
+  - examples/*
   - playgrounds/*
 
 shellEmulator: true
