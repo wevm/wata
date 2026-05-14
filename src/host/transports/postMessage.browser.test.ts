@@ -1,5 +1,12 @@
-import { Envelope } from 'handshakes'
-import { postMessage } from 'handshakes/host'
+import {
+  Envelope,
+  Handshake,
+  postMessage as postMessage_consumer,
+} from 'handshakes'
+import {
+  Handshake as HostHandshake,
+  postMessage,
+} from 'handshakes/host'
 import { describe, expect, test } from 'vp/test'
 
 import * as protocol from '../../consumer/transports/internal/protocol.js'
@@ -87,3 +94,80 @@ describe('postMessage (host)', () => {
     expect(transport.exchange).toBe('ongoing')
   })
 })
+
+/**
+ * End-to-end coverage for the host-side `Handshake.respond` / `Handshake.reject`
+ * API over real `postMessage` (`MessageChannel` peers). Mirrors
+ * `src/Handshake.test.ts` but on the wire, and exercises the
+ * "no listener at all → method not found" fallthrough too.
+ */
+describe('Handshake.respond / Handshake.reject (postMessage)', () => {
+  function pair() {
+    const { port1, port2 } = new MessageChannel()
+    const consumer = Handshake.create({ transport: postMessage_consumer({ open: () => port1 }) })
+    const host = HostHandshake.create({ transport: postMessage({ open: () => port2 }) })
+    return { consumer, host }
+  }
+
+  test('handshake.respond settles a pending request by id (lazy connect)', async () => {
+    // Both sides skip the explicit `start()` — `on(...)`
+    // and `send(...)` should self-start the transports.
+    const { consumer, host } = pair()
+
+    let captured: { id: number | string } | undefined
+    host.on('request', (event) => {
+      captured = { id: event.id }
+    })
+
+    const inflight = consumer.send({ method: 'ping', params: [] })
+    // Wait until the host has actually received the request frame.
+    await waitFor(() => captured !== undefined)
+    host.respond(captured!.id, { ok: true })
+
+    expect((await inflight).result).toMatchInlineSnapshot(`
+      {
+        "ok": true,
+      }
+    `)
+
+    await consumer.close()
+  })
+
+  test('handshake.reject sends a JSON-RPC error response by id', async () => {
+    const { consumer, host } = pair()
+    await Promise.all([consumer.start(), host.start()])
+
+    let captured: { id: number | string } | undefined
+    host.on('request', (event) => {
+      captured = { id: event.id }
+    })
+
+    const inflight = consumer.send({ method: 'ping', params: [] })
+    await waitFor(() => captured !== undefined)
+
+    host.reject(captured!.id, { code: -32000, message: 'denied' })
+
+    await expect(inflight).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: denied]`)
+
+    await consumer.close()
+  })
+
+  test('no listener at all → method not found', async () => {
+    const { consumer, host } = pair()
+    await Promise.all([consumer.start(), host.start()])
+
+    await expect(
+      consumer.send({ method: 'ping', params: [] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: method not found]`)
+
+    await consumer.close()
+  })
+})
+
+async function waitFor(predicate: () => boolean, timeout = 1000): Promise<void> {
+  const deadline = Date.now() + timeout
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('waitFor timed out')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}

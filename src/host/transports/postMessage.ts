@@ -16,7 +16,7 @@
  *   targetOrigin: 'https://app.example',
  * })
  * const handshake = Handshake.create({ transport })
- * await handshake.connect()
+ * await handshake.start()
  * ```
  */
 

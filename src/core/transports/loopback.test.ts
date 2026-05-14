@@ -16,7 +16,7 @@ describe('loopback', () => {
     await host.start()
 
     const received: Envelope.Envelope[] = []
-    host.onMessage((envelope) => received.push(envelope))
+    host.on('message', (envelope) => received.push(envelope))
 
     await consumer.send(Envelope.plain({ method: 'ping', params: [] }))
 
@@ -39,7 +39,7 @@ describe('loopback', () => {
     await host.start()
 
     const received: Envelope.Envelope[] = []
-    consumer.onMessage((envelope) => received.push(envelope))
+    consumer.on('message', (envelope) => received.push(envelope))
 
     await host.send(Envelope.plain('hello'))
 
@@ -73,7 +73,7 @@ describe('loopback', () => {
     })
 
     const inbound = new Promise<Envelope.Envelope>((resolve) => {
-      host.onMessage((envelope) => resolve(envelope))
+      host.on('message', (envelope) => resolve(envelope))
     })
 
     await consumer.send(Envelope.encrypted({ counter, ciphertext }))
@@ -91,7 +91,7 @@ describe('loopback', () => {
     expect(plaintext).toMatchInlineSnapshot('"0xdeadbeef"')
   })
 
-  test('buffers frames delivered before onMessage is attached', async () => {
+  test('buffers frames delivered before a `message` listener is attached', async () => {
     const { consumer, host } = Loopback.loopback()
     await consumer.start()
     await host.start()
@@ -100,7 +100,7 @@ describe('loopback', () => {
     await consumer.send(Envelope.plain('second'))
 
     const received: unknown[] = []
-    host.onMessage((envelope) => {
+    host.on('message', (envelope) => {
       if (envelope.type === 'plain') received.push(envelope.payload)
     })
 
@@ -112,15 +112,15 @@ describe('loopback', () => {
     `)
   })
 
-  test('close cascades to the peer and fires onClose on both sides', async () => {
+  test('close cascades to the peer and fires `close` on both sides', async () => {
     const { consumer, host } = Loopback.loopback()
     await consumer.start()
     await host.start()
 
     const consumerCloses: (Error | undefined)[] = []
     const hostCloses: (Error | undefined)[] = []
-    consumer.onClose((cause) => consumerCloses.push(cause))
-    host.onClose((cause) => hostCloses.push(cause))
+    consumer.on('close', (cause) => consumerCloses.push(cause))
+    host.on('close', (cause) => hostCloses.push(cause))
 
     await consumer.close()
 
@@ -156,11 +156,16 @@ describe('loopback', () => {
     await host.start()
 
     const received: unknown[] = []
-    const unsubscribe = host.onMessage((envelope) => {
-      if (envelope.type === 'plain') received.push(envelope.payload)
-    })
+    const controller = new AbortController()
+    host.on(
+      'message',
+      (envelope) => {
+        if (envelope.type === 'plain') received.push(envelope.payload)
+      },
+      { signal: controller.signal },
+    )
     await consumer.send(Envelope.plain('first'))
-    unsubscribe()
+    controller.abort()
     await consumer.send(Envelope.plain('second'))
 
     expect(received).toMatchInlineSnapshot(`
@@ -196,8 +201,8 @@ describe('handshake + loopback integration', () => {
     const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
     const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
 
-    await consumer.bootstrap()
-    await host.connect()
+    await consumer.start()
+    await host.start()
 
     host.on('request', (event) => {
       if (event.method === 'eth_blockNumber') event.respond('0x1')
@@ -217,8 +222,8 @@ describe('handshake + loopback integration', () => {
     const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
     const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
 
-    await consumer.bootstrap()
-    await host.connect()
+    await consumer.start()
+    await host.start()
 
     host.on('request', async (event) => {
       // Reverse-order responses to verify id correlation rather than
@@ -250,8 +255,8 @@ describe('handshake + loopback integration', () => {
     const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
     const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
 
-    await consumer.bootstrap()
-    await host.connect()
+    await consumer.start()
+    await host.start()
 
     host.on('request', () => {
       throw new Error('kaboom')
@@ -267,8 +272,8 @@ describe('handshake + loopback integration', () => {
     const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
     const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
 
-    await consumer.bootstrap()
-    await host.connect()
+    await consumer.start()
+    await host.start()
 
     let consumerClosed = false
     let hostClosed = false

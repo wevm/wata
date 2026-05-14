@@ -89,6 +89,7 @@
 - **Dev-only UIs use semantic HTML only** — approval surfaces and debug pages should use plain HTML with no inline styles or CSS. Zero styling.
 - **Short spinner messages** — keep `@clack/prompts` spinner text short to avoid terminal line wrapping; show URLs and long content as static `Clack.log.info()` lines, not inside spinner text.
 - **Understand full request flow before changing CLI UX** — trace the complete path (CLI → server → browser → server → CLI polling) before modifying feedback or error handling in CLI scripts.
+- **Unified event surface via `rettime`** — every public/internal event emitter uses `rettime`'s `Emitter` under the hood, but is exposed through the payload-style wrapper at `src/core/Events.ts`: `Events.create<{ eventName: payload }>()` returns an emitter with `.on(eventName, listener)` (listener receives the payload directly) and `.emit(eventName, payload)` (no `TypedEvent` boilerplate at the call site). Never define `on*` named callback methods or props (no `onMessage`, `onClose`, `onError`, …) and never construct rettime's `TypedEvent` outside `src/core/Events.ts`. Other modules import via `import * as Events from '../core/Events.js'`; the bare `rettime` package is only imported in `Events.ts` itself.
 
 ## Learned Workspace Facts
 
