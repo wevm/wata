@@ -8,7 +8,10 @@
 //   (`deviceCode`, `webhookCallback`, `mobileLink`, `mobileWebAuth`, `relay`).
 
 export * as Handshake from './Handshake.js'
+export * as Kv from '../core/Kv.js'
 export * as Transport from '../core/Transport.js'
 
 export { postMessage } from './transports/postMessage.js'
 export * as PostMessage from './transports/postMessage.js'
+export { deviceCode } from './transports/deviceCode.js'
+export * as DeviceCode from './transports/deviceCode.js'

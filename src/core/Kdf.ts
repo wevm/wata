@@ -71,12 +71,12 @@ export function expand(options: expand.Options): Hex.Hex {
 export declare namespace expand {
   /** Options for {@link expand}. */
   type Options = {
-    /** Pseudorandom key produced by {@link extract}. */
-    prk: Hex.Hex | Bytes.Bytes
     /** Optional context/application-specific label (RFC 5869 §2.3). */
     info?: Hex.Hex | Bytes.Bytes | undefined
     /** Output length in bytes. RFC 5869 §2.3 caps this at `255 * HashLen` (8160 for SHA-256). */
     length: number
+    /** Pseudorandom key produced by {@link extract}. */
+    prk: Hex.Hex | Bytes.Bytes
   }
 }
 
