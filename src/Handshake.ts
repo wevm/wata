@@ -196,23 +196,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     methodById.clear()
   }
 
-  transport.on('message', (envelope) => {
-    if (envelope.type !== 'plain') {
-      emitter.emit(
-        'error',
-        new Errors.ProtocolError(
-          'consumer received an encrypted envelope on a plain transport',
-        ),
-      )
-      return
-    }
-    let message: Rpc.Envelope
-    try {
-      message = Rpc.parse(envelope.payload)
-    } catch (cause) {
-      emitter.emit('error', cause as Error)
-      return
-    }
+  function handleResponse(message: Rpc.Response) {
     if ('error' in message) {
       const id = message.id
       if (id === null) return
@@ -224,23 +208,44 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       deferred.reject(new Rpc.RpcError(text, { code, data }))
       return
     }
-    if ('result' in message) {
-      const id = message.id
-      if (id === null) return
-      const deferred = pending.get(id)
-      if (!deferred) return
-      pending.delete(id)
-      const method = methodById.get(id)
-      methodById.delete(id)
-      try {
-        const validated = schema
-          ? validateResultIfKnown(schema, method, message.result)
-          : message.result
-        deferred.resolve({ id, result: validated })
-      } catch (cause) {
-        deferred.reject(cause as Error)
-      }
+    const id = message.id
+    if (id === null) return
+    const deferred = pending.get(id)
+    if (!deferred) return
+    pending.delete(id)
+    const method = methodById.get(id)
+    methodById.delete(id)
+    try {
+      const validated = schema
+        ? validateResultIfKnown(schema, method, message.result)
+        : message.result
+      deferred.resolve({ id, result: validated })
+    } catch (cause) {
+      deferred.reject(cause as Error)
     }
+  }
+
+  transport.on('message', (envelope) => {
+    // Pre-keying mode: only `rpc-responses` (and pre-keying `ready` /
+    // `hello`) are meaningful. Encrypted frames are rejected here until
+    // the AEAD layer lands; once it does, this branch flips to "must
+    // be `encrypted`" per spec §7 mode discipline.
+    if (envelope.type === 'encrypted') {
+      emitter.emit(
+        'error',
+        new Errors.ProtocolError(
+          'consumer received an encrypted envelope before key derivation',
+        ),
+      )
+      return
+    }
+    if (envelope.type === 'rpc-responses') {
+      for (const message of envelope.payload) handleResponse(message)
+      return
+    }
+    // `rpc-requests`, `ready`, `hello` are not currently routed into the
+    // consumer-side surface; ignored. (Hosts don't issue requests today;
+    // `ready`/`hello` ride at the transport layer.)
   })
 
   transport.on('close', (cause) => {
@@ -287,7 +292,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
 
       try {
         await transport.send(
-          Envelope.plain(Rpc.request({ id, method: opts.method, params: opts.params })),
+          Envelope.rpcRequests([Rpc.request({ id, method: opts.method, params: opts.params })]),
         )
       } catch (cause) {
         pending.delete(id)
@@ -301,7 +306,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       if (!state.started) await start()
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
       await transport.send(
-        Envelope.plain(Rpc.notification({ method: opts.method, params: opts.params })),
+        Envelope.rpcRequests([Rpc.notification({ method: opts.method, params: opts.params })]),
       )
     },
     async close(cause) {

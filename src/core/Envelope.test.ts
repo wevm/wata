@@ -1,89 +1,226 @@
-import { Envelope, Errors } from 'handshakes'
+import { Envelope, Rpc } from 'handshakes'
 import { describe, expect, test } from 'vp/test'
 
-describe('plain', () => {
-  test('wraps a payload as { type: "plain" }', () => {
-    expect(Envelope.plain({ method: 'ping', params: [] })).toMatchInlineSnapshot(`
+describe('rpcRequests', () => {
+  test('wraps a single request', () => {
+    expect(
+      Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
+    ).toMatchInlineSnapshot(`
+      {
+        "payload": [
+          {
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": [],
+          },
+        ],
+        "type": "rpc-requests",
+      }
+    `)
+  })
+
+  test('wraps a batch of requests + notifications', () => {
+    expect(
+      Envelope.rpcRequests([
+        Rpc.request({ id: 1, method: 'ping', params: [] }),
+        Rpc.notification({ method: 'announce', params: { msg: 'hi' } }),
+      ]),
+    ).toMatchInlineSnapshot(`
+      {
+        "payload": [
+          {
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": [],
+          },
+          {
+            "jsonrpc": "2.0",
+            "method": "announce",
+            "params": {
+              "msg": "hi",
+            },
+          },
+        ],
+        "type": "rpc-requests",
+      }
+    `)
+  })
+})
+
+describe('rpcResponses', () => {
+  test('wraps a single success response', () => {
+    expect(
+      Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]),
+    ).toMatchInlineSnapshot(`
+      {
+        "payload": [
+          {
+            "id": 1,
+            "jsonrpc": "2.0",
+            "result": {
+              "ok": true,
+            },
+          },
+        ],
+        "type": "rpc-responses",
+      }
+    `)
+  })
+
+  test('wraps a single error response', () => {
+    expect(
+      Envelope.rpcResponses([Rpc.error({ id: 1, code: -32601, message: 'method not found' })]),
+    ).toMatchInlineSnapshot(`
+      {
+        "payload": [
+          {
+            "error": {
+              "code": -32601,
+              "message": "method not found",
+            },
+            "id": 1,
+            "jsonrpc": "2.0",
+          },
+        ],
+        "type": "rpc-responses",
+      }
+    `)
+  })
+})
+
+describe('ready', () => {
+  test('defaults the payload to `{}`', () => {
+    expect(Envelope.ready()).toMatchInlineSnapshot(`
+      {
+        "payload": {},
+        "type": "ready",
+      }
+    `)
+  })
+
+  test('passes through caller metadata', () => {
+    expect(Envelope.ready({ url: 'https://wallet.example' })).toMatchInlineSnapshot(`
       {
         "payload": {
-          "method": "ping",
-          "params": [],
+          "url": "https://wallet.example",
         },
-        "type": "plain",
+        "type": "ready",
+      }
+    `)
+  })
+})
+
+describe('hello', () => {
+  test('defaults the payload to `{}`', () => {
+    expect(Envelope.hello()).toMatchInlineSnapshot(`
+      {
+        "payload": {},
+        "type": "hello",
       }
     `)
   })
 })
 
 describe('encrypted', () => {
-  test('serializes counter as a decimal string', () => {
-    expect(Envelope.encrypted({ counter: 12345n, ciphertext: '0xdeadbeef' }))
-      .toMatchInlineSnapshot(`
+  test('builds the spec wire shape with base64url nonce + ct', () => {
+    expect(
+      Envelope.encrypted({
+        from: Envelope.from.consumer,
+        nonce: '0x000000000000000000000001',
+        ciphertext: '0xdeadbeef',
+      }),
+    ).toMatchInlineSnapshot(`
       {
-        "ciphertext": "0xdeadbeef",
-        "counter": "12345",
+        "payload": {
+          "ct": "3q2-7w",
+          "from": "consumer",
+          "nonce": "AAAAAAAAAAAAAAAB",
+          "v": 1,
+        },
         "type": "encrypted",
       }
     `)
   })
 
-  test('handles 96-bit counter without precision loss', () => {
-    const counter = (1n << 95n) + 7n
-    const env = Envelope.encrypted({ counter, ciphertext: '0xff' })
-    expect(env.counter).toMatchInlineSnapshot('"39614081257132168796771975175"')
-    expect(Envelope.counterOf(env)).toBe(counter)
+  test('round-trips through `toEncrypted`', () => {
+    const env = Envelope.encrypted({
+      from: Envelope.from.host,
+      nonce: '0x000000000000000000000002',
+      ciphertext: '0xff00ff00',
+    })
+    expect(Envelope.toEncrypted(env)).toMatchInlineSnapshot(`
+      {
+        "ciphertext": "0xff00ff00",
+        "from": "host",
+        "nonce": "0x000000000000000000000002",
+      }
+    `)
   })
 })
 
 describe('parse', () => {
-  test('round trips a plain envelope', () => {
-    const env = Envelope.plain({ ok: true })
+  test('parses a JSON-encoded `rpc-requests` envelope', () => {
+    const env = Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })])
     expect(Envelope.parse(JSON.parse(JSON.stringify(env)))).toMatchInlineSnapshot(`
       {
-        "payload": {
-          "ok": true,
-        },
-        "type": "plain",
+        "payload": [
+          {
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": [],
+          },
+        ],
+        "type": "rpc-requests",
       }
     `)
   })
 
-  test('round trips an encrypted envelope', () => {
-    const env = Envelope.encrypted({ counter: 0n, ciphertext: '0xdeadbeef' })
+  test('parses a JSON-encoded `encrypted` envelope', () => {
+    const env = Envelope.encrypted({
+      from: Envelope.from.consumer,
+      nonce: '0x000000000000000000000001',
+      ciphertext: '0xdeadbeef',
+    })
     expect(Envelope.parse(JSON.parse(JSON.stringify(env)))).toMatchInlineSnapshot(`
       {
-        "ciphertext": "0xdeadbeef",
-        "counter": "0",
+        "payload": {
+          "ct": "3q2-7w",
+          "from": "consumer",
+          "nonce": "AAAAAAAAAAAAAAAB",
+          "v": 1,
+        },
         "type": "encrypted",
       }
     `)
   })
 
-  test('rejects an unknown type', () => {
-    expect(() => Envelope.parse({ type: 'bogus', payload: 1 })).toThrowErrorMatchingInlineSnapshot(
+  test('rejects an unknown envelope type', () => {
+    expect(() => Envelope.parse({ type: 'plain', payload: 1 })).toThrowErrorMatchingInlineSnapshot(
       `
       [ProtocolError: invalid envelope
-      Details: Invalid discriminator value. Expected 'plain' | 'encrypted']
+      Details: type: Invalid discriminator value. Expected 'rpc-requests' | 'rpc-responses' | 'ready' | 'hello' | 'encrypted']
     `,
     )
   })
 
-  test('rejects encrypted envelope with non-decimal counter', () => {
+  test('rejects an encrypted envelope with invalid base64url ciphertext', () => {
     expect(() =>
-      Envelope.parse({ type: 'encrypted', counter: 'abc', ciphertext: '0xff' }),
-    ).toThrowError(Errors.ProtocolError)
+      Envelope.parse({
+        type: 'encrypted',
+        payload: { v: 1, from: 'consumer', nonce: 'AAAA', ct: '!!!!' },
+      }),
+    ).toThrowError('invalid envelope')
   })
 
-  test('rejects encrypted envelope with non-hex ciphertext', () => {
+  test('rejects an encrypted envelope with the wrong protocol version', () => {
     expect(() =>
-      Envelope.parse({ type: 'encrypted', counter: '0', ciphertext: 'nope' }),
-    ).toThrowError(Errors.ProtocolError)
-  })
-})
-
-describe('counterOf', () => {
-  test('parses the counter string into a bigint', () => {
-    const env = Envelope.encrypted({ counter: 99n, ciphertext: '0x' })
-    expect(Envelope.counterOf(env)).toBe(99n)
+      Envelope.parse({
+        type: 'encrypted',
+        payload: { v: 2, from: 'consumer', nonce: 'AAAA', ct: 'AAAA' },
+      }),
+    ).toThrowError('invalid envelope')
   })
 })

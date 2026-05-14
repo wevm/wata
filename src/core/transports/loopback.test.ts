@@ -1,4 +1,4 @@
-import { Aad, Aead, Envelope, Handshake, Nonce, Schema, Transport } from 'handshakes'
+import { Aad, Aead, Envelope, Handshake, Nonce, Rpc, Schema, Transport } from 'handshakes'
 import { Handshake as HostHandshake } from 'handshakes/host'
 import type { Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
@@ -10,7 +10,7 @@ const sessionKey: Hex.Hex = `0x${'11'.repeat(32)}`
 const publicKey: Hex.Hex = `0x${'22'.repeat(32)}`
 
 describe('loopback', () => {
-  test('round trips a plain envelope from consumer to host', async () => {
+  test('round trips an `rpc-requests` envelope from consumer to host', async () => {
     const { consumer, host } = Loopback.loopback()
     await consumer.start()
     await host.start()
@@ -18,22 +18,28 @@ describe('loopback', () => {
     const received: Envelope.Envelope[] = []
     host.on('message', (envelope) => received.push(envelope))
 
-    await consumer.send(Envelope.plain({ method: 'ping', params: [] }))
+    await consumer.send(
+      Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
+    )
 
     expect(received).toMatchInlineSnapshot(`
       [
         {
-          "payload": {
-            "method": "ping",
-            "params": [],
-          },
-          "type": "plain",
+          "payload": [
+            {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "ping",
+              "params": [],
+            },
+          ],
+          "type": "rpc-requests",
         },
       ]
     `)
   })
 
-  test('round trips a plain envelope from host to consumer', async () => {
+  test('round trips an `rpc-responses` envelope from host to consumer', async () => {
     const { consumer, host } = Loopback.loopback()
     await consumer.start()
     await host.start()
@@ -41,13 +47,19 @@ describe('loopback', () => {
     const received: Envelope.Envelope[] = []
     consumer.on('message', (envelope) => received.push(envelope))
 
-    await host.send(Envelope.plain('hello'))
+    await host.send(Envelope.rpcResponses([Rpc.success({ id: 1, result: 'hello' })]))
 
     expect(received).toMatchInlineSnapshot(`
       [
         {
-          "payload": "hello",
-          "type": "plain",
+          "payload": [
+            {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "result": "hello",
+            },
+          ],
+          "type": "rpc-responses",
         },
       ]
     `)
@@ -58,7 +70,7 @@ describe('loopback', () => {
     await consumer.start()
     await host.start()
 
-    const counter = 0n
+    const counter = 1n
     const aad = Aad.encode({ publicKey, role: Aad.role.consumer })
     const nonce = Nonce.fromCounter(counter)
     const ciphertext = Aead.seal({
@@ -72,16 +84,19 @@ describe('loopback', () => {
       host.on('message', (envelope) => resolve(envelope))
     })
 
-    await consumer.send(Envelope.encrypted({ counter, ciphertext }))
+    await consumer.send(
+      Envelope.encrypted({ from: Envelope.from.consumer, nonce, ciphertext }),
+    )
 
     const envelope = await inbound
     if (envelope.type !== 'encrypted') throw new Error('expected encrypted envelope')
 
+    const decoded = Envelope.toEncrypted(envelope)
     const plaintext = Aead.open({
       key: sessionKey,
-      nonce: Nonce.fromCounter(Envelope.counterOf(envelope)),
+      nonce: decoded.nonce,
       aad,
-      ciphertext: envelope.ciphertext,
+      ciphertext: decoded.ciphertext,
     })
 
     expect(plaintext).toMatchInlineSnapshot('"0xdeadbeef"')
@@ -92,12 +107,16 @@ describe('loopback', () => {
     await consumer.start()
     await host.start()
 
-    await consumer.send(Envelope.plain('first'))
-    await consumer.send(Envelope.plain('second'))
+    await consumer.send(
+      Envelope.rpcRequests([Rpc.notification({ method: 'first', params: [] })]),
+    )
+    await consumer.send(
+      Envelope.rpcRequests([Rpc.notification({ method: 'second', params: [] })]),
+    )
 
     const received: unknown[] = []
     host.on('message', (envelope) => {
-      if (envelope.type === 'plain') received.push(envelope.payload)
+      if (envelope.type === 'rpc-requests') received.push(envelope.payload[0]!.method)
     })
 
     expect(received).toMatchInlineSnapshot(`
@@ -130,12 +149,16 @@ describe('loopback', () => {
     await host.start()
     await consumer.close()
 
-    await expect(consumer.send(Envelope.plain('nope'))).rejects.toThrowError(Transport.ClosedError)
+    await expect(
+      consumer.send(Envelope.rpcRequests([Rpc.notification({ method: 'nope', params: [] })])),
+    ).rejects.toThrowError(Transport.ClosedError)
   })
 
   test('send before start throws ClosedError', async () => {
     const { consumer } = Loopback.loopback()
-    await expect(consumer.send(Envelope.plain('nope'))).rejects.toThrowError(Transport.ClosedError)
+    await expect(
+      consumer.send(Envelope.rpcRequests([Rpc.notification({ method: 'nope', params: [] })])),
+    ).rejects.toThrowError(Transport.ClosedError)
   })
 
   test('exposes role and exchange', () => {
@@ -156,13 +179,17 @@ describe('loopback', () => {
     host.on(
       'message',
       (envelope) => {
-        if (envelope.type === 'plain') received.push(envelope.payload)
+        if (envelope.type === 'rpc-requests') received.push(envelope.payload[0]!.method)
       },
       { signal: controller.signal },
     )
-    await consumer.send(Envelope.plain('first'))
+    await consumer.send(
+      Envelope.rpcRequests([Rpc.notification({ method: 'first', params: [] })]),
+    )
     controller.abort()
-    await consumer.send(Envelope.plain('second'))
+    await consumer.send(
+      Envelope.rpcRequests([Rpc.notification({ method: 'second', params: [] })]),
+    )
 
     expect(received).toMatchInlineSnapshot(`
       [

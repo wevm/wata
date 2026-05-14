@@ -1,42 +1,50 @@
-import { Envelope } from 'handshakes'
-import type { Hex } from 'ox'
+import { Envelope, Rpc } from 'handshakes'
 import { describe, expectTypeOf, test } from 'vp/test'
-import type { z } from 'zod'
 
-describe('schema.hex', () => {
-  test('infers `0x${string}` (= Hex.Hex)', () => {
-    type Out = z.output<typeof Envelope.schema.hex>
-    expectTypeOf<Out>().toEqualTypeOf<`0x${string}`>()
-    expectTypeOf<Out>().toEqualTypeOf<Hex.Hex>()
+describe('rpcRequests', () => {
+  test('returns the `rpc-requests` variant', () => {
+    const env = Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })])
+    expectTypeOf(env.type).toEqualTypeOf<'rpc-requests'>()
+    expectTypeOf(env.payload).toBeArray()
+  })
+})
+
+describe('rpcResponses', () => {
+  test('returns the `rpc-responses` variant', () => {
+    const env = Envelope.rpcResponses([Rpc.success({ id: 1, result: null })])
+    expectTypeOf(env.type).toEqualTypeOf<'rpc-responses'>()
+    expectTypeOf(env.payload).toBeArray()
+  })
+})
+
+describe('ready / hello', () => {
+  test('default to `{}` payload', () => {
+    expectTypeOf(Envelope.ready().type).toEqualTypeOf<'ready'>()
+    expectTypeOf(Envelope.hello().type).toEqualTypeOf<'hello'>()
   })
 })
 
 describe('encrypted', () => {
-  test('ciphertext is `0x${string}`', () => {
-    const env = Envelope.encrypted({ counter: 0n, ciphertext: '0xdeadbeef' })
-    expectTypeOf(env.ciphertext).toEqualTypeOf<Hex.Hex>()
+  test('payload carries `v`, `from`, `nonce`, `ct`', () => {
+    const env = Envelope.encrypted({
+      from: Envelope.from.consumer,
+      nonce: '0x000000000000000000000001',
+      ciphertext: '0xdeadbeef',
+    })
     expectTypeOf(env.type).toEqualTypeOf<'encrypted'>()
-    expectTypeOf(env.counter).toEqualTypeOf<string>()
-  })
-})
-
-describe('plain', () => {
-  test('payload is unknown, type is "plain" literal', () => {
-    const env = Envelope.plain({ hello: 'world' })
-    expectTypeOf(env.type).toEqualTypeOf<'plain'>()
-    expectTypeOf(env.payload).toEqualTypeOf<unknown>()
+    expectTypeOf(env.payload.v).toEqualTypeOf<1>()
+    expectTypeOf(env.payload.from).toEqualTypeOf<'consumer' | 'host'>()
+    expectTypeOf(env.payload.nonce).toBeString()
+    expectTypeOf(env.payload.ct).toBeString()
   })
 })
 
 describe('parse', () => {
-  test('returns the discriminated union', () => {
-    const env = Envelope.parse({ type: 'plain', payload: null })
+  test('returns the discriminated `Envelope` union', () => {
+    const env = Envelope.parse({
+      type: 'ready',
+      payload: {},
+    })
     expectTypeOf(env).toEqualTypeOf<Envelope.Envelope>()
-    if (env.type === 'encrypted') {
-      expectTypeOf(env.ciphertext).toEqualTypeOf<Hex.Hex>()
-      expectTypeOf(env.counter).toEqualTypeOf<string>()
-    } else {
-      expectTypeOf(env.payload).toEqualTypeOf<unknown>()
-    }
   })
 })
