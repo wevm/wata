@@ -1,95 +1,105 @@
 /**
  * Additional Authenticated Data (AAD) construction for the TempoCP AEAD layer.
  *
- * Every sealed frame binds a deterministic AAD blob to the ciphertext so the
+ * Per [TempoCP `core.md` §6](https://github.com/tempoxyz/tempocp/blob/main/specs/core.md#encrypted-message-envelope-aead),
+ * every sealed frame binds a deterministic AAD blob to the ciphertext so the
  * recipient can detect cross-session, cross-direction, or cross-version
  * replay attempts even if the attacker has the right key.
  *
- * Layout (30 bytes total):
+ * Wire layout (43 bytes total):
  *
  * ```diagram
- * ╭───────────┬───────────┬─────────────────╮
- * │ version 1 │ direction │     reserved    │
- * │   1 byte  │   1 byte  │ session id 16 B │
- * ╰───────────┴───────────┴─────────────────╯
- *               (counter, 12 bytes)
+ * ╭─────────────┬─────────────────────────────┬───────╮
+ * │ "tempocp/v1"│  pubkey_consumer (32 bytes) │ role  │
+ * │   10 bytes  │    raw X25519 public key    │ 1 byte│
+ * ╰─────────────┴─────────────────────────────┴───────╯
  * ```
  *
- * - `version`   — pinned to {@link version} for protocol versioning.
- * - `direction` — `0x00` consumer→host, `0x01` host→consumer.
- * - `sessionId` — 16 random bytes, established at bootstrap.
- * - `counter`   — 12-byte big-endian nonce counter (matches the AEAD nonce).
+ * - `"tempocp/v1"` — ASCII version prefix, pinned for the v1 protocol.
+ * - `publicKey`       — the spec's `pubkey_consumer`: raw 32-byte X25519
+ *                    public key, the session anchor (spec §4). Identical
+ *                    for both directions of the same session.
+ * - `role`         — sender role byte: `0x01` consumer, `0x02` host.
+ *                    Mirrors the `from` discriminator on the encrypted
+ *                    envelope.
+ *
+ * Anti-replay across frames is handled by the per-direction nonce counter
+ * (see {@link "./Nonce"}), so the AAD itself does not vary per frame.
  */
 
 import { Bytes, Hex } from 'ox'
 
 import * as Errors from './Errors.js'
-import * as Nonce from './Nonce.js'
 
-/** Current AAD layout version. Bumped if the bound fields ever change. */
-export const version = 0x01
+/** ASCII version prefix bound to every AAD blob. */
+export const prefix = 'tempocp/v1'
 
-/** Total AAD length in bytes (`1 + 1 + 16 + 12`). */
-export const size = 30
+/** Length of the version prefix in bytes. */
+export const prefixSize = 10
 
-/** Length of the session id field in bytes. */
-export const sessionIdSize = 16
+/** Length of the `publicKey` (= spec's `pubkey_consumer`) field in bytes. */
+export const publicKeySize = 32
 
-/** Allowed values for the `direction` byte. */
-export const direction = {
-  /** Consumer → host. */
-  c2h: 0x00,
-  /** Host → consumer. */
-  h2c: 0x01,
+/** Total AAD length in bytes (`prefixSize + publicKeySize + 1`). */
+export const size = 43
+
+/** Allowed values for the trailing `role` byte. */
+export const role = {
+  /** Consumer-originated frame. */
+  consumer: 0x01,
+  /** Host-originated frame. */
+  host: 0x02,
 } as const
 
-/** Direction discriminant for {@link encode} and {@link decode}. */
-export type Direction = (typeof direction)[keyof typeof direction]
+/** Sender-role discriminant for {@link encode} and {@link decode}. */
+export type Role = (typeof role)[keyof typeof role]
+
+const prefixBytes = new TextEncoder().encode(prefix)
 
 /**
- * Encode a structured AAD record into its 30-byte wire form.
+ * Encode a structured AAD record into its 43-byte wire form.
  *
  * @example
  * ```ts
  * import { Aad } from 'handshakes'
  *
  * Aad.encode({
- *   sessionId: '0x00112233445566778899aabbccddeeff',
- *   direction: Aad.direction.c2h,
- *   counter: 0n,
+ *   publicKey: '0x...32-byte-X25519-public-key...',
+ *   role: Aad.role.consumer,
  * })
  * ```
  */
 export function encode(options: encode.Options): Hex.Hex {
-  const sessionId = Bytes.from(options.sessionId)
-  if (sessionId.length !== sessionIdSize)
-    throw new Errors.ProtocolError('sessionId must be 16 bytes', {
-      details: `received ${sessionId.length} bytes`,
+  const publicKey = Bytes.from(options.publicKey)
+  if (publicKey.length !== publicKeySize)
+    throw new Errors.ProtocolError('publicKey must be 32 bytes', {
+      details: `received ${publicKey.length} bytes`,
     })
   const out = new Uint8Array(size)
-  out[0] = version
-  out[1] = options.direction
-  out.set(sessionId, 2)
-  out.set(Bytes.from(Nonce.fromCounter(options.counter)), 2 + sessionIdSize)
+  out.set(prefixBytes, 0)
+  out.set(publicKey, prefixSize)
+  out[prefixSize + publicKeySize] = options.role
   return Hex.fromBytes(out)
 }
 
 export declare namespace encode {
   /** Options for {@link encode}. */
   type Options = {
-    /** 16-byte session id, established at bootstrap. */
-    sessionId: Hex.Hex | Bytes.Bytes
-    /** Direction byte; use {@link direction}. */
-    direction: Direction
-    /** Frame counter (must match the AEAD nonce counter). */
-    counter: bigint
+    /**
+     * Raw 32-byte X25519 public key — the session anchor (spec calls this
+     * `pubkey_consumer`, §4). Always the consumer's key, regardless of
+     * which side is sealing.
+     */
+    publicKey: Hex.Hex | Bytes.Bytes
+    /** Sender role byte; use {@link role}. */
+    role: Role
   }
 }
 
 /**
- * Parse a 30-byte AAD blob back into its structured fields. Throws
- * {@link Errors.ProtocolError} on malformed inputs (wrong length, wrong version,
- * invalid direction byte).
+ * Parse a 43-byte AAD blob back into its structured fields. Throws
+ * {@link Errors.ProtocolError} on malformed inputs (wrong length, wrong
+ * prefix, invalid role byte).
  *
  * @example
  * ```ts
@@ -101,34 +111,31 @@ export declare namespace encode {
 export function decode(aad: Hex.Hex | Bytes.Bytes): decode.ReturnType {
   const bytes = Bytes.from(aad)
   if (bytes.length !== size)
-    throw new Errors.ProtocolError('aad must be exactly 30 bytes', {
+    throw new Errors.ProtocolError('aad must be exactly 43 bytes', {
       details: `received ${bytes.length} bytes`,
     })
-  const versionByte = bytes[0]!
-  if (versionByte !== version)
-    throw new Errors.ProtocolError('aad version mismatch', {
-      details: `expected ${version}, received ${versionByte}`,
-    })
-  const directionByte = bytes[1]!
-  if (directionByte !== direction.c2h && directionByte !== direction.h2c)
-    throw new Errors.ProtocolError('aad direction byte invalid', {
-      details: `received 0x${directionByte.toString(16).padStart(2, '0')}`,
+  for (let i = 0; i < prefixSize; i++)
+    if (bytes[i] !== prefixBytes[i])
+      throw new Errors.ProtocolError('aad version prefix mismatch', {
+        details: `expected "${prefix}"`,
+      })
+  const roleByte = bytes[prefixSize + publicKeySize]!
+  if (roleByte !== role.consumer && roleByte !== role.host)
+    throw new Errors.ProtocolError('aad role byte invalid', {
+      details: `received 0x${roleByte.toString(16).padStart(2, '0')}`,
     })
   return {
-    direction: directionByte,
-    sessionId: Hex.fromBytes(bytes.slice(2, 2 + sessionIdSize)),
-    counter: Nonce.toCounter(bytes.slice(2 + sessionIdSize)),
+    publicKey: Hex.fromBytes(bytes.slice(prefixSize, prefixSize + publicKeySize)),
+    role: roleByte,
   }
 }
 
 export declare namespace decode {
   /** Result of {@link decode}. */
   type ReturnType = {
-    /** Direction byte (see {@link direction}). */
-    direction: Direction
-    /** 16-byte session id as `0x`-prefixed hex. */
-    sessionId: Hex.Hex
-    /** Frame counter parsed from the trailing 12 bytes. */
-    counter: bigint
+    /** Raw 32-byte X25519 public key (spec's `pubkey_consumer`) as `0x`-prefixed hex. */
+    publicKey: Hex.Hex
+    /** Sender role byte (see {@link role}). */
+    role: Role
   }
 }

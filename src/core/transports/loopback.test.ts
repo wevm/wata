@@ -7,7 +7,7 @@ import { z } from 'zod'
 import * as Loopback from './loopback.js'
 
 const sessionKey: Hex.Hex = `0x${'11'.repeat(32)}`
-const sessionId: Hex.Hex = `0x${'22'.repeat(16)}`
+const publicKey: Hex.Hex = `0x${'22'.repeat(32)}`
 
 describe('loopback', () => {
   test('round trips a plain envelope from consumer to host', async () => {
@@ -59,11 +59,7 @@ describe('loopback', () => {
     await host.start()
 
     const counter = 0n
-    const aad = Aad.encode({
-      sessionId,
-      direction: Aad.direction.c2h,
-      counter,
-    })
+    const aad = Aad.encode({ publicKey, role: Aad.role.consumer })
     const nonce = Nonce.fromCounter(counter)
     const ciphertext = Aead.seal({
       key: sessionKey,

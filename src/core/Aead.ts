@@ -8,8 +8,8 @@
  *
  * Higher-level concerns:
  * - Nonce derivation lives in {@link "./Nonce"} (per-direction counter).
- * - AAD construction lives in {@link "./Aad"} (binds session id, direction,
- *   counter, and frame type to the ciphertext).
+ * - AAD construction lives in {@link "./Aad"} (binds the protocol version,
+ *   `pubkey_consumer`, and sender role to the ciphertext).
  * - Wire framing lives in {@link "./Envelope"}.
  */
 
