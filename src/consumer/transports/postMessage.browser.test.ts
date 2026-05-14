@@ -37,7 +37,7 @@ describe('postMessage (consumer)', () => {
     await transport.start()
 
     const received = new Promise<Envelope.Envelope>((resolve) => {
-      transport.onMessage(resolve)
+      transport.on('message', (envelope) => resolve(envelope))
     })
 
     port2.postMessage(Envelope.plain({ method: 'ping', params: [] }))
@@ -118,7 +118,7 @@ describe('postMessage (consumer)', () => {
     await transport.start()
 
     const seen: unknown[] = []
-    transport.onMessage((envelope) => seen.push(envelope))
+    transport.on('message', (envelope) => seen.push(envelope))
 
     // Wrong origin — should be ignored.
     source.dispatchEvent(
@@ -154,7 +154,7 @@ describe('postMessage (consumer)', () => {
     const transport = postMessage_consumer({ open: () => port1 })
 
     const errors: Error[] = []
-    transport.onError((error) => errors.push(error))
+    transport.on('error', (error) => errors.push(error))
 
     await transport.start()
     await new Promise((resolve) => setTimeout(resolve, 10))
@@ -231,11 +231,14 @@ describe('postMessage (consumer)', () => {
     await transport.start()
 
     const seen: unknown[] = []
-    const unsubscribe = transport.onMessage((envelope) => seen.push(envelope))
+    const controller = new AbortController()
+    transport.on('message', (envelope) => seen.push(envelope), {
+      signal: controller.signal,
+    })
 
     port2.postMessage(Envelope.plain('first'))
     await new Promise((resolve) => setTimeout(resolve, 10))
-    unsubscribe()
+    controller.abort()
     port2.postMessage(Envelope.plain('second'))
     await new Promise((resolve) => setTimeout(resolve, 10))
 
@@ -320,7 +323,7 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
 
     // Bootstrap consumer + connect host concurrently — readiness handshake
     // races between both sides, so neither order matters.
-    await Promise.all([consumer.bootstrap(), host.connect()])
+    await Promise.all([consumer.start(), host.start()])
 
     const ping = await consumer.send({ method: 'ping', params: [] })
     expect(ping).toMatchInlineSnapshot(`
@@ -356,11 +359,11 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
 
     // Start the consumer first; host is still un-connected. The transport
     // should buffer the request until the host sends `tempocp.ready`.
-    await consumer.bootstrap()
+    await consumer.start()
     const inflight = consumer.send({ method: 'ping', params: [] })
 
     // Now bring the host up.
-    await host.connect()
+    await host.start()
 
     const out = await inflight
     expect(out.result).toMatchInlineSnapshot(`
@@ -389,7 +392,7 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
     consumer.on('close', () => (consumerClosed = true))
     host.on('close', () => (hostClosed = true))
 
-    await Promise.all([consumer.bootstrap(), host.connect()])
+    await Promise.all([consumer.start(), host.start()])
     await consumer.close()
 
     expect(consumerClosed).toMatchInlineSnapshot(`true`)
@@ -407,7 +410,7 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
       }),
     })
 
-    await expect(consumer.bootstrap()).rejects.toThrowErrorMatchingInlineSnapshot(
+    await expect(consumer.start()).rejects.toThrowErrorMatchingInlineSnapshot(
       `[PostMessage.PopupBlockedError: \`open\` returned null — popup blocked or window unavailable]`,
     )
   })

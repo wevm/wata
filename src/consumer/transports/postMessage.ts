@@ -17,7 +17,7 @@
  *   targetOrigin: 'https://wallet.example',
  * })
  * const handshake = Handshake.create({ transport })
- * await handshake.bootstrap()
+ * await handshake.start()
  * ```
  *
  * @example iframe
@@ -49,6 +49,7 @@
 
 import * as Envelope from '../../core/Envelope.js'
 import * as Errors from '../../core/Errors.js'
+import * as Events from '../../core/Events.js'
 import * as Transport from '../../core/Transport.js'
 import * as protocol from './internal/protocol.js'
 
@@ -143,20 +144,18 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
   const { role, handshake, options } = parameters
   const source = options.source ?? (globalThis as { window?: WindowLike }).window
 
-  const messageListeners = new Set<Transport.MessageListener>()
-  const closeListeners = new Set<Transport.CloseListener>()
-  const errorListeners = new Set<Transport.ErrorListener>()
+  const emitter = Events.create<Transport.EventMap>()
 
   const state = { started: false, closed: false, ready: false }
   const buffered: Envelope.Envelope[] = []
   // Widened to `Target` internally — the public `target` generic constrains
   // only the caller's `open` / `close` shapes, not internal storage.
   let handle: Target | undefined
-  let unsubscribeMessage: Transport.Unsubscribe | undefined
+  let unsubscribeMessage: (() => void) | undefined
   let closedPoll: ReturnType<typeof setInterval> | undefined
 
   function emitError(error: Error) {
-    for (const listener of errorListeners) listener(error)
+    emitter.emit('error', error)
   }
 
   function emitClose(cause?: Error) {
@@ -170,7 +169,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
       clearInterval(closedPoll)
       closedPoll = undefined
     }
-    for (const listener of closeListeners) listener(cause)
+    emitter.emit('close', cause)
   }
 
   function postRaw(data: unknown) {
@@ -218,20 +217,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
 
   function handleInbound(data: unknown) {
     if (protocol.isControlFrame(data)) {
-      if (data.type === handshake.expect) {
-        if (state.ready) return
-        state.ready = true
-        // Drain any frames the caller queued while waiting for ready.
-        while (buffered.length > 0) {
-          const next = buffered.shift()
-          if (next === undefined) continue
-          try {
-            postRaw(next)
-          } catch (error) {
-            emitError(error as Error)
-          }
-        }
-      }
+      if (data.type === handshake.expect) markReady()
       return
     }
     let envelope: Envelope.Envelope
@@ -241,7 +227,27 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
       emitError(error as Error)
       return
     }
-    for (const listener of messageListeners) listener(envelope)
+    // Receiving a real frame implies the peer is alive and listening — even
+    // if we never observed their hello (the iframe / popup mount races).
+    // Mark ourselves ready so any buffered outbound frames flush before we
+    // hand the inbound payload off to the user-facing listeners.
+    if (!state.ready) markReady()
+    emitter.emit('message', envelope)
+  }
+
+  function markReady() {
+    if (state.ready) return
+    state.ready = true
+    // Drain any frames the caller queued while waiting for ready.
+    while (buffered.length > 0) {
+      const next = buffered.shift()
+      if (next === undefined) continue
+      try {
+        postRaw(next)
+      } catch (error) {
+        emitError(error as Error)
+      }
+    }
   }
 
   function attachClosedPoll() {
@@ -249,20 +255,10 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     const win = handle as unknown as { closed?: boolean }
     if (typeof win.closed !== 'boolean') return
     closedPoll = setInterval(() => {
-      if (win.closed) {
+      if (win.closed)
         emitClose(new Transport.ClosedError('postMessage handle was closed externally'))
-      }
     }, 250)
   }
-
-  const subscribe =
-    <listener>(set: Set<listener>) =>
-    (listener: listener): Transport.Unsubscribe => {
-      set.add(listener)
-      return () => {
-        set.delete(listener)
-      }
-    }
 
   return {
     role,
@@ -307,9 +303,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
         emitClose(cause)
       }
     },
-    onMessage: subscribe(messageListeners),
-    onClose: subscribe(closeListeners),
-    onError: subscribe(errorListeners),
+    on: emitter.on,
   }
 }
 

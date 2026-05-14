@@ -14,6 +14,7 @@
 
 import * as Envelope from '../core/Envelope.js'
 import * as Errors from '../core/Errors.js'
+import * as Events from '../core/Events.js'
 import * as Rpc from '../core/Rpc.js'
 import * as Schema from '../core/Schema.js'
 import * as Transport from '../core/Transport.js'
@@ -43,12 +44,12 @@ export type RequestEvent<
   /** The full JSON-RPC request envelope as parsed off the wire. */
   request: Rpc.Request<method, params>
   /**
-   * Resolve the request with `result`. If no listener calls `respond` (or
-   * returns a non-`undefined` value) the host emits a JSON-RPC
-   * `method not found` error.
+   * Sugar for `handshake.respond(event.id, result)`. Settles the request
+   * synchronously from inside the listener; idempotent across
+   * `event.respond` / `event.reject` / `handshake.respond` / `handshake.reject`.
    */
   respond: (result: result) => void
-  /** Reject the request with a JSON-RPC error response. */
+  /** Sugar for `handshake.reject(event.id, error)`. Idempotent. */
   reject: (error: { code: number; message: string; data?: unknown }) => void
 }
 
@@ -119,15 +120,47 @@ export type Host<schema extends Schema.Schema | undefined = undefined> = {
   /** Optional method-registry schema flowed through `'request'` / `'notification'` events. */
   schema: schema
   /**
-   * Bring the session up. Starts the transport and resolves once it is
-   * ready to send and receive frames. Emits `'open'` on success.
+   * Explicitly bring the session up — starts the transport and resolves
+   * once it is ready to send and receive frames. Emits `'open'` on success.
+   *
+   * Optional: {@link Host.on} (and {@link Host.respond} / {@link Host.reject})
+   * trigger `start` internally on first use, so most hosts can skip it.
+   * Reach for it when a UI wants to surface the connecting state before
+   * any request lands, or when start-time errors should reject up-front.
    */
-  connect: () => Promise<void>
+  start: () => Promise<void>
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
   /**
+   * Settle a still-pending inbound request by id with a JSON-RPC `result`.
+   *
+   * Pair with `handshake.on('request', (event) => setPending((p) => [...p, event]))`
+   * for UI flows where the response is gathered asynchronously (approval
+   * dialogs, late confirmations, …) — no need for per-request closures
+   * or to return a Promise from the listener.
+   *
+   * Throws {@link UnknownRequestError} if no request with that id is
+   * currently pending (already responded, never received, or the
+   * handshake is closed).
+   *
+   * @param id - Id of the pending request to settle.
+   * @param result - Success `result` payload to send.
+   */
+  respond: <result = unknown>(id: Rpc.Id, result: result) => void
+  /**
+   * Settle a still-pending inbound request by id with a JSON-RPC error.
+   * Mirror of {@link Host.respond}.
+   *
+   * @param id - Id of the pending request to settle.
+   * @param error - JSON-RPC error envelope (`code` + `message`, optional `data`).
+   */
+  reject: (id: Rpc.Id, error: reject.Error) => void
+  /**
    * Subscribe to a host event. Returns an `AbortController` so the
    * subscription can be cancelled (or composed with an external signal).
+   *
+   * Lazy-connects the transport on first call, so most hosts never need
+   * to call {@link Host.start} explicitly.
    */
   on: <type extends keyof HostEventMap<schema>>(
     type: type,
@@ -140,18 +173,45 @@ export type Host<schema extends Schema.Schema | undefined = undefined> = {
   ) => void
 }
 
+export declare namespace reject {
+  /** Error payload accepted by {@link Host.reject} / `event.reject`. */
+  type Error = {
+    /** JSON-RPC error code. */
+    code: number
+    /** JSON-RPC error message. */
+    message: string
+    /** Optional JSON-RPC error `data` payload. */
+    data?: unknown | undefined
+  }
+}
+
 /**
  * Create a host-side {@link Host} `Handshake` around a transport.
  *
  * @example
+ * Synchronous answer from inside the listener.
  * ```ts
  * import { Handshake } from 'handshakes/host'
  *
  * const handshake = Handshake.create({ transport })
- * await handshake.connect()
+ * await handshake.start()
  * handshake.on('request', (event) => {
  *   if (event.method === 'ping') event.respond({ ok: true })
  * })
+ * ```
+ *
+ * @example
+ * Late answer by id (UI / approval flows). `Handshake.on` lazy-connects
+ * the transport on first call, so an explicit `start()` is optional.
+ * ```ts
+ * const handshake = Handshake.create({ transport })
+ *
+ * handshake.on('request', (event) => {
+ *   setPending((prev) => [...prev, event])
+ * })
+ *
+ * // Later, when the user clicks "approve":
+ * handshake.respond(event.id, { ok: true })
  * ```
  */
 export function create<const schema extends Schema.Schema | undefined = undefined>(
@@ -160,14 +220,62 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   const { transport } = options
   const schema = options.schema as schema
 
-  const bus = Handshake.createBus<HostEventMap<schema>>()
-  const state = { started: false, closed: false }
+  const emitter = Events.create<HostEventMap<schema>>()
+  // User-supplied `request` listeners, in registration order. The
+  // `request` dispatch loop iterates these directly so it can capture
+  // each listener's return value (and thrown error) for the
+  // first-non-undefined-wins resolution semantics. Tracked here rather
+  // than via `emitter.on('request', ...)` because the wrapper swallows
+  // listener errors and never surfaces return values back to the caller.
+  const requestListeners = new Set<Handshake.Listener<HostEventMap<schema>['request']>>()
 
-  transport.onMessage(async (envelope) => {
+  const state = { started: false, closed: false }
+  const pending = new Map<Rpc.Id, PendingRequest>()
+
+  function settle(id: Rpc.Id, envelope: Rpc.Envelope): boolean {
+    const entry = pending.get(id)
+    if (!entry) return false
+    pending.delete(id)
+    void safeSend(transport, envelope)
+    return true
+  }
+
+  function respond(id: Rpc.Id, result: unknown): void {
+    const ok = settle(id, Rpc.success({ id, result }))
+    if (!ok) throw new UnknownRequestError(id)
+  }
+
+  function reject(id: Rpc.Id, error: reject.Error): void {
+    const { code, message, data } = error
+    const ok = settle(id, Rpc.error({ id, code, message, data }))
+    if (!ok) throw new UnknownRequestError(id)
+  }
+
+  let startPromise: Promise<void> | undefined
+
+  function start(): Promise<void> {
+    if (state.closed) return Promise.reject(new Transport.ClosedError('handshake already closed'))
+    if (!startPromise) {
+      state.started = true
+      startPromise = transport.start().then(() => {
+        emitter.emit('open', undefined)
+      })
+    }
+    return startPromise
+  }
+
+  function lazyConnect(): void {
+    if (state.started || state.closed) return
+    void start().catch((error: Error) => emitter.emit('error', error))
+  }
+
+  transport.on('message', async (envelope) => {
     if (envelope.type !== 'plain') {
-      bus.emit(
+      emitter.emit(
         'error',
-        new Errors.ProtocolError('host received an encrypted envelope on a plain transport'),
+        new Errors.ProtocolError(
+          'host received an encrypted envelope on a plain transport',
+        ),
       )
       return
     }
@@ -176,7 +284,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     try {
       message = Rpc.parse(envelope.payload)
     } catch (cause) {
-      bus.emit('error', cause as Error)
+      emitter.emit('error', cause as Error)
       return
     }
 
@@ -204,79 +312,9 @@ export function create<const schema extends Schema.Schema | undefined = undefine
         }
       }
 
-      let settled = false
-      const event = {
-        method: request.method,
-        params: request.params,
-        id: request.id,
-        request,
-        respond: (result: unknown) => {
-          if (settled) return
-          settled = true
-          void safeSend(transport, Rpc.success({ id: request.id, result }))
-        },
-        reject: (rpcError: { code: number; message: string; data?: unknown }) => {
-          if (settled) return
-          settled = true
-          void safeSend(
-            transport,
-            Rpc.error({
-              id: request.id,
-              code: rpcError.code,
-              message: rpcError.message,
-              data: rpcError.data,
-            }),
-          )
-        },
-      }
-
-      const outcomes = bus.emit('request', event as HostEventMap<schema>['request'])
-
-      let firstError: Error | undefined
-      for (const outcome of outcomes) {
-        if (settled) break
-        if (outcome.kind === 'error') {
-          firstError ??= outcome.error
-          continue
-        }
-        try {
-          const resolved = await Promise.resolve(outcome.value)
-          if (resolved !== undefined) {
-            settled = true
-            await safeSend(transport, Rpc.success({ id: request.id, result: resolved }))
-            break
-          }
-        } catch (cause) {
-          firstError ??= cause as Error
-        }
-      }
-
-      if (!settled && firstError) {
-        settled = true
-        if (firstError instanceof Rpc.RpcError) {
-          await safeSend(
-            transport,
-            Rpc.error({
-              id: request.id,
-              code: firstError.code,
-              message: firstError.message,
-              data: firstError.data,
-            }),
-          )
-        } else {
-          await safeSend(
-            transport,
-            Rpc.error({
-              id: request.id,
-              code: -32603,
-              message: 'internal error',
-              data: firstError.message,
-            }),
-          )
-        }
-      }
-
-      if (!settled) {
+      // No listener has any chance of answering this request — fall through
+      // to JSON-RPC `method not found` so the consumer doesn't hang.
+      if (requestListeners.size === 0) {
         await safeSend(
           transport,
           Rpc.error({
@@ -286,7 +324,87 @@ export function create<const schema extends Schema.Schema | undefined = undefine
             data: request.method,
           }),
         )
+        return
       }
+
+      // Track the request so `event.respond` / `event.reject` and the
+      // top-level `handshake.respond` / `handshake.reject` can all settle
+      // by id. The entry stays in `pending` until a listener answers
+      // (now or later) or the handshake closes.
+      pending.set(request.id, { request })
+
+      const payload = {
+        method: request.method,
+        params: request.params,
+        id: request.id,
+        request,
+        respond: (result: unknown) => {
+          settle(request.id, Rpc.success({ id: request.id, result }))
+        },
+        reject: (rpcError: { code: number; message: string; data?: unknown }) => {
+          settle(
+            request.id,
+            Rpc.error({
+              id: request.id,
+              code: rpcError.code,
+              message: rpcError.message,
+              data: rpcError.data,
+            }),
+          )
+        },
+      } as HostEventMap<schema>['request']
+
+      // Iterate the user-registered listeners directly so we can capture
+      // each one's outcome (return value or thrown error). Snapshot first
+      // because a listener may unsubscribe siblings during dispatch.
+      const snapshot = Array.from(requestListeners)
+      let firstError: Error | undefined
+      for (const listener of snapshot) {
+        if (!pending.has(request.id)) break
+        let value: unknown
+        try {
+          value = listener(payload)
+        } catch (cause) {
+          firstError ??= cause as Error
+          continue
+        }
+        try {
+          const resolved = await Promise.resolve(value)
+          if (resolved !== undefined) {
+            settle(request.id, Rpc.success({ id: request.id, result: resolved }))
+            break
+          }
+        } catch (cause) {
+          firstError ??= cause as Error
+        }
+      }
+
+      if (pending.has(request.id) && firstError) {
+        if (firstError instanceof Rpc.RpcError)
+          settle(
+            request.id,
+            Rpc.error({
+              id: request.id,
+              code: firstError.code,
+              message: firstError.message,
+              data: firstError.data,
+            }),
+          )
+        else
+          settle(
+            request.id,
+            Rpc.error({
+              id: request.id,
+              code: -32603,
+              message: 'internal error',
+              data: firstError.message,
+            }),
+          )
+      }
+
+      // Otherwise: the request stays pending. A listener acknowledged it
+      // by being registered, so the host trusts the application to settle
+      // later via `handshake.respond(id, ...)` / `handshake.reject(id, ...)`.
       return
     }
 
@@ -295,46 +413,68 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       try {
         Handshake.validateParamsIfKnown(schema, message.method, message.params)
       } catch (cause) {
-        bus.emit('error', cause as Error)
+        emitter.emit('error', cause as Error)
         return
       }
     }
-    bus.emit('notification', {
+    emitter.emit('notification', {
       method: message.method,
       params: message.params,
       notification: message,
     } as HostEventMap<schema>['notification'])
   })
 
-  transport.onClose((cause) => {
+  transport.on('close', (cause) => {
     if (state.closed) return
     state.closed = true
-    bus.emit('close', cause)
+    pending.clear()
+    emitter.emit('close', cause)
   })
 
-  transport.onError((error) => {
-    bus.emit('error', error)
+  transport.on('error', (error) => {
+    emitter.emit('error', error)
   })
 
   return {
     role: 'host',
     transport,
     schema,
-    async connect() {
-      if (state.closed) throw new Transport.ClosedError('handshake already closed')
-      if (state.started) return
-      state.started = true
-      await transport.start()
-      bus.emit('open', undefined)
-    },
+    start,
     async close(cause) {
       if (state.closed) return
       state.closed = true
+      pending.clear()
       await transport.close(cause)
-      bus.emit('close', cause)
+      emitter.emit('close', cause)
     },
-    on: bus.on,
-    off: bus.off,
+    respond,
+    reject,
+    on(type, listener) {
+      lazyConnect()
+      const controller = new AbortController()
+      if (type === 'request') {
+        requestListeners.add(listener as Handshake.Listener<HostEventMap<schema>['request']>)
+        controller.signal.addEventListener(
+          'abort',
+          () => {
+            requestListeners.delete(
+              listener as Handshake.Listener<HostEventMap<schema>['request']>,
+            )
+          },
+          { once: true },
+        )
+        return controller
+      }
+      emitter.on(type, listener, { signal: controller.signal })
+      return controller
+    },
+    off(type, listener) {
+      if (type === 'request') {
+        requestListeners.delete(listener as Handshake.Listener<HostEventMap<schema>['request']>)
+        return
+      }
+      emitter.off(type, listener)
+    },
   }
 }
 
@@ -348,11 +488,28 @@ export declare namespace create {
   }
 }
 
+type PendingRequest = {
+  request: Rpc.Request
+}
+
 async function safeSend(transport: Transport.Transport, payload: unknown): Promise<void> {
   try {
     await transport.send(Envelope.plain(payload))
   } catch {
     // The transport surfaces its own error to listeners; swallow here so
     // the host loop doesn't blow up after a peer disconnect.
+  }
+}
+
+/**
+ * Thrown by {@link Host.respond} / {@link Host.reject} when no inbound
+ * request with the supplied id is currently pending. Means the request
+ * was already settled, never received, or the handshake has closed.
+ */
+export class UnknownRequestError extends Errors.BaseError {
+  override name = 'Handshake.UnknownRequestError'
+
+  constructor(id: Rpc.Id) {
+    super(`no pending request with id \`${String(id)}\``)
   }
 }

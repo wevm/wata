@@ -21,6 +21,7 @@ catalog:
 minimumReleaseAge: 1440
 
 minimumReleaseAgeExclude:
+  - regen-ui
   - vite-plus
   - vp
   - zile
@@ -29,9 +30,14 @@ nodeOptions: '--disable-warning=ExperimentalWarning --disable-warning=Deprecatio
 
 packages:
   - .
+  - playgrounds/*
 
 shellEmulator: true
 
 strictDepBuilds: true
 
 trustPolicy: no-downgrade
+
+trustPolicyExclude:
+  - reselect
+  - semver

@@ -13,10 +13,11 @@
  *   `mobileWebAuth`) and gates the `auto-close after terminal response`
  *   behaviour.
  * - `start` / `send` / `close` — wire lifecycle.
- * - `onMessage` / `onClose` / `onError` — inbound delivery and failure
- *   propagation. Each subscriber returns an unsubscribe function. Phase 1
- *   `Handshake` wraps this into the typed `rettime` event surface visible
- *   to consumers.
+ * - `on` — single typed event surface for inbound delivery and failure
+ *   propagation. Listeners receive the typed payload directly (the parsed
+ *   envelope, the close cause, or the error). Cancel a subscription by
+ *   passing `{ signal }` to the `on` call and aborting the controller.
+ *   Phase 1 `Handshake` wraps this into the consumer-facing event surface.
  *
  * Adapters MUST only carry normalized {@link "./core/Envelope".Envelope}
  * frames over the wire — never raw protocol-internal shapes — so the
@@ -25,6 +26,7 @@
 
 import * as Envelope from './Envelope.js'
 import * as Errors from './Errors.js'
+import * as Events from './Events.js'
 
 /** Side of the protocol this transport speaks for. */
 export type Role = 'consumer' | 'host'
@@ -32,17 +34,19 @@ export type Role = 'consumer' | 'host'
 /** Discriminator for the transport's lifetime model. */
 export type Exchange = 'ongoing' | 'single_exchange'
 
-/** Listener called whenever an inbound envelope is delivered. */
-export type MessageListener = (envelope: Envelope.Envelope) => void
-
-/** Listener called when the transport closes (cleanly or with cause). */
-export type CloseListener = (cause?: Error) => void
-
-/** Listener called on transport-level failures. */
-export type ErrorListener = (error: Error) => void
-
-/** Function returned from every `on*` subscription; call to unsubscribe. */
-export type Unsubscribe = () => void
+/**
+ * Events delivered on every transport. `message` carries the parsed
+ * inbound envelope, `close` carries the optional close cause, `error`
+ * carries the transport-level failure.
+ */
+export type EventMap = {
+  /** Inbound envelope frame. */
+  message: Envelope.Envelope
+  /** Transport closed (cleanly or with cause). */
+  close: Error | undefined
+  /** Transport-level failure. */
+  error: Error
+}
 
 /**
  * The normalized transport contract. Every adapter — consumer-side,
@@ -59,12 +63,12 @@ export type Transport<role extends Role = Role> = {
   send: (envelope: Envelope.Envelope) => Promise<void>
   /** Close the transport. Idempotent. */
   close: (cause?: Error) => Promise<void>
-  /** Subscribe to inbound envelope frames. */
-  onMessage: (listener: MessageListener) => Unsubscribe
-  /** Subscribe to close events. */
-  onClose: (listener: CloseListener) => Unsubscribe
-  /** Subscribe to transport-level error events. */
-  onError: (listener: ErrorListener) => Unsubscribe
+  /**
+   * Subscribe to a transport event. Listener receives the typed payload
+   * directly. Pass `{ signal }` to scope the subscription to an
+   * `AbortController`.
+   */
+  on: Events.Emitter<EventMap>['on']
 }
 
 /**
