@@ -1,6 +1,7 @@
 import {
   Envelope,
   Handshake,
+  Rpc,
   postMessage as postMessage_consumer,
 } from 'handshakes'
 import {
@@ -56,8 +57,8 @@ describe('postMessage (host)', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     // Consumer hasn't said hello yet — outbound frames should be buffered.
-    await transport.send(Envelope.plain({ method: 'one' }))
-    await transport.send(Envelope.plain({ method: 'two' }))
+    await transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'one', params: [] })]))
+    await transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'two', params: [] })]))
 
     // Drop the host's hello (`urpc.ready`) so the snapshot only shows
     // the buffered user frames.
@@ -68,20 +69,28 @@ describe('postMessage (host)', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(peerSeen).toMatchInlineSnapshot(`
-      [
-        {
-          "payload": {
-            "method": "one",
-          },
-          "type": "plain",
-        },
-        {
-          "payload": {
-            "method": "two",
-          },
-          "type": "plain",
-        },
-      ]
+    	[
+    	  {
+    	    "payload": [
+    	      {
+    	        "jsonrpc": "2.0",
+    	        "method": "one",
+    	        "params": [],
+    	      },
+    	    ],
+    	    "type": "rpc-requests",
+    	  },
+    	  {
+    	    "payload": [
+    	      {
+    	        "jsonrpc": "2.0",
+    	        "method": "two",
+    	        "params": [],
+    	      },
+    	    ],
+    	    "type": "rpc-requests",
+    	  },
+    	]
     `)
 
     await transport.close()

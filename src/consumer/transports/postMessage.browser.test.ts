@@ -2,6 +2,7 @@ import {
   Envelope,
   Handshake,
   PostMessage,
+  Rpc,
   Schema,
   postMessage as postMessage_consumer,
 } from 'handshakes'
@@ -40,16 +41,19 @@ describe('postMessage (consumer)', () => {
       transport.on('message', (envelope) => resolve(envelope))
     })
 
-    port2.postMessage(Envelope.plain({ method: 'ping', params: [] }))
+    port2.postMessage(Envelope.rpcRequests([Rpc.notification({ method: 'ping', params: [] })]))
 
     expect(await received).toMatchInlineSnapshot(`
-      {
-        "payload": {
-          "method": "ping",
-          "params": [],
-        },
-        "type": "plain",
-      }
+    	{
+    	  "payload": [
+    	    {
+    	      "jsonrpc": "2.0",
+    	      "method": "ping",
+    	      "params": [],
+    	    },
+    	  ],
+    	  "type": "rpc-requests",
+    	}
     `)
 
     await transport.close()
@@ -71,8 +75,8 @@ describe('postMessage (consumer)', () => {
 
     // The consumer's hello has been emitted, but no `hostReady` yet —
     // outbound frames should be buffered locally.
-    await transport.send(Envelope.plain({ method: 'one' }))
-    await transport.send(Envelope.plain({ method: 'two' }))
+    await transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'one', params: [] })]))
+    await transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'two', params: [] })]))
 
     // Drop the hello so the snapshot only shows the user frames.
     received.length = 0
@@ -83,20 +87,28 @@ describe('postMessage (consumer)', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(received).toMatchInlineSnapshot(`
-      [
-        {
-          "payload": {
-            "method": "one",
-          },
-          "type": "plain",
-        },
-        {
-          "payload": {
-            "method": "two",
-          },
-          "type": "plain",
-        },
-      ]
+    	[
+    	  {
+    	    "payload": [
+    	      {
+    	        "jsonrpc": "2.0",
+    	        "method": "one",
+    	        "params": [],
+    	      },
+    	    ],
+    	    "type": "rpc-requests",
+    	  },
+    	  {
+    	    "payload": [
+    	      {
+    	        "jsonrpc": "2.0",
+    	        "method": "two",
+    	        "params": [],
+    	      },
+    	    ],
+    	    "type": "rpc-requests",
+    	  },
+    	]
     `)
 
     await transport.close()
@@ -123,27 +135,31 @@ describe('postMessage (consumer)', () => {
     // Wrong origin — should be ignored.
     source.dispatchEvent(
       new MessageEvent('message', {
-        data: Envelope.plain({ method: 'noisy' }),
+        data: Envelope.rpcRequests([Rpc.notification({ method: 'noisy', params: [] })]),
         origin: 'https://attacker.example',
       }),
     )
     // Right origin — should be delivered.
     source.dispatchEvent(
       new MessageEvent('message', {
-        data: Envelope.plain({ method: 'trusted' }),
+        data: Envelope.rpcRequests([Rpc.notification({ method: 'trusted', params: [] })]),
         origin: 'https://wallet.example',
       }),
     )
 
     expect(seen).toMatchInlineSnapshot(`
-      [
-        {
-          "payload": {
-            "method": "trusted",
-          },
-          "type": "plain",
-        },
-      ]
+    	[
+    	  {
+    	    "payload": [
+    	      {
+    	        "jsonrpc": "2.0",
+    	        "method": "trusted",
+    	        "params": [],
+    	      },
+    	    ],
+    	    "type": "rpc-requests",
+    	  },
+    	]
     `)
 
     await transport.close()
@@ -164,8 +180,8 @@ describe('postMessage (consumer)', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(errors[0]?.message).toMatchInlineSnapshot(`
-      "invalid envelope
-      Details: Invalid discriminator value. Expected 'plain' | 'encrypted'"
+    	"invalid envelope
+    	Details: type: Invalid discriminator value. Expected 'rpc-requests' | 'rpc-responses' | 'ready' | 'hello' | 'encrypted'"
     `)
 
     await transport.close()
@@ -196,7 +212,7 @@ describe('postMessage (consumer)', () => {
       },
     })
     // No explicit `start()` — `send()` should drive `target()` lazily.
-    await transport.send(Envelope.plain('nope'))
+    await transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'nope', params: [] })]))
     expect(acquireCount).toMatchInlineSnapshot(`1`)
   })
 
@@ -212,7 +228,7 @@ describe('postMessage (consumer)', () => {
     await transport.start()
     await transport.close()
     // `close` is non-terminal — the next `send` should call `target()` again.
-    await transport.send(Envelope.plain('nope'))
+    await transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'nope', params: [] })]))
     expect(acquireCount).toMatchInlineSnapshot(`2`)
   })
 
@@ -248,19 +264,25 @@ describe('postMessage (consumer)', () => {
       signal: controller.signal,
     })
 
-    port2.postMessage(Envelope.plain('first'))
+    port2.postMessage(Envelope.rpcRequests([Rpc.notification({ method: 'first', params: [] })]))
     await new Promise((resolve) => setTimeout(resolve, 10))
     controller.abort()
-    port2.postMessage(Envelope.plain('second'))
+    port2.postMessage(Envelope.rpcRequests([Rpc.notification({ method: 'second', params: [] })]))
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(seen).toMatchInlineSnapshot(`
-      [
-        {
-          "payload": "first",
-          "type": "plain",
-        },
-      ]
+    	[
+    	  {
+    	    "payload": [
+    	      {
+    	        "jsonrpc": "2.0",
+    	        "method": "first",
+    	        "params": [],
+    	      },
+    	    ],
+    	    "type": "rpc-requests",
+    	  },
+    	]
     `)
 
     await transport.close()
