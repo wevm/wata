@@ -337,15 +337,18 @@ describe('close', () => {
     expect(hostCloses).toMatchInlineSnapshot(`1`)
   })
 
-  test('subsequent send() rejects with Transport.ClosedError', async () => {
+  test('subsequent send() lazy re-opens the transport (and rejects when the underlying transport is terminal)', async () => {
     const { consumer, host } = pair()
     await consumer.start()
     await host.start()
     await consumer.close()
+    // `send()` after a soft close lazy-calls `start()` again. The loopback
+    // transport happens to be terminal-on-close, so the underlying
+    // `transport.start()` rejects — the handshake itself doesn't.
     await expect(
       consumer.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Transport.ClosedError: handshake already closed]`,
+      `[Transport.ClosedError: loopback transport already closed]`,
     )
   })
 })

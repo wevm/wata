@@ -19,7 +19,7 @@ import * as protocol from '../../consumer/transports/internal/protocol.js'
 describe('postMessage (host)', () => {
   test('emits `tempocp.ready` on start and waits for the consumer hello', async () => {
     const { port1, port2 } = new MessageChannel()
-    const transport = postMessage({ open: () => port1 })
+    const transport = postMessage({ target: () => port1 })
 
     const peerSeen: unknown[] = []
     port2.addEventListener('message', (event) => {
@@ -43,7 +43,7 @@ describe('postMessage (host)', () => {
 
   test('drains buffered frames once the consumer hello arrives', async () => {
     const { port1, port2 } = new MessageChannel()
-    const transport = postMessage({ open: () => port1 })
+    const transport = postMessage({ target: () => port1 })
 
     const peerSeen: unknown[] = []
     port2.addEventListener('message', (event) => {
@@ -89,7 +89,7 @@ describe('postMessage (host)', () => {
 
   test('reports role: "host" and exchange: "ongoing"', () => {
     const { port1 } = new MessageChannel()
-    const transport = postMessage({ open: () => port1 })
+    const transport = postMessage({ target: () => port1 })
     expect(transport.role).toBe('host')
     expect(transport.exchange).toBe('ongoing')
   })
@@ -104,8 +104,8 @@ describe('postMessage (host)', () => {
 describe('Handshake.respond / Handshake.reject (postMessage)', () => {
   function pair() {
     const { port1, port2 } = new MessageChannel()
-    const consumer = Handshake.create({ transport: postMessage_consumer({ open: () => port1 }) })
-    const host = HostHandshake.create({ transport: postMessage({ open: () => port2 }) })
+    const consumer = Handshake.create({ transport: postMessage_consumer({ target: () => port1 }) })
+    const host = HostHandshake.create({ transport: postMessage({ target: () => port2 }) })
     return { consumer, host }
   }
 

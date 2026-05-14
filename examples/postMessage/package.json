@@ -1,5 +1,5 @@
 {
-  "name": "postmessage-playground",
+  "name": "example-post-message",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,17 +11,9 @@
     "build:host": "vp build host"
   },
   "dependencies": {
-    "handshakes": "workspace:*",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "regen-ui": "^0.4.0",
-    "tailwindcss": "^4.1.18",
-    "use-sync-external-store": "^1.6.0"
+    "handshakes": "latest"
   },
   "devDependencies": {
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^5.0.4",
     "typescript": "catalog:",
     "vp": "catalog:"
   }

@@ -3,7 +3,7 @@
  * `Window`, `WindowProxy`, or `MessagePort` handle supplied by the caller.
  *
  * The transport never opens popups or iframes itself. Instead the caller
- * passes an `open` callback that returns a handle on demand. The library
+ * passes a `target` callback that returns a handle on demand. The library
  * owns the **wire** (origin pinning, ready handshake, listener cleanup,
  * closed detection); the caller owns the **mount** (popup vs iframe vs
  * channel vs opener-supplied window).
@@ -12,18 +12,19 @@
  * ```ts
  * import { Handshake, postMessage } from 'handshakes'
  *
- * const transport = postMessage({
- *   open: () => window.open('https://wallet.example/auth', '_blank', 'popup=1'),
- *   targetOrigin: 'https://wallet.example',
+ * const handshake = Handshake.create({
+ *   transport: postMessage({
+  *     target: () => window.open('https://wallet.example/auth', '_blank', 'popup=1'),
+ *     targetOrigin: 'https://wallet.example',
+ *   }),
  * })
- * const handshake = Handshake.create({ transport })
  * await handshake.start()
  * ```
  *
  * @example iframe
  * ```ts
  * const transport = postMessage({
- *   open: () => {
+  *   target: () => {
  *     const iframe = document.createElement('iframe')
  *     iframe.src = 'https://wallet.example/auth'
  *     iframe.hidden = true
@@ -38,7 +39,7 @@
  * @example MessageChannel
  * ```ts
  * const transport = postMessage({
- *   open: () => {
+  *   target: () => {
  *     const { port1, port2 } = new MessageChannel()
  *     sendPortSomehow(port2)
  *     return port1
@@ -63,11 +64,14 @@ export type Target = Window | MessagePort
  */
 export type CommonOptions<target extends Target> = {
   /**
-   * Called lazily on `start()` to acquire the postMessage target. Lazy so
+   * Called lazily on `start()` to acquire the postMessage target — the
+   * `Window` / `MessagePort` the transport will postMessage to. Lazy so
    * popup-blocker-sensitive callers can wire `start()` to a user-gesture
-   * handler (button click).
+   * handler (button click). On the host side this typically just returns
+   * `window.opener` / `window.parent`; on the consumer it usually opens
+   * a popup or iframe.
    */
-  open: () => target | Promise<target>
+  target: () => target | Promise<target>
   /**
    * Optional cleanup. Called from `close()` after the transport
    * unsubscribes its `message` listener. Defaults to `handle.close?.()`.
@@ -117,7 +121,7 @@ export type WindowLike = {
  * import { postMessage } from 'handshakes'
  *
  * const transport = postMessage({
- *   open: () => window.open('https://wallet.example', '_blank', 'popup=1'),
+  *   target: () => window.open('https://wallet.example', '_blank', 'popup=1'),
  *   targetOrigin: 'https://wallet.example',
  * })
  * ```
@@ -146,10 +150,15 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
 
   const emitter = Events.create<Transport.EventMap>()
 
-  const state = { started: false, closed: false, ready: false }
-  const buffered: Envelope.Envelope[] = []
+  // `started` = currently in an active connection cycle (target acquired,
+  // listeners attached, hello sent). After close, drops back to `false`,
+  // and `start()` / `send()` can re-acquire — popups closing externally
+  // is a normal end-of-session event, not a permanent transport failure.
+  const state = { started: false, ready: false }
+  let buffered: Envelope.Envelope[] = []
+  let startPromise: Promise<void> | undefined
   // Widened to `Target` internally — the public `target` generic constrains
-  // only the caller's `open` / `close` shapes, not internal storage.
+  // only the caller's `target` / `close` shapes, not internal storage.
   let handle: Target | undefined
   let unsubscribeMessage: (() => void) | undefined
   let closedPoll: ReturnType<typeof setInterval> | undefined
@@ -159,8 +168,11 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
   }
 
   function emitClose(cause?: Error) {
-    if (state.closed) return
-    state.closed = true
+    if (!state.started) return
+    state.started = false
+    state.ready = false
+    buffered = []
+    handle = undefined
     if (unsubscribeMessage) {
       unsubscribeMessage()
       unsubscribeMessage = undefined
@@ -206,7 +218,9 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     const expectedOrigin = options.targetOrigin
     const listener = (event: MessageEvent) => {
       // Window targets — only honour events whose origin is pinned.
-      if (event.origin !== expectedOrigin) return
+      // `'*'` means "accept any origin"; matches the postMessage outbound
+      // semantics on the same field.
+      if (expectedOrigin !== '*' && event.origin !== expectedOrigin) return
       handleInbound(event.data)
     }
     source.addEventListener('message', listener as EventListener)
@@ -260,30 +274,40 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     }, 250)
   }
 
+  async function start(): Promise<void> {
+    if (state.started) return
+    if (startPromise) return startPromise
+    startPromise = (async () => {
+      try {
+        const acquired = await options.target()
+        if (acquired === null || acquired === undefined)
+          throw new PopupBlockedError(
+            '`target` returned null — popup blocked or window unavailable',
+          )
+        if (!protocol.isWindowLike(acquired) && !protocol.isPortLike(acquired))
+          throw new InvalidTargetError(
+            '`target` must return a Window, WindowProxy, or MessagePort handle',
+          )
+        handle = acquired
+        state.started = true
+        attachListener()
+        attachClosedPoll()
+        // Send our hello after the listener is attached so the peer's reply
+        // is never missed.
+        postRaw(handshake.send)
+      } finally {
+        startPromise = undefined
+      }
+    })()
+    return startPromise
+  }
+
   return {
     role,
     exchange: 'ongoing',
-    async start() {
-      if (state.closed) throw new Transport.ClosedError('postMessage transport already closed')
-      if (state.started) return
-      state.started = true
-      const acquired = await options.open()
-      if (acquired === null || acquired === undefined)
-        throw new PopupBlockedError('`open` returned null — popup blocked or window unavailable')
-      if (!protocol.isWindowLike(acquired) && !protocol.isPortLike(acquired))
-        throw new InvalidTargetError(
-          '`open` must return a Window, WindowProxy, or MessagePort handle',
-        )
-      handle = acquired
-      attachListener()
-      attachClosedPoll()
-      // Send our hello after the listener is attached so the peer's reply
-      // is never missed.
-      postRaw(handshake.send)
-    },
+    start,
     async send(envelope) {
-      if (state.closed) throw new Transport.ClosedError('postMessage transport already closed')
-      if (!state.started) throw new Transport.ClosedError('postMessage transport not started')
+      if (!state.started) await start()
       if (!state.ready) {
         buffered.push(envelope)
         return
@@ -291,12 +315,17 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
       postRaw(envelope)
     },
     async close(cause) {
-      if (state.closed) return
+      if (!state.started) return
+      const handle_local = handle
       try {
-        if (handle && options.close)
-          await (options.close as (handle: Target) => void | Promise<void>)(handle)
-        else if (handle && 'close' in handle && typeof handle.close === 'function')
-          (handle as { close: () => void }).close()
+        if (handle_local && options.close)
+          await (options.close as (handle: Target) => void | Promise<void>)(handle_local)
+        else if (
+          handle_local &&
+          'close' in handle_local &&
+          typeof handle_local.close === 'function'
+        )
+          (handle_local as { close: () => void }).close()
       } catch (error) {
         emitError(error as Error)
       } finally {
@@ -322,7 +351,7 @@ export declare namespace createSide {
 }
 
 /**
- * Thrown when the caller's `open` callback returns `null` — the canonical
+ * Thrown when the caller's `target` callback returns `null` — the canonical
  * signal from `window.open` that the popup was blocked, or that the
  * caller is in a context (e.g. SSR) where the window isn't available.
  */
@@ -343,7 +372,7 @@ export class TargetOriginRequiredError<
 }
 
 /**
- * Thrown when the handle returned from `open` is neither a Window-shaped
+ * Thrown when the handle returned from `target` is neither a Window-shaped
  * object nor a MessagePort. Helps catch typos in the bring-your-own
  * mounting code at start time rather than first message.
  */

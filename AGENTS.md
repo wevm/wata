@@ -86,6 +86,7 @@
 
 ## Learned User Preferences
 
+- **Inline transports into `Handshake.create`** — pass the transport factory call directly as the `transport:` field of `Handshake.create({ ... })` instead of binding it to a `const transport = ...` first. The transport's only consumer is the handshake, so the intermediate name adds noise without adding meaning. Apply the same rule to JSDoc examples and any other `Handshake.create` callsite. The standalone `const transport = postMessage(...)` form is only kept in JSDoc that's documenting the transport factory itself in isolation (i.e. the example sits next to `export function postMessage(...)` and doesn't construct a handshake).
 - **Dev-only UIs use semantic HTML only** — approval surfaces and debug pages should use plain HTML with no inline styles or CSS. Zero styling.
 - **Short spinner messages** — keep `@clack/prompts` spinner text short to avoid terminal line wrapping; show URLs and long content as static `Clack.log.info()` lines, not inside spinner text.
 - **Understand full request flow before changing CLI UX** — trace the complete path (CLI → server → browser → server → CLI polling) before modifying feedback or error handling in CLI scripts.

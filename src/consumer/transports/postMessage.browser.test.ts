@@ -25,7 +25,7 @@ import * as protocol from './internal/protocol.js'
 describe('postMessage (consumer)', () => {
   test('round-trips a plain envelope through a MessagePort peer', async () => {
     const { port1, port2 } = new MessageChannel()
-    const transport = postMessage_consumer({ open: () => port1 })
+    const transport = postMessage_consumer({ target: () => port1 })
 
     // Stand in for the host: handshake reply (`hostReady`) plus inbound frame.
     port2.addEventListener('message', (event) => {
@@ -57,7 +57,7 @@ describe('postMessage (consumer)', () => {
 
   test('buffers outbound frames sent before the peer signals ready', async () => {
     const { port1, port2 } = new MessageChannel()
-    const transport = postMessage_consumer({ open: () => port1 })
+    const transport = postMessage_consumer({ target: () => port1 })
 
     const received: unknown[] = []
     port2.addEventListener('message', (event) => {
@@ -111,7 +111,7 @@ describe('postMessage (consumer)', () => {
     } as unknown as Window
 
     const transport = postMessage_consumer({
-      open: () => handle,
+      target: () => handle,
       targetOrigin: 'https://wallet.example',
       source,
     })
@@ -151,7 +151,7 @@ describe('postMessage (consumer)', () => {
 
   test('emits `error` when an inbound payload fails to parse as an envelope', async () => {
     const { port1, port2 } = new MessageChannel()
-    const transport = postMessage_consumer({ open: () => port1 })
+    const transport = postMessage_consumer({ target: () => port1 })
 
     const errors: Error[] = []
     transport.on('error', (error) => errors.push(error))
@@ -171,44 +171,56 @@ describe('postMessage (consumer)', () => {
     await transport.close()
   })
 
-  test('throws `PopupBlockedError` when `open` returns null', async () => {
+  test('throws `PopupBlockedError` when `target` returns null', async () => {
     const transport = postMessage_consumer({
-      open: () => null as unknown as Window,
+      target: () => null as unknown as Window,
       targetOrigin: 'https://wallet.example',
     })
     await expect(transport.start()).rejects.toBeInstanceOf(PostMessage.PopupBlockedError)
   })
 
-  test('throws `InvalidTargetError` when `open` returns a non-Window-non-Port handle', async () => {
+  test('throws `InvalidTargetError` when `target` returns a non-Window-non-Port handle', async () => {
     const transport = postMessage_consumer({
-      open: () => 'nope' as unknown as MessagePort,
+      target: () => 'nope' as unknown as MessagePort,
     })
     await expect(transport.start()).rejects.toBeInstanceOf(PostMessage.InvalidTargetError)
   })
 
-  test('throws `ClosedError` on `send` after `close`', async () => {
+  test('`send` lazily calls `start` (no manual start required)', async () => {
     const { port1 } = new MessageChannel()
-    const transport = postMessage_consumer({ open: () => port1 })
-    await transport.start()
-    await transport.close()
-    await expect(transport.send(Envelope.plain('nope'))).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Transport.ClosedError: postMessage transport already closed]`,
-    )
+    let acquireCount = 0
+    const transport = postMessage_consumer({
+      target: () => {
+        acquireCount += 1
+        return port1
+      },
+    })
+    // No explicit `start()` — `send()` should drive `target()` lazily.
+    await transport.send(Envelope.plain('nope'))
+    expect(acquireCount).toMatchInlineSnapshot(`1`)
   })
 
-  test('throws `ClosedError` on `send` before `start`', async () => {
+  test('`send` after `close` lazily re-acquires the target', async () => {
     const { port1 } = new MessageChannel()
-    const transport = postMessage_consumer({ open: () => port1 })
-    await expect(transport.send(Envelope.plain('nope'))).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Transport.ClosedError: postMessage transport not started]`,
-    )
+    let acquireCount = 0
+    const transport = postMessage_consumer({
+      target: () => {
+        acquireCount += 1
+        return port1
+      },
+    })
+    await transport.start()
+    await transport.close()
+    // `close` is non-terminal — the next `send` should call `target()` again.
+    await transport.send(Envelope.plain('nope'))
+    expect(acquireCount).toMatchInlineSnapshot(`2`)
   })
 
   test('calls user-supplied `close` handler on close', async () => {
     const { port1 } = new MessageChannel()
     let closed = 0
     const transport = postMessage_consumer({
-      open: () => port1,
+      target: () => port1,
       close: () => {
         closed += 1
       },
@@ -220,7 +232,7 @@ describe('postMessage (consumer)', () => {
 
   test('unsubscribe removes the message listener', async () => {
     const { port1, port2 } = new MessageChannel()
-    const transport = postMessage_consumer({ open: () => port1 })
+    const transport = postMessage_consumer({ target: () => port1 })
 
     port2.addEventListener('message', (event) => {
       if (event.data?.type === protocol.consumerHello.type)
@@ -256,7 +268,7 @@ describe('postMessage (consumer)', () => {
 
   test('sends the consumer-hello frame on start', async () => {
     const { port1, port2 } = new MessageChannel()
-    const transport = postMessage_consumer({ open: () => port1 })
+    const transport = postMessage_consumer({ target: () => port1 })
 
     const seen: unknown[] = []
     port2.addEventListener('message', (event) => {
@@ -305,11 +317,11 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
     const { port1, port2 } = new MessageChannel()
 
     const consumer = Handshake.create({
-      transport: postMessage_consumer({ open: () => port1 }),
+      transport: postMessage_consumer({ target: () => port1 }),
       schema: integrationSchema,
     })
     const host = HostHandshake.create({
-      transport: postMessage_host({ open: () => port2 }),
+      transport: postMessage_host({ target: () => port2 }),
       schema: integrationSchema,
     })
 
@@ -345,11 +357,11 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
     const { port1, port2 } = new MessageChannel()
 
     const consumer = Handshake.create({
-      transport: postMessage_consumer({ open: () => port1 }),
+      transport: postMessage_consumer({ target: () => port1 }),
       schema: integrationSchema,
     })
     const host = HostHandshake.create({
-      transport: postMessage_host({ open: () => port2 }),
+      transport: postMessage_host({ target: () => port2 }),
       schema: integrationSchema,
     })
 
@@ -379,11 +391,11 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
     const { port1, port2 } = new MessageChannel()
 
     const consumer = Handshake.create({
-      transport: postMessage_consumer({ open: () => port1 }),
+      transport: postMessage_consumer({ target: () => port1 }),
       schema: integrationSchema,
     })
     const host = HostHandshake.create({
-      transport: postMessage_host({ open: () => port2 }),
+      transport: postMessage_host({ target: () => port2 }),
       schema: integrationSchema,
     })
 
@@ -402,16 +414,16 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
     expect(hostClosed).toMatchInlineSnapshot(`true`)
   })
 
-  test('rejects open() returning null with PopupBlockedError', async () => {
+  test('rejects target() returning null with PopupBlockedError', async () => {
     const consumer = Handshake.create({
       transport: postMessage_consumer({
-        open: () => null as unknown as Window,
+        target: () => null as unknown as Window,
         targetOrigin: 'https://wallet.example',
       }),
     })
 
     await expect(consumer.start()).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[PostMessage.PopupBlockedError: \`open\` returned null — popup blocked or window unavailable]`,
+      `[PostMessage.PopupBlockedError: \`target\` returned null — popup blocked or window unavailable]`,
     )
   })
 })

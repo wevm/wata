@@ -229,7 +229,10 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   // listener errors and never surfaces return values back to the caller.
   const requestListeners = new Set<Handshake.Listener<HostEventMap<schema>['request']>>()
 
-  const state = { started: false, closed: false }
+  // `started` = currently in an active session. After close (peer popup
+  // closes, transport tears down, …) drops back to `false`, and the
+  // next `lazyConnect()` / `start()` re-acquires the transport.
+  const state = { started: false }
   const pending = new Map<Rpc.Id, PendingRequest>()
 
   function settle(id: Rpc.Id, envelope: Rpc.Envelope): boolean {
@@ -254,18 +257,23 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   let startPromise: Promise<void> | undefined
 
   function start(): Promise<void> {
-    if (state.closed) return Promise.reject(new Transport.ClosedError('handshake already closed'))
+    if (state.started) return Promise.resolve()
     if (!startPromise) {
-      state.started = true
-      startPromise = transport.start().then(() => {
-        emitter.emit('open', undefined)
-      })
+      startPromise = transport
+        .start()
+        .then(() => {
+          state.started = true
+          emitter.emit('open', undefined)
+        })
+        .finally(() => {
+          startPromise = undefined
+        })
     }
     return startPromise
   }
 
   function lazyConnect(): void {
-    if (state.started || state.closed) return
+    if (state.started) return
     void start().catch((error: Error) => emitter.emit('error', error))
   }
 
@@ -425,8 +433,8 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   })
 
   transport.on('close', (cause) => {
-    if (state.closed) return
-    state.closed = true
+    if (!state.started) return
+    state.started = false
     pending.clear()
     emitter.emit('close', cause)
   })
@@ -441,8 +449,8 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     schema,
     start,
     async close(cause) {
-      if (state.closed) return
-      state.closed = true
+      if (!state.started) return
+      state.started = false
       pending.clear()
       await transport.close(cause)
       emitter.emit('close', cause)
