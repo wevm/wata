@@ -21,7 +21,7 @@
  * await host.start()
  *
  * host.on('message', (envelope) => console.log('host received', envelope))
- * await consumer.send(Envelope.plain({ method: 'ping' }))
+ * await consumer.send(Envelope.rpcRequests([Rpc.notification({ method: 'ping', params: [] })]))
  * ```
  */
 

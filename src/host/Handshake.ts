@@ -235,11 +235,11 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   const state = { started: false }
   const pending = new Map<Rpc.Id, PendingRequest>()
 
-  function settle(id: Rpc.Id, envelope: Rpc.Envelope): boolean {
+  function settle(id: Rpc.Id, response: Rpc.Response): boolean {
     const entry = pending.get(id)
     if (!entry) return false
     pending.delete(id)
-    void safeSend(transport, envelope)
+    void safeSend(transport, [response])
     return true
   }
 
@@ -277,146 +277,118 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     void start().catch((error: Error) => emitter.emit('error', error))
   }
 
-  transport.on('message', async (envelope) => {
-    if (envelope.type !== 'plain') {
-      emitter.emit(
-        'error',
-        new Errors.ProtocolError(
-          'host received an encrypted envelope on a plain transport',
-        ),
-      )
-      return
-    }
-
-    let message: Rpc.Envelope
-    try {
-      message = Rpc.parse(envelope.payload)
-    } catch (cause) {
-      emitter.emit('error', cause as Error)
-      return
-    }
-
-    if ('result' in message || 'error' in message) {
-      // Hosts don't currently send requests; ignore stray responses.
-      return
-    }
-
-    if ('id' in message) {
-      const request = message as Rpc.Request
-      if (schema) {
-        try {
-          Handshake.validateParamsIfKnown(schema, request.method, request.params)
-        } catch (cause) {
-          await safeSend(
-            transport,
-            Rpc.error({
-              id: request.id,
-              code: -32602,
-              message: 'invalid params',
-              data: (cause as Error).message,
-            }),
-          )
-          return
-        }
-      }
-
-      // No listener has any chance of answering this request — fall through
-      // to JSON-RPC `method not found` so the consumer doesn't hang.
-      if (requestListeners.size === 0) {
-        await safeSend(
-          transport,
+  async function dispatchRequest(request: Rpc.Request) {
+    if (schema) {
+      try {
+        Handshake.validateParamsIfKnown(schema, request.method, request.params)
+      } catch (cause) {
+        await safeSend(transport, [
           Rpc.error({
             id: request.id,
-            code: -32601,
-            message: 'method not found',
-            data: request.method,
+            code: -32602,
+            message: 'invalid params',
+            data: (cause as Error).message,
           }),
-        )
+        ])
         return
       }
+    }
 
-      // Track the request so `event.respond` / `event.reject` and the
-      // top-level `handshake.respond` / `handshake.reject` can all settle
-      // by id. The entry stays in `pending` until a listener answers
-      // (now or later) or the handshake closes.
-      pending.set(request.id, { request })
-
-      const payload = {
-        method: request.method,
-        params: request.params,
-        id: request.id,
-        request,
-        respond: (result: unknown) => {
-          settle(request.id, Rpc.success({ id: request.id, result }))
-        },
-        reject: (rpcError: { code: number; message: string; data?: unknown }) => {
-          settle(
-            request.id,
-            Rpc.error({
-              id: request.id,
-              code: rpcError.code,
-              message: rpcError.message,
-              data: rpcError.data,
-            }),
-          )
-        },
-      } as HostEventMap<schema>['request']
-
-      // Iterate the user-registered listeners directly so we can capture
-      // each one's outcome (return value or thrown error). Snapshot first
-      // because a listener may unsubscribe siblings during dispatch.
-      const snapshot = Array.from(requestListeners)
-      let firstError: Error | undefined
-      for (const listener of snapshot) {
-        if (!pending.has(request.id)) break
-        let value: unknown
-        try {
-          value = listener(payload)
-        } catch (cause) {
-          firstError ??= cause as Error
-          continue
-        }
-        try {
-          const resolved = await Promise.resolve(value)
-          if (resolved !== undefined) {
-            settle(request.id, Rpc.success({ id: request.id, result: resolved }))
-            break
-          }
-        } catch (cause) {
-          firstError ??= cause as Error
-        }
-      }
-
-      if (pending.has(request.id) && firstError) {
-        if (firstError instanceof Rpc.RpcError)
-          settle(
-            request.id,
-            Rpc.error({
-              id: request.id,
-              code: firstError.code,
-              message: firstError.message,
-              data: firstError.data,
-            }),
-          )
-        else
-          settle(
-            request.id,
-            Rpc.error({
-              id: request.id,
-              code: -32603,
-              message: 'internal error',
-              data: firstError.message,
-            }),
-          )
-      }
-
-      // Otherwise: the request stays pending. A listener acknowledged it
-      // by being registered, so the host trusts the application to settle
-      // later via `handshake.respond(id, ...)` / `handshake.reject(id, ...)`.
+    // No listener has any chance of answering this request — fall through
+    // to JSON-RPC `method not found` so the consumer doesn't hang.
+    if (requestListeners.size === 0) {
+      await safeSend(transport, [
+        Rpc.error({
+          id: request.id,
+          code: -32601,
+          message: 'method not found',
+          data: request.method,
+        }),
+      ])
       return
     }
 
-    // Notification — fire and forget.
+    // Track the request so `event.respond` / `event.reject` and the
+    // top-level `handshake.respond` / `handshake.reject` can all settle
+    // by id. The entry stays in `pending` until a listener answers
+    // (now or later) or the handshake closes.
+    pending.set(request.id, { request })
+
+    const payload = {
+      method: request.method,
+      params: request.params,
+      id: request.id,
+      request,
+      respond: (result: unknown) => {
+        settle(request.id, Rpc.success({ id: request.id, result }))
+      },
+      reject: (rpcError: { code: number; message: string; data?: unknown }) => {
+        settle(
+          request.id,
+          Rpc.error({
+            id: request.id,
+            code: rpcError.code,
+            message: rpcError.message,
+            data: rpcError.data,
+          }),
+        )
+      },
+    } as HostEventMap<schema>['request']
+
+    // Iterate the user-registered listeners directly so we can capture
+    // each one's outcome (return value or thrown error). Snapshot first
+    // because a listener may unsubscribe siblings during dispatch.
+    const snapshot = Array.from(requestListeners)
+    let firstError: Error | undefined
+    for (const listener of snapshot) {
+      if (!pending.has(request.id)) break
+      let value: unknown
+      try {
+        value = listener(payload)
+      } catch (cause) {
+        firstError ??= cause as Error
+        continue
+      }
+      try {
+        const resolved = await Promise.resolve(value)
+        if (resolved !== undefined) {
+          settle(request.id, Rpc.success({ id: request.id, result: resolved }))
+          break
+        }
+      } catch (cause) {
+        firstError ??= cause as Error
+      }
+    }
+
+    if (pending.has(request.id) && firstError) {
+      if (firstError instanceof Rpc.RpcError)
+        settle(
+          request.id,
+          Rpc.error({
+            id: request.id,
+            code: firstError.code,
+            message: firstError.message,
+            data: firstError.data,
+          }),
+        )
+      else
+        settle(
+          request.id,
+          Rpc.error({
+            id: request.id,
+            code: -32603,
+            message: 'internal error',
+            data: firstError.message,
+          }),
+        )
+    }
+
+    // Otherwise: the request stays pending. A listener acknowledged it
+    // by being registered, so the host trusts the application to settle
+    // later via `handshake.respond(id, ...)` / `handshake.reject(id, ...)`.
+  }
+
+  function dispatchNotification(message: Rpc.Notification) {
     if (schema) {
       try {
         Handshake.validateParamsIfKnown(schema, message.method, message.params)
@@ -430,6 +402,30 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       params: message.params,
       notification: message,
     } as HostEventMap<schema>['notification'])
+  }
+
+  transport.on('message', async (envelope) => {
+    // Pre-keying mode: encrypted frames rejected until the AEAD layer
+    // lands. Once it does, this branch flips to "must be `encrypted`"
+    // per spec §7 mode discipline.
+    if (envelope.type === 'encrypted') {
+      emitter.emit(
+        'error',
+        new Errors.ProtocolError(
+          'host received an encrypted envelope before key derivation',
+        ),
+      )
+      return
+    }
+    if (envelope.type === 'rpc-requests') {
+      for (const message of envelope.payload) {
+        if ('id' in message) await dispatchRequest(message)
+        else dispatchNotification(message)
+      }
+      return
+    }
+    // `rpc-responses`, `ready`, `hello` are not currently routed into
+    // the host-side surface; ignored.
   })
 
   transport.on('close', (cause) => {
@@ -500,9 +496,12 @@ type PendingRequest = {
   request: Rpc.Request
 }
 
-async function safeSend(transport: Transport.Transport, payload: unknown): Promise<void> {
+async function safeSend(
+  transport: Transport.Transport,
+  responses: ReadonlyArray<Rpc.Response>,
+): Promise<void> {
   try {
-    await transport.send(Envelope.plain(payload))
+    await transport.send(Envelope.rpcResponses(responses))
   } catch {
     // The transport surfaces its own error to listeners; swallow here so
     // the host loop doesn't blow up after a peer disconnect.
