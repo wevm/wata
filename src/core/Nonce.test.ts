@@ -54,12 +54,12 @@ describe('toCounter', () => {
 })
 
 describe('encoder', () => {
-  test('emits monotonically increasing nonces from 0', () => {
+  test('default-emits 0x00…01 first (pre-incremented per spec §6)', () => {
     const out = Nonce.encoder()
-    expect(out.next()).toMatchInlineSnapshot('"0x000000000000000000000000"')
     expect(out.next()).toMatchInlineSnapshot('"0x000000000000000000000001"')
     expect(out.next()).toMatchInlineSnapshot('"0x000000000000000000000002"')
-    expect(out.counter).toMatchInlineSnapshot('3n')
+    expect(out.next()).toMatchInlineSnapshot('"0x000000000000000000000003"')
+    expect(out.counter).toMatchInlineSnapshot('4n')
   })
 
   test('starts from a custom counter', () => {
@@ -76,45 +76,53 @@ describe('encoder', () => {
 })
 
 describe('decoder', () => {
-  test('accepts nonces in strict monotonic order', () => {
+  test('accepts strictly-increasing counters', () => {
     const dec = Nonce.decoder()
-    expect(() => dec.accept(Nonce.fromCounter(0n))).not.toThrow()
     expect(() => dec.accept(Nonce.fromCounter(1n))).not.toThrow()
     expect(() => dec.accept(Nonce.fromCounter(2n))).not.toThrow()
-    expect(dec.next).toMatchInlineSnapshot('3n')
+    expect(() => dec.accept(Nonce.fromCounter(3n))).not.toThrow()
+    expect(dec.hwm).toMatchInlineSnapshot('3n')
   })
 
-  test('rejects a replayed nonce', () => {
+  test('accepts forward jumps (strictly-greater is enough)', () => {
     const dec = Nonce.decoder()
-    dec.accept(Nonce.fromCounter(0n))
+    expect(() => dec.accept(Nonce.fromCounter(2n))).not.toThrow()
+    expect(() => dec.accept(Nonce.fromCounter(7n))).not.toThrow()
+    expect(dec.hwm).toBe(7n)
+  })
+
+  test('rejects 0 against the default HWM (must be strictly greater)', () => {
+    const dec = Nonce.decoder()
     expect(() => dec.accept(Nonce.fromCounter(0n))).toThrowErrorMatchingInlineSnapshot(
       `
-      [ProtocolError: nonce out of order
-      Details: expected counter=1, received counter=0]
+      [ProtocolError: nonce not strictly greater than HWM
+      Details: hwm=0, received counter=0]
     `,
     )
   })
 
-  test('rejects a forward jump (skipped counter)', () => {
+  test('rejects a replayed nonce', () => {
     const dec = Nonce.decoder()
-    expect(() => dec.accept(Nonce.fromCounter(2n))).toThrowErrorMatchingInlineSnapshot(
+    dec.accept(Nonce.fromCounter(1n))
+    expect(() => dec.accept(Nonce.fromCounter(1n))).toThrowErrorMatchingInlineSnapshot(
       `
-      [ProtocolError: nonce out of order
-      Details: expected counter=0, received counter=2]
+      [ProtocolError: nonce not strictly greater than HWM
+      Details: hwm=1, received counter=1]
     `,
     )
   })
 
   test('rejects a backwards-going nonce', () => {
     const dec = Nonce.decoder()
-    dec.accept(Nonce.fromCounter(0n))
     dec.accept(Nonce.fromCounter(1n))
-    expect(() => dec.accept(Nonce.fromCounter(0n))).toThrowError(Errors.ProtocolError)
+    dec.accept(Nonce.fromCounter(2n))
+    expect(() => dec.accept(Nonce.fromCounter(1n))).toThrowError(Errors.ProtocolError)
   })
 
-  test('starts from a custom counter', () => {
-    const dec = Nonce.decoder({ start: 5n })
-    expect(() => dec.accept(Nonce.fromCounter(5n))).not.toThrow()
-    expect(dec.next).toMatchInlineSnapshot('6n')
+  test('starts from a custom HWM', () => {
+    const dec = Nonce.decoder({ hwm: 5n })
+    expect(() => dec.accept(Nonce.fromCounter(5n))).toThrowError(Errors.ProtocolError)
+    expect(() => dec.accept(Nonce.fromCounter(6n))).not.toThrow()
+    expect(dec.hwm).toMatchInlineSnapshot('6n')
   })
 })
