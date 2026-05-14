@@ -32,10 +32,10 @@ import { Ed25519, Hex } from 'ox'
  * (or `pubkey_host`); the private scalar feeds the X25519 ECDH step.
  */
 export type X25519Keypair = {
-  /** Raw 32-byte X25519 public key (`pubkey_consumer` per uRPC §4). */
-  publicKey: Hex.Hex
   /** X25519 scalar (32 bytes hex). Input to the X25519 ECDH step. */
   privateKey: Hex.Hex
+  /** Raw 32-byte X25519 public key (`pubkey_consumer` per uRPC §4). */
+  publicKey: Hex.Hex
 }
 
 /**
@@ -44,10 +44,10 @@ export type X25519Keypair = {
  * form used for key agreement.
  */
 export type Keypair = {
-  /** Ed25519 public key (32 bytes hex). Used to verify signatures from this peer. */
-  publicKey: Hex.Hex
   /** Ed25519 private seed (32 bytes hex). Used to sign and to derive {@link x25519}. */
   privateKey: Hex.Hex
+  /** Ed25519 public key (32 bytes hex). Used to verify signatures from this peer. */
+  publicKey: Hex.Hex
   /** Derived X25519 keypair for ECDH. */
   x25519: X25519Keypair
 }
@@ -100,21 +100,21 @@ export function toX25519(
 ): X25519Keypair
 export function toX25519(options: toX25519.Options): { publicKey: Hex.Hex }
 export function toX25519(options: toX25519.Options): {
-  publicKey: Hex.Hex
   privateKey?: Hex.Hex
+  publicKey: Hex.Hex
 } {
   const publicKey = Ed25519.toX25519PublicKey({ publicKey: options.publicKey })
   if (options.privateKey === undefined) return { publicKey }
   const privateKey = Ed25519.toX25519PrivateKey({ privateKey: options.privateKey })
-  return { publicKey, privateKey }
+  return { privateKey, publicKey }
 }
 
 export declare namespace toX25519 {
   /** Options for {@link toX25519}. */
   type Options = {
-    /** Ed25519 public key (32 bytes hex). */
-    publicKey: Hex.Hex
     /** Optional Ed25519 private seed (32 bytes hex). */
     privateKey?: Hex.Hex | undefined
+    /** Ed25519 public key (32 bytes hex). */
+    publicKey: Hex.Hex
   }
 }

@@ -86,13 +86,13 @@ export function toCounter(nonce: Hex.Hex | Bytes.Bytes): bigint {
 export function encoder(options: encoder.Options = {}): encoder.ReturnType {
   let counter = options.start ?? 1n
   return {
+    get counter() {
+      return counter
+    },
     next() {
       const nonce = fromCounter(counter)
       counter += 1n
       return nonce
-    },
-    get counter() {
-      return counter
     },
   }
 }
@@ -106,10 +106,10 @@ export declare namespace encoder {
 
   /** Result of {@link encoder}. */
   type ReturnType = {
-    /** Emit the next monotonic nonce and advance the counter. */
-    next: () => Hex.Hex
     /** Current (next-to-emit) counter value. */
     readonly counter: bigint
+    /** Emit the next monotonic nonce and advance the counter. */
+    next: () => Hex.Hex
   }
 }
 

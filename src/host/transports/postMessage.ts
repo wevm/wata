@@ -88,13 +88,13 @@ export function postMessage<const target extends ConsumerPostMessage.Target = Wi
     }) as () => target | Promise<target>)
 
   return ConsumerPostMessage.createSide({
-    role: 'host',
-    handshake: { send: protocol.hostReady, expect: protocol.consumerHello.type },
+    handshake: { expect: protocol.consumerHello.type, send: protocol.hostReady },
     options: {
       ...options,
       target: target_resolved,
       targetOrigin: options.targetOrigin ?? '*',
     } as never,
+    role: 'host',
   })
 }
 

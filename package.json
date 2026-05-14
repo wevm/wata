@@ -32,8 +32,10 @@
     "src"
   ],
   "dependencies": {
+    "@hono/node-server": "catalog:",
     "@noble/ciphers": "catalog:",
     "@noble/hashes": "catalog:",
+    "hono": "catalog:",
     "ox": "catalog:",
     "rettime": "catalog:",
     "zod": "catalog:"

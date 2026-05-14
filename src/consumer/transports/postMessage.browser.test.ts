@@ -191,7 +191,7 @@ describe('postMessage (consumer)', () => {
 
     expect(errors[0]?.message).toMatchInlineSnapshot(`
     	"invalid envelope
-    	Details: type: Invalid discriminator value. Expected 'rpc-requests' | 'rpc-responses' | 'ready' | 'hello' | 'encrypted'"
+    	Details: type: Invalid discriminator value. Expected 'encrypted' | 'hello' | 'ready' | 'rpc-requests' | 'rpc-responses'"
     `)
 
     await transport.close()

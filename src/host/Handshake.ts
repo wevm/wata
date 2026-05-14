@@ -35,12 +35,14 @@ export type RequestEvent<
   params extends Rpc.Params = Rpc.Params,
   result = unknown,
 > = {
+  /** Id of the JSON-RPC request being answered. */
+  id: Rpc.Id
   /** Method name. Top-level discriminator for schema-narrowed listeners. */
   method: method
   /** Method params. */
   params: params
-  /** Id of the JSON-RPC request being answered. */
-  id: Rpc.Id
+  /** Sugar for `handshake.reject(event.id, error)`. Idempotent. */
+  reject: (error: { code: number; data?: unknown; message: string }) => void
   /** The full JSON-RPC request envelope as parsed off the wire. */
   request: Rpc.Request<method, params>
   /**
@@ -49,8 +51,6 @@ export type RequestEvent<
    * `event.respond` / `event.reject` / `handshake.respond` / `handshake.reject`.
    */
   respond: (result: result) => void
-  /** Sugar for `handshake.reject(event.id, error)`. Idempotent. */
-  reject: (error: { code: number; message: string; data?: unknown }) => void
 }
 
 /** Event payload delivered to host `'notification'` listeners. */
@@ -60,10 +60,10 @@ export type NotificationEvent<
 > = {
   /** Method name. Top-level discriminator for schema-narrowed listeners. */
   method: method
-  /** Notification params. */
-  params: params
   /** The full JSON-RPC notification envelope as parsed off the wire. */
   notification: Rpc.Notification<method, params>
+  /** Notification params. */
+  params: params
 }
 
 /**
@@ -105,32 +105,40 @@ export type SchemaNotificationEvent<schema extends Schema.Schema | undefined> =
 
 /** Host-side event map (lifecycle + request/notification dispatch). */
 export type HostEventMap<schema extends Schema.Schema | undefined> = Handshake.LifecycleEventMap & {
-  /** Inbound JSON-RPC request — first non-`undefined` listener return wins. */
-  request: SchemaRequestEvent<schema>
   /** Inbound JSON-RPC notification — fire-and-forget. */
   notification: SchemaNotificationEvent<schema>
+  /** Inbound JSON-RPC request — first non-`undefined` listener return wins. */
+  request: SchemaRequestEvent<schema>
 }
 
 /** Host-side `Handshake`. Returned by {@link create}. */
 export type Host<schema extends Schema.Schema | undefined = undefined> = {
-  /** Side of the protocol this handshake speaks for. */
-  role: 'host'
-  /** The wrapped transport. */
-  transport: Transport.Transport<'host'>
-  /** Optional method-registry schema flowed through `'request'` / `'notification'` events. */
-  schema: schema
-  /**
-   * Explicitly bring the session up — starts the transport and resolves
-   * once it is ready to send and receive frames. Emits `'open'` on success.
-   *
-   * Optional: {@link Host.on} (and {@link Host.respond} / {@link Host.reject})
-   * trigger `start` internally on first use, so most hosts can skip it.
-   * Reach for it when a UI wants to surface the connecting state before
-   * any request lands, or when start-time errors should reject up-front.
-   */
-  start: () => Promise<void>
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
+  /** Remove a previously subscribed listener. */
+  off: <type extends keyof HostEventMap<schema>>(
+    type: type,
+    listener: Handshake.Listener<HostEventMap<schema>[type]>,
+  ) => void
+  /**
+   * Subscribe to a host event. Returns an `AbortController` so the
+   * subscription can be cancelled (or composed with an external signal).
+   *
+   * Lazy-connects the transport on first call, so most hosts never need
+   * to call {@link Host.start} explicitly.
+   */
+  on: <type extends keyof HostEventMap<schema>>(
+    type: type,
+    listener: Handshake.Listener<HostEventMap<schema>[type]>,
+  ) => AbortController
+  /**
+   * Settle a still-pending inbound request by id with a JSON-RPC error.
+   * Mirror of {@link Host.respond}.
+   *
+   * @param id - Id of the pending request to settle.
+   * @param error - JSON-RPC error envelope (`code` + `message`, optional `data`).
+   */
+  reject: (id: Rpc.Id, error: reject.Error) => void
   /**
    * Settle a still-pending inbound request by id with a JSON-RPC `result`.
    *
@@ -147,30 +155,22 @@ export type Host<schema extends Schema.Schema | undefined = undefined> = {
    * @param result - Success `result` payload to send.
    */
   respond: <result = unknown>(id: Rpc.Id, result: result) => void
+  /** Side of the protocol this handshake speaks for. */
+  role: 'host'
+  /** Optional method-registry schema flowed through `'request'` / `'notification'` events. */
+  schema: schema
   /**
-   * Settle a still-pending inbound request by id with a JSON-RPC error.
-   * Mirror of {@link Host.respond}.
+   * Explicitly bring the session up — starts the transport and resolves
+   * once it is ready to send and receive frames. Emits `'open'` on success.
    *
-   * @param id - Id of the pending request to settle.
-   * @param error - JSON-RPC error envelope (`code` + `message`, optional `data`).
+   * Optional: {@link Host.on} (and {@link Host.respond} / {@link Host.reject})
+   * trigger `start` internally on first use, so most hosts can skip it.
+   * Reach for it when a UI wants to surface the connecting state before
+   * any request lands, or when start-time errors should reject up-front.
    */
-  reject: (id: Rpc.Id, error: reject.Error) => void
-  /**
-   * Subscribe to a host event. Returns an `AbortController` so the
-   * subscription can be cancelled (or composed with an external signal).
-   *
-   * Lazy-connects the transport on first call, so most hosts never need
-   * to call {@link Host.start} explicitly.
-   */
-  on: <type extends keyof HostEventMap<schema>>(
-    type: type,
-    listener: Handshake.Listener<HostEventMap<schema>[type]>,
-  ) => AbortController
-  /** Remove a previously subscribed listener. */
-  off: <type extends keyof HostEventMap<schema>>(
-    type: type,
-    listener: Handshake.Listener<HostEventMap<schema>[type]>,
-  ) => void
+  start: () => Promise<void>
+  /** The wrapped transport. */
+  transport: Transport.Transport<'host'>
 }
 
 export declare namespace reject {
@@ -178,10 +178,10 @@ export declare namespace reject {
   type Error = {
     /** JSON-RPC error code. */
     code: number
-    /** JSON-RPC error message. */
-    message: string
     /** Optional JSON-RPC error `data` payload. */
     data?: unknown | undefined
+    /** JSON-RPC error message. */
+    message: string
   }
 }
 
@@ -239,9 +239,10 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   // `keyed` (future commit, when key derivation lands), the inverse
   // rule kicks in — any inbound plaintext envelope is rejected the same
   // way. The transition is one-way; never reverts.
-  const state: { started: boolean; phase: 'pre-key' | 'keyed' } = {
-    started: false,
+  type State = { phase: 'pre-key' | 'keyed'; started: boolean }
+  const state: State = {
     phase: 'pre-key',
+    started: false,
   }
   const pending = new Map<Rpc.Id, PendingRequest>()
 
@@ -309,10 +310,10 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     if (requestListeners.size === 0) {
       await safeSend(transport, [
         Rpc.error({
-          id: request.id,
           code: -32601,
-          message: 'method not found',
           data: request.method,
+          id: request.id,
+          message: 'method not found',
         }),
       ])
       return
@@ -325,23 +326,23 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     pending.set(request.id, { request })
 
     const payload = {
+      id: request.id,
       method: request.method,
       params: request.params,
-      id: request.id,
-      request,
-      respond: (result: unknown) => {
-        settle(request.id, Rpc.success({ id: request.id, result }))
-      },
-      reject: (rpcError: { code: number; message: string; data?: unknown }) => {
+      reject: (rpcError: { code: number; data?: unknown; message: string }) => {
         settle(
           request.id,
           Rpc.error({
-            id: request.id,
             code: rpcError.code,
-            message: rpcError.message,
             data: rpcError.data,
+            id: request.id,
+            message: rpcError.message,
           }),
         )
+      },
+      request,
+      respond: (result: unknown) => {
+        settle(request.id, Rpc.success({ id: request.id, result }))
       },
     } as HostEventMap<schema>['request']
 
@@ -375,20 +376,20 @@ export function create<const schema extends Schema.Schema | undefined = undefine
         settle(
           request.id,
           Rpc.error({
-            id: request.id,
             code: firstError.code,
-            message: firstError.message,
             data: firstError.data,
+            id: request.id,
+            message: firstError.message,
           }),
         )
       else
         settle(
           request.id,
           Rpc.error({
-            id: request.id,
             code: -32603,
-            message: 'internal error',
             data: firstError.message,
+            id: request.id,
+            message: 'internal error',
           }),
         )
     }
@@ -409,8 +410,8 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     }
     emitter.emit('notification', {
       method: message.method,
-      params: message.params,
       notification: message,
+      params: message.params,
     } as HostEventMap<schema>['notification'])
   }
 
@@ -424,7 +425,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     const error = new Errors.ProtocolError(reason)
     void (async () => {
       await safeSend(transport, [
-        Rpc.error({ id: null, code: -32600, message: 'invalid request', data: reason }),
+        Rpc.error({ code: -32600, data: reason, id: null, message: 'invalid request' }),
       ])
       try {
         await transport.close(error)
@@ -474,10 +475,6 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   })
 
   return {
-    role: 'host',
-    transport,
-    schema,
-    start,
     async close(cause) {
       if (!state.started) return
       state.started = false
@@ -485,8 +482,13 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       await transport.close(cause)
       emitter.emit('close', cause)
     },
-    respond,
-    reject,
+    off(type, listener) {
+      if (type === 'request') {
+        requestListeners.delete(listener as Handshake.Listener<HostEventMap<schema>['request']>)
+        return
+      }
+      emitter.off(type, listener)
+    },
     on(type, listener) {
       lazyConnect()
       const controller = new AbortController()
@@ -506,23 +508,22 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       emitter.on(type, listener, { signal: controller.signal })
       return controller
     },
-    off(type, listener) {
-      if (type === 'request') {
-        requestListeners.delete(listener as Handshake.Listener<HostEventMap<schema>['request']>)
-        return
-      }
-      emitter.off(type, listener)
-    },
+    reject,
+    respond,
+    role: 'host',
+    schema,
+    start,
+    transport,
   }
 }
 
 export declare namespace create {
   /** Options for {@link create}. */
   type Options<schema extends Schema.Schema | undefined> = {
-    /** Host-role transport this handshake wraps. */
-    transport: Transport.Transport<'host'>
     /** Optional method-registry schema (typed `'request'` / `'notification'` payloads). */
     schema?: schema | undefined
+    /** Host-role transport this handshake wraps. */
+    transport: Transport.Transport<'host'>
   }
 }
 

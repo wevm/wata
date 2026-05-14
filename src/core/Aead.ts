@@ -58,15 +58,15 @@ export function seal(options: seal.Options): Hex.Hex {
 export declare namespace seal {
   /** Options for {@link seal}. */
   type Options = {
-    /** ChaCha20-Poly1305 32-byte key. */
-    key: Hex.Hex | Bytes.Bytes
-    /** ChaCha20-Poly1305 12-byte nonce. */
-    nonce: Hex.Hex | Bytes.Bytes
     /**
      * Additional authenticated data to bind to the ciphertext via the
      * Poly1305 tag. Not encrypted — both peers must agree on this value.
      */
     aad?: Hex.Hex | Bytes.Bytes | undefined
+    /** ChaCha20-Poly1305 32-byte key. */
+    key: Hex.Hex | Bytes.Bytes
+    /** ChaCha20-Poly1305 12-byte nonce. */
+    nonce: Hex.Hex | Bytes.Bytes
     /** Plaintext bytes to encrypt. */
     plaintext: Hex.Hex | Bytes.Bytes
   }
@@ -106,14 +106,14 @@ export function open(options: open.Options): Hex.Hex {
 export declare namespace open {
   /** Options for {@link open}. */
   type Options = {
-    /** ChaCha20-Poly1305 32-byte key. */
-    key: Hex.Hex | Bytes.Bytes
-    /** ChaCha20-Poly1305 12-byte nonce, matching the value used by {@link seal}. */
-    nonce: Hex.Hex | Bytes.Bytes
     /** AAD that was bound by {@link seal}; must match exactly or decryption fails. */
     aad?: Hex.Hex | Bytes.Bytes | undefined
     /** Ciphertext (with 16-byte tag appended) to decrypt and verify. */
     ciphertext: Hex.Hex | Bytes.Bytes
+    /** ChaCha20-Poly1305 32-byte key. */
+    key: Hex.Hex | Bytes.Bytes
+    /** ChaCha20-Poly1305 12-byte nonce, matching the value used by {@link seal}. */
+    nonce: Hex.Hex | Bytes.Bytes
   }
 }
 

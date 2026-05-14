@@ -80,49 +80,49 @@ export namespace schema {
 
   /** `encrypted` envelope inner payload. */
   export const encryptedPayload = z.object({
-    v: z.literal(version),
+    ct: base64url,
     from: fromField,
     nonce: base64url,
-    ct: base64url,
+    v: z.literal(version),
   })
 
   /** `rpc-requests` envelope. */
   export const rpcRequests = z.object({
-    type: z.literal('rpc-requests'),
     payload: rpcRequestsPayload,
+    type: z.literal('rpc-requests'),
   })
 
   /** `rpc-responses` envelope. */
   export const rpcResponses = z.object({
-    type: z.literal('rpc-responses'),
     payload: rpcResponsesPayload,
+    type: z.literal('rpc-responses'),
   })
 
   /** `ready` envelope. */
   export const ready = z.object({
-    type: z.literal('ready'),
     payload: metadataPayload,
+    type: z.literal('ready'),
   })
 
   /** `hello` envelope. */
   export const hello = z.object({
-    type: z.literal('hello'),
     payload: metadataPayload,
+    type: z.literal('hello'),
   })
 
   /** `encrypted` envelope. */
   export const encrypted = z.object({
-    type: z.literal('encrypted'),
     payload: encryptedPayload,
+    type: z.literal('encrypted'),
   })
 
   /** Discriminated union of every envelope variant. */
   export const envelope = z.discriminatedUnion('type', [
+    encrypted,
+    hello,
+    ready,
     rpcRequests,
     rpcResponses,
-    ready,
-    hello,
-    encrypted,
   ])
 }
 
@@ -141,28 +141,28 @@ export type RpcRequestMessage = Rpc.Request | Rpc.Notification
 export function rpcRequests(
   messages: ReadonlyArray<RpcRequestMessage>,
 ): Extract<Envelope, { type: 'rpc-requests' }> {
-  return { type: 'rpc-requests', payload: [...messages] as never }
+  return { payload: [...messages] as never, type: 'rpc-requests' }
 }
 
 /** Construct an `rpc-responses` envelope around one or more JSON-RPC responses. */
 export function rpcResponses(
   messages: ReadonlyArray<Rpc.Response>,
 ): Extract<Envelope, { type: 'rpc-responses' }> {
-  return { type: 'rpc-responses', payload: [...messages] as never }
+  return { payload: [...messages] as never, type: 'rpc-responses' }
 }
 
 /** Construct a `ready` envelope (optionally carrying transport-defined metadata). */
 export function ready(
   payload: Record<string, unknown> = {},
 ): Extract<Envelope, { type: 'ready' }> {
-  return { type: 'ready', payload }
+  return { payload, type: 'ready' }
 }
 
 /** Construct a `hello` envelope (host → consumer). */
 export function hello(
   payload: Record<string, unknown> = {},
 ): Extract<Envelope, { type: 'hello' }> {
-  return { type: 'hello', payload }
+  return { payload, type: 'hello' }
 }
 
 /**
@@ -172,25 +172,25 @@ export function hello(
  */
 export function encrypted(options: encrypted.Options): Extract<Envelope, { type: 'encrypted' }> {
   return {
-    type: 'encrypted',
     payload: {
-      v: version,
+      ct: Base64.fromBytes(Bytes.from(options.ciphertext), { pad: false, url: true }),
       from: options.from,
-      nonce: Base64.fromBytes(Bytes.from(options.nonce), { url: true, pad: false }),
-      ct: Base64.fromBytes(Bytes.from(options.ciphertext), { url: true, pad: false }),
+      nonce: Base64.fromBytes(Bytes.from(options.nonce), { pad: false, url: true }),
+      v: version,
     },
+    type: 'encrypted',
   }
 }
 
 export declare namespace encrypted {
   /** Options for {@link encrypted}. */
   type Options = {
+    /** AEAD ciphertext with the 16-byte Poly1305 tag appended. */
+    ciphertext: Hex.Hex | Bytes.Bytes
     /** Sender role; mirrors the AAD `role` byte. */
     from: From
     /** AEAD nonce (12 bytes). */
     nonce: Hex.Hex | Bytes.Bytes
-    /** AEAD ciphertext with the 16-byte Poly1305 tag appended. */
-    ciphertext: Hex.Hex | Bytes.Bytes
   }
 }
 
@@ -233,20 +233,20 @@ export function toEncrypted(
   envelope: Extract<Envelope, { type: 'encrypted' }>,
 ): toEncrypted.ReturnType {
   return {
+    ciphertext: Base64.toHex(envelope.payload.ct),
     from: envelope.payload.from,
     nonce: Base64.toHex(envelope.payload.nonce),
-    ciphertext: Base64.toHex(envelope.payload.ct),
   }
 }
 
 export declare namespace toEncrypted {
   /** Result of {@link toEncrypted}. */
   type ReturnType = {
+    /** Decoded ciphertext (with appended 16-byte tag) as `0x`-prefixed hex. */
+    ciphertext: Hex.Hex
     /** Sender role taken from the envelope's `from` field. */
     from: From
     /** Decoded 12-byte AEAD nonce as `0x`-prefixed hex. */
     nonce: Hex.Hex
-    /** Decoded ciphertext (with appended 16-byte tag) as `0x`-prefixed hex. */
-    ciphertext: Hex.Hex
   }
 }

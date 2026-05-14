@@ -47,34 +47,47 @@ export type Listener<payload> = (payload: payload) => unknown
 
 /** Lifecycle events emitted on every `Handshake` (consumer + host). */
 export type LifecycleEventMap = {
-  /** Emitted after `start()` completes (both consumer and host). */
-  open: void
   /** Emitted exactly once when the session closes, cleanly or with cause. */
   close: Error | undefined
   /** Emitted when the transport surfaces an error (network, parse, AEAD). */
   error: Error
+  /** Emitted after `start()` completes (both consumer and host). */
+  open: void
 }
 
 /**
  * Consumer-side `Handshake`. Returned by {@link create}.
  */
 export type Consumer<schema extends Schema.Schema | undefined = undefined> = {
+  /** Close the session. Idempotent. Emits `'close'`. */
+  close: (cause?: Error) => Promise<void>
+  /**
+   * Send a typed JSON-RPC notification (no response expected).
+   * Auto-{@link Consumer.start}s on first use.
+   */
+  notify: <
+    const method extends Consumer.MethodName<schema>,
+    const params extends Consumer.ParamsOf<schema, method>,
+  >(
+    options: Consumer.NotifyOptions<method, params>,
+  ) => Promise<void>
+  /** Remove a previously subscribed listener. */
+  off: <type extends keyof LifecycleEventMap>(
+    type: type,
+    listener: Listener<LifecycleEventMap[type]>,
+  ) => void
+  /**
+   * Subscribe to a lifecycle event. Returns an `AbortController` so the
+   * subscription can be cancelled (or composed with an external signal).
+   */
+  on: <type extends keyof LifecycleEventMap>(
+    type: type,
+    listener: Listener<LifecycleEventMap[type]>,
+  ) => AbortController
   /** Side of the protocol this handshake speaks for. */
   role: 'consumer'
-  /** The wrapped transport. */
-  transport: Transport.Transport<'consumer'>
   /** Optional method-registry schema flowed through `send` / `notify`. */
   schema: schema
-  /**
-   * Explicitly bring the session up — starts the transport and resolves
-   * once it is ready to send and receive frames. Emits `'open'` on success.
-   *
-   * Optional: {@link Consumer.send} and {@link Consumer.notify} call
-   * `start` internally on first use, so most callers can skip it.
-   * Reach for it when the open handshake should overlap other work, or
-   * when a UI wants to surface the connecting state before any traffic.
-   */
-  start: () => Promise<void>
   /**
    * Send a typed JSON-RPC request. Auto-{@link Consumer.start}s on
    * first use. Resolves with the host's `result` (or rejects with
@@ -87,30 +100,17 @@ export type Consumer<schema extends Schema.Schema | undefined = undefined> = {
     options: Consumer.SendOptions<method, params>,
   ) => Promise<SendResult<Consumer.ResultOf<schema, method>>>
   /**
-   * Send a typed JSON-RPC notification (no response expected).
-   * Auto-{@link Consumer.start}s on first use.
+   * Explicitly bring the session up — starts the transport and resolves
+   * once it is ready to send and receive frames. Emits `'open'` on success.
+   *
+   * Optional: {@link Consumer.send} and {@link Consumer.notify} call
+   * `start` internally on first use, so most callers can skip it.
+   * Reach for it when the open handshake should overlap other work, or
+   * when a UI wants to surface the connecting state before any traffic.
    */
-  notify: <
-    const method extends Consumer.MethodName<schema>,
-    const params extends Consumer.ParamsOf<schema, method>,
-  >(
-    options: Consumer.NotifyOptions<method, params>,
-  ) => Promise<void>
-  /** Close the session. Idempotent. Emits `'close'`. */
-  close: (cause?: Error) => Promise<void>
-  /**
-   * Subscribe to a lifecycle event. Returns an `AbortController` so the
-   * subscription can be cancelled (or composed with an external signal).
-   */
-  on: <type extends keyof LifecycleEventMap>(
-    type: type,
-    listener: Listener<LifecycleEventMap[type]>,
-  ) => AbortController
-  /** Remove a previously subscribed listener. */
-  off: <type extends keyof LifecycleEventMap>(
-    type: type,
-    listener: Listener<LifecycleEventMap[type]>,
-  ) => void
+  start: () => Promise<void>
+  /** The wrapped transport. */
+  transport: Transport.Transport<'consumer'>
 }
 
 export declare namespace Consumer {
@@ -141,12 +141,12 @@ export declare namespace Consumer {
 
   /** Options for {@link Consumer.send}. */
   type SendOptions<method extends string, params extends Rpc.Params> = {
+    /** Optional explicit request id. Defaults to a monotonically-increasing number. */
+    id?: Rpc.Id | undefined
     /** Method name. Narrowed against the schema when one was supplied. */
     method: method
     /** Method params. Narrowed against the schema when one was supplied. */
     params: params
-    /** Optional explicit request id. Defaults to a monotonically-increasing number. */
-    id?: Rpc.Id | undefined
   }
 
   /** Options for {@link Consumer.notify}. */
@@ -193,9 +193,10 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   // `keyed` (future commit, when key derivation lands), the inverse
   // rule kicks in — any inbound plaintext envelope is rejected the same
   // way. The transition is one-way; never reverts.
-  const state: { started: boolean; phase: 'pre-key' | 'keyed' } = {
-    started: false,
+  type State = { phase: 'pre-key' | 'keyed'; started: boolean }
+  const state: State = {
     phase: 'pre-key',
+    started: false,
   }
   let startPromise: Promise<void> | undefined
   let nextId = 1
@@ -247,7 +248,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       try {
         await transport.send(
           Envelope.rpcResponses([
-            Rpc.error({ id: null, code: -32600, message: 'invalid request', data: reason }),
+            Rpc.error({ code: -32600, data: reason, id: null, message: 'invalid request' }),
           ]),
         )
       } catch {
@@ -314,10 +315,28 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   }
 
   return {
+    async close(cause) {
+      if (!state.started) return
+      state.started = false
+      rejectPending(cause ?? new Transport.ClosedError('handshake closed locally'))
+      await transport.close(cause)
+      emitter.emit('close', cause)
+    },
+    async notify(opts) {
+      if (!state.started) await start()
+      if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
+      await transport.send(
+        Envelope.rpcRequests([Rpc.notification({ method: opts.method, params: opts.params })]),
+      )
+    },
+    off: emitter.off,
+    on(type, listener) {
+      const controller = new AbortController()
+      emitter.on(type, listener, { signal: controller.signal })
+      return controller
+    },
     role: 'consumer',
-    transport,
     schema,
-    start,
     async send(opts) {
       if (!state.started) await start()
 
@@ -325,7 +344,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
 
       const deferred = new Promise<SendResult<unknown>>((resolve, reject) => {
-        pending.set(id, { resolve, reject })
+        pending.set(id, { reject, resolve })
       })
       methodById.set(id, opts.method)
 
@@ -341,42 +360,24 @@ export function create<const schema extends Schema.Schema | undefined = undefine
 
       return (await deferred) as SendResult<Consumer.ResultOf<schema, typeof opts.method>>
     },
-    async notify(opts) {
-      if (!state.started) await start()
-      if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
-      await transport.send(
-        Envelope.rpcRequests([Rpc.notification({ method: opts.method, params: opts.params })]),
-      )
-    },
-    async close(cause) {
-      if (!state.started) return
-      state.started = false
-      rejectPending(cause ?? new Transport.ClosedError('handshake closed locally'))
-      await transport.close(cause)
-      emitter.emit('close', cause)
-    },
-    on(type, listener) {
-      const controller = new AbortController()
-      emitter.on(type, listener, { signal: controller.signal })
-      return controller
-    },
-    off: emitter.off,
+    start,
+    transport,
   }
 }
 
 export declare namespace create {
   /** Options for {@link create}. */
   type Options<schema extends Schema.Schema | undefined> = {
-    /** Consumer-role transport this handshake wraps. */
-    transport: Transport.Transport<'consumer'>
     /** Optional method-registry schema (typed `send` / `notify` payloads). */
     schema?: schema | undefined
+    /** Consumer-role transport this handshake wraps. */
+    transport: Transport.Transport<'consumer'>
   }
 }
 
 type Pending = {
-  resolve: (result: SendResult<unknown>) => void
   reject: (error: Error) => void
+  resolve: (result: SendResult<unknown>) => void
 }
 
 /**
