@@ -19,19 +19,37 @@ describe('schema.httpsUrl', () => {
 })
 
 describe('HostDocument', () => {
-  test('identity_pubkey is hex; optional fields are `T | undefined`', () => {
+  test('shared header + identity_pubkey types', () => {
+    expectTypeOf<Discovery.HostDocument['version']>().toEqualTypeOf<'1.0'>()
+    expectTypeOf<Discovery.HostDocument['origin']>().toEqualTypeOf<string>()
+    expectTypeOf<Discovery.HostDocument['id']>().toEqualTypeOf<string>()
+    expectTypeOf<Discovery.HostDocument['name']>().toEqualTypeOf<string>()
+    expectTypeOf<Discovery.HostDocument['icon']>().toEqualTypeOf<string | undefined>()
+    expectTypeOf<Discovery.HostDocument['capabilities']>().toEqualTypeOf<string[] | undefined>()
     expectTypeOf<Discovery.HostDocument['identity_pubkey']>().toEqualTypeOf<Hex.Hex>()
-    expectTypeOf<Discovery.HostDocument['relay_url']>().toEqualTypeOf<string | undefined>()
-    expectTypeOf<Discovery.HostDocument['deep_link_url']>().toEqualTypeOf<string | undefined>()
-    expectTypeOf<Discovery.HostDocument['callback_urls']>().toEqualTypeOf<string[] | undefined>()
+  })
+
+  test('transports map carries per-binding optional shapes', () => {
+    type Transports = Discovery.HostDocument['transports']
+    expectTypeOf<Transports['relay']>().toEqualTypeOf<{ url: string } | undefined>()
+    expectTypeOf<Transports['window']>().toEqualTypeOf<{ url: string } | undefined>()
+    expectTypeOf<Transports['mobile-link']>().toEqualTypeOf<
+      { scheme: string; universal_link: string } | undefined
+    >()
+    expectTypeOf<Transports['device-code']>().toEqualTypeOf<
+      { register_url: string; token_url: string } | undefined
+    >()
   })
 })
 
 describe('ConsumerDocument', () => {
-  test('identity_pubkey is hex; callback_urls optional', () => {
-    expectTypeOf<Discovery.ConsumerDocument['identity_pubkey']>().toEqualTypeOf<Hex.Hex>()
+  test('shared header + callback_urls; no identity_pubkey', () => {
+    expectTypeOf<Discovery.ConsumerDocument['version']>().toEqualTypeOf<'1.0'>()
+    expectTypeOf<Discovery.ConsumerDocument['origin']>().toEqualTypeOf<string>()
+    expectTypeOf<Discovery.ConsumerDocument['id']>().toEqualTypeOf<string>()
     expectTypeOf<Discovery.ConsumerDocument['callback_urls']>().toEqualTypeOf<
       string[] | undefined
     >()
+    expectTypeOf<Discovery.ConsumerDocument>().not.toHaveProperty('identity_pubkey')
   })
 })
