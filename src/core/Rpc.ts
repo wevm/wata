@@ -1,7 +1,7 @@
 /**
  * JSON-RPC 2.0 message constructors and parser.
  *
- * The TempoCP transport layer carries JSON-RPC 2.0 messages inside every
+ * The uRPC transport layer carries JSON-RPC 2.0 messages inside every
  * frame (encrypted or plain). This module:
  *
  * - constructs the four message variants (`request`, `notification`,

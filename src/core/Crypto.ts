@@ -32,7 +32,7 @@ import { Ed25519, Hex } from 'ox'
  * (or `pubkey_host`); the private scalar feeds the X25519 ECDH step.
  */
 export type X25519Keypair = {
-  /** Raw 32-byte X25519 public key (`pubkey_consumer` per TempoCP §4). */
+  /** Raw 32-byte X25519 public key (`pubkey_consumer` per uRPC §4). */
   publicKey: Hex.Hex
   /** X25519 scalar (32 bytes hex). Input to the X25519 ECDH step. */
   privateKey: Hex.Hex

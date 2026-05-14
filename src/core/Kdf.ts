@@ -1,5 +1,5 @@
 /**
- * HKDF key-derivation primitives used by the TempoCP transport layer.
+ * HKDF key-derivation primitives used by the uRPC transport layer.
  *
  * Wraps `@noble/hashes/hkdf` (HKDF-SHA256, RFC 5869) with a `Hex.Hex`-shaped
  * surface that matches the rest of `core/*`. We only ship the SHA-256 variant

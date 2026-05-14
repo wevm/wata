@@ -1,7 +1,7 @@
 /**
- * Wire envelope used by every TempoCP frame.
+ * Wire envelope used by every uRPC frame.
  *
- * Per [TempoCP `core.md` §7](https://github.com/tempoxyz/tempocp/blob/main/specs/core.md#message-format-json-rpc-framing),
+ * Per [uRPC `core.md` §7](https://github.com/tempoxyz/urpc/blob/main/specs/core.md#message-format-json-rpc-framing),
  * every wire frame is a tagged JSON object:
  *
  * ```json

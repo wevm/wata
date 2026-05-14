@@ -1,7 +1,7 @@
 /**
  * uRPC discovery-document fetcher and parser.
  *
- * Per [TempoCP `discovery.md`](https://github.com/tempoxyz/tempocp/blob/main/specs/discovery.md),
+ * Per [uRPC `discovery.md`](https://github.com/tempoxyz/urpc/blob/main/specs/discovery.md),
  * each peer publishes a small JSON manifest at a well-known path so the
  * other side can pin its identity, transport bindings, and (consumer-side)
  * allowed callback URLs:
