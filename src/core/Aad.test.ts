@@ -1,32 +1,38 @@
 import { Aad, Errors } from 'handshakes'
 import { describe, expect, test } from 'vp/test'
 
-const sessionId = '0x00112233445566778899aabbccddeeff'
+const publicKey = '0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff' as const
 
 describe('encode', () => {
-  test('encodes consumer→host counter=0', () => {
-    expect(
-      Aad.encode({ sessionId, direction: Aad.direction.c2h, counter: 0n }),
-    ).toMatchInlineSnapshot('"0x010000112233445566778899aabbccddeeff000000000000000000000000"')
+  test('encodes a consumer-originated AAD', () => {
+    expect(Aad.encode({ publicKey, role: Aad.role.consumer })).toMatchInlineSnapshot(
+      '"0x74656d706f63702f763100112233445566778899aabbccddeeff00112233445566778899aabbccddeeff01"',
+    )
   })
 
-  test('encodes host→consumer counter=1', () => {
-    expect(
-      Aad.encode({ sessionId, direction: Aad.direction.h2c, counter: 1n }),
-    ).toMatchInlineSnapshot('"0x010100112233445566778899aabbccddeeff000000000000000000000001"')
+  test('encodes a host-originated AAD', () => {
+    expect(Aad.encode({ publicKey, role: Aad.role.host })).toMatchInlineSnapshot(
+      '"0x74656d706f63702f763100112233445566778899aabbccddeeff00112233445566778899aabbccddeeff02"',
+    )
   })
 
-  test('always returns 30 bytes', () => {
-    const aad = Aad.encode({ sessionId, direction: Aad.direction.c2h, counter: 42n })
+  test('always returns 43 bytes', () => {
+    const aad = Aad.encode({ publicKey, role: Aad.role.consumer })
     expect(aad.length / 2 - 1).toBe(Aad.size)
   })
 
-  test('rejects a sessionId that is not 16 bytes', () => {
+  test('always begins with the ASCII `tempocp/v1` prefix', () => {
+    const aad = Aad.encode({ publicKey, role: Aad.role.host })
+    // 10-byte ASCII "tempocp/v1" → hex "74656d706f63702f7631"
+    expect(aad.slice(2, 2 + Aad.prefixSize * 2)).toBe('74656d706f63702f7631')
+  })
+
+  test('rejects a publicKey that is not 32 bytes', () => {
     expect(() =>
-      Aad.encode({ sessionId: '0xdead', direction: Aad.direction.c2h, counter: 0n }),
+      Aad.encode({ publicKey: '0xdead', role: Aad.role.consumer }),
     ).toThrowErrorMatchingInlineSnapshot(
       `
-      [ProtocolError: sessionId must be 16 bytes
+      [ProtocolError: publicKey must be 32 bytes
       Details: received 2 bytes]
     `,
     )
@@ -34,13 +40,22 @@ describe('encode', () => {
 })
 
 describe('decode', () => {
-  test('round-trips an encoded record', () => {
-    const aad = Aad.encode({ sessionId, direction: Aad.direction.h2c, counter: 0xcafen })
+  test('round-trips a consumer-originated AAD', () => {
+    const aad = Aad.encode({ publicKey, role: Aad.role.consumer })
     expect(Aad.decode(aad)).toMatchInlineSnapshot(`
       {
-        "counter": 51966n,
-        "direction": 1,
-        "sessionId": "0x00112233445566778899aabbccddeeff",
+        "publicKey": "0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        "role": 1,
+      }
+    `)
+  })
+
+  test('round-trips a host-originated AAD', () => {
+    const aad = Aad.encode({ publicKey, role: Aad.role.host })
+    expect(Aad.decode(aad)).toMatchInlineSnapshot(`
+      {
+        "publicKey": "0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        "role": 2,
       }
     `)
   })
@@ -48,25 +63,30 @@ describe('decode', () => {
   test('rejects a wrong-length AAD', () => {
     expect(() => Aad.decode('0xdead')).toThrowErrorMatchingInlineSnapshot(
       `
-      [ProtocolError: aad must be exactly 30 bytes
+      [ProtocolError: aad must be exactly 43 bytes
       Details: received 2 bytes]
     `,
     )
   })
 
-  test('rejects a wrong AAD version byte', () => {
-    // version = 0x02 (we're at 0x01), rest stays valid 30-byte length
-    const aad = ('0x02' + '00' + sessionId.slice(2) + '000000000000000000000000') as `0x${string}`
+  test('rejects a wrong AAD version prefix', () => {
+    // Mutate the first prefix byte (`t` → `T`).
+    const aad = ('0x54' +
+      '656d706f63702f7631' +
+      publicKey.slice(2) +
+      '01') as `0x${string}`
     expect(() => Aad.decode(aad)).toThrowErrorMatchingInlineSnapshot(
       `
-      [ProtocolError: aad version mismatch
-      Details: expected 1, received 2]
+      [ProtocolError: aad version prefix mismatch
+      Details: expected "tempocp/v1"]
     `,
     )
   })
 
-  test('rejects an invalid direction byte', () => {
-    const aad = ('0x01' + '02' + sessionId.slice(2) + '000000000000000000000000') as `0x${string}`
+  test('rejects an invalid role byte', () => {
+    const aad = ('0x74656d706f63702f7631' +
+      publicKey.slice(2) +
+      '03') as `0x${string}`
     expect(() => Aad.decode(aad)).toThrowError(Errors.ProtocolError)
   })
 })
