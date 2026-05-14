@@ -1,5 +1,5 @@
 /**
- * Normalized transport interface implemented by every TempoCP wire adapter.
+ * Normalized transport interface implemented by every uRPC wire adapter.
  *
  * A transport is a thin wrapper around a particular wire (popup
  * `postMessage`, HTTPS POST, SSE, deep link, in-process loopback). It

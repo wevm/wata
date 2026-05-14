@@ -30,7 +30,7 @@ describe('shared', () => {
 })
 
 describe('buildInfo', () => {
-  test('layout = "tempocp/v1/" || transport_id || "/" || direction || pubkey_host || transport_context', () => {
+  test('layout = "urpc/v1/" || transport_id || "/" || direction || pubkey_host || transport_context', () => {
     const publicKey_host = `0x${'aa'.repeat(32)}` as const
     const transportContext = '0xdeadbeef' as const
     const info = Session.buildInfo({
@@ -40,7 +40,7 @@ describe('buildInfo', () => {
       transportContext,
     })
     const expected =
-      Hex.fromBytes(new TextEncoder().encode('tempocp/v1/relay/c2h')).slice(2) +
+      Hex.fromBytes(new TextEncoder().encode('urpc/v1/relay/c2h')).slice(2) +
       'aa'.repeat(32) +
       'deadbeef'
     expect(info).toBe(`0x${expected}`)
@@ -53,7 +53,7 @@ describe('buildInfo', () => {
       direction: Session.direction.h2c,
       publicKey_host,
     })
-    expect(Hex.size(info)).toBe('tempocp/v1/mobile-link/h2c'.length + 32)
+    expect(Hex.size(info)).toBe('urpc/v1/mobile-link/h2c'.length + 32)
   })
 })
 
