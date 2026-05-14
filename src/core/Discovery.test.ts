@@ -2,14 +2,21 @@ import { Discovery, Errors } from 'handshakes'
 import { describe, expect, test, vi } from 'vp/test'
 
 const validHostJson = {
-  version: 1 as const,
+  version: '1.0' as const,
+  origin: 'https://wallet.example',
+  id: 'wallet.example',
+  name: 'Example Wallet',
   identity_pubkey: '0x' + '11'.repeat(32),
-  relay_url: 'https://relay.example/v1',
+  transports: {
+    relay: { url: 'https://relay.example/v1' },
+    window: { url: 'https://wallet.example/urpc/embed' },
+  },
 }
 
 const validConsumerJson = {
-  version: 1 as const,
-  identity_pubkey: '0x' + '22'.repeat(32),
+  version: '1.0' as const,
+  origin: 'https://app.example',
+  id: 'app.example',
   callback_urls: ['https://app.example/cb'],
 }
 
@@ -47,17 +54,65 @@ describe('parseHost', () => {
   test('returns the parsed document', () => {
     expect(Discovery.parseHost(validHostJson)).toMatchInlineSnapshot(`
       {
+        "id": "wallet.example",
         "identity_pubkey": "0x1111111111111111111111111111111111111111111111111111111111111111",
-        "relay_url": "https://relay.example/v1",
-        "version": 1,
+        "name": "Example Wallet",
+        "origin": "https://wallet.example",
+        "transports": {
+          "relay": {
+            "url": "https://relay.example/v1",
+          },
+          "window": {
+            "url": "https://wallet.example/urpc/embed",
+          },
+        },
+        "version": "1.0",
+      }
+    `)
+  })
+
+  test('preserves unknown transport keys verbatim (forward compat)', () => {
+    const parsed = Discovery.parseHost({
+      ...validHostJson,
+      transports: { relay: { url: 'https://relay.example' }, 'future-transport': { foo: 1 } },
+    })
+    expect(parsed.transports['future-transport']).toMatchInlineSnapshot(`
+      {
+        "foo": 1,
+      }
+    `)
+  })
+
+  test('drops malformed known transport bindings (graceful degradation)', () => {
+    const parsed = Discovery.parseHost({
+      ...validHostJson,
+      transports: {
+        relay: { url: 'https://relay.example' },
+        'mobile-link': { scheme: 'examplewallet' /* missing universal_link */ },
+      },
+    })
+    expect(parsed.transports['mobile-link']).toBeUndefined()
+    expect(parsed.transports.relay).toMatchInlineSnapshot(`
+      {
+        "url": "https://relay.example",
       }
     `)
   })
 
   test('rejects an invalid version', () => {
-    expect(() => Discovery.parseHost({ ...validHostJson, version: 2 })).toThrowError(
+    expect(() => Discovery.parseHost({ ...validHostJson, version: '2.0' })).toThrowError(
       Errors.ProtocolError,
     )
+  })
+
+  test('rejects a missing origin', () => {
+    const { origin: _, ...rest } = validHostJson
+    expect(() => Discovery.parseHost(rest)).toThrowError(Errors.ProtocolError)
+  })
+
+  test('rejects a missing id', () => {
+    const { id: _, ...rest } = validHostJson
+    expect(() => Discovery.parseHost(rest)).toThrowError(Errors.ProtocolError)
   })
 
   test('rejects a non-hex identity_pubkey', () => {
@@ -66,10 +121,19 @@ describe('parseHost', () => {
     ).toThrowError(Errors.ProtocolError)
   })
 
-  test('rejects an http:// relay_url', () => {
+  test('rejects an http:// relay url', () => {
     expect(() =>
-      Discovery.parseHost({ ...validHostJson, relay_url: 'http://relay.example' }),
+      Discovery.parseHost({
+        ...validHostJson,
+        transports: { relay: { url: 'http://relay.example' } },
+      }),
     ).toThrowError(Errors.ProtocolError)
+  })
+
+  test('rejects an empty transports map', () => {
+    expect(() => Discovery.parseHost({ ...validHostJson, transports: {} })).toThrowError(
+      Errors.ProtocolError,
+    )
   })
 })
 
@@ -80,8 +144,9 @@ describe('parseConsumer', () => {
         "callback_urls": [
           "https://app.example/cb",
         ],
-        "identity_pubkey": "0x2222222222222222222222222222222222222222222222222222222222222222",
-        "version": 1,
+        "id": "app.example",
+        "origin": "https://app.example",
+        "version": "1.0",
       }
     `)
   })
@@ -90,6 +155,33 @@ describe('parseConsumer', () => {
     expect(() =>
       Discovery.parseConsumer({ ...validConsumerJson, callback_urls: ['http://app.example/cb'] }),
     ).toThrowError(Errors.ProtocolError)
+  })
+
+  test('rejects a wildcard callback_urls entry', () => {
+    expect(() =>
+      Discovery.parseConsumer({
+        ...validConsumerJson,
+        callback_urls: ['https://*.app.example/cb'],
+      }),
+    ).toThrowError(Errors.ProtocolError)
+  })
+
+  test('rejects a path-wildcard callback_urls entry', () => {
+    expect(() =>
+      Discovery.parseConsumer({
+        ...validConsumerJson,
+        callback_urls: ['https://app.example/cb/*'],
+      }),
+    ).toThrowError(Errors.ProtocolError)
+  })
+
+  test('rejects identity_pubkey on consumer.json (host-only field)', () => {
+    expect(
+      Discovery.parseConsumer({
+        ...validConsumerJson,
+        identity_pubkey: '0x' + '22'.repeat(32),
+      }),
+    ).not.toHaveProperty('identity_pubkey')
   })
 })
 
@@ -101,6 +193,17 @@ describe('fetchHost', () => {
     expect((fetchFn as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0]).toBe(
       'https://wallet.example/.well-known/urpc/host.json',
     )
+  })
+
+  test('throws ProtocolError when the document origin does not match the fetch origin', async () => {
+    const fetchFn = (async () =>
+      jsonResponse({
+        ...validHostJson,
+        origin: 'https://attacker.example',
+      })) as typeof fetch
+    await expect(
+      Discovery.fetchHost('https://wallet.example', { fetch: fetchFn }),
+    ).rejects.toThrowError(Errors.ProtocolError)
   })
 
   test('throws ProtocolError on non-2xx response', async () => {
@@ -136,6 +239,17 @@ describe('fetchConsumer', () => {
   test('fetches and parses consumer.json from the well-known path', async () => {
     const fetchFn = vi.fn(async () => jsonResponse(validConsumerJson)) as unknown as typeof fetch
     const consumer = await Discovery.fetchConsumer('https://app.example', { fetch: fetchFn })
-    expect(consumer.identity_pubkey).toBe(validConsumerJson.identity_pubkey)
+    expect(consumer.id).toBe(validConsumerJson.id)
+  })
+
+  test('throws ProtocolError when the document origin does not match the fetch origin', async () => {
+    const fetchFn = (async () =>
+      jsonResponse({
+        ...validConsumerJson,
+        origin: 'https://attacker.example',
+      })) as typeof fetch
+    await expect(
+      Discovery.fetchConsumer('https://app.example', { fetch: fetchFn }),
+    ).rejects.toThrowError(Errors.ProtocolError)
   })
 })
