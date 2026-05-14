@@ -1,16 +1,22 @@
 /**
  * Per-direction nonce discipline for the TempoCP AEAD layer.
  *
- * TempoCP derives one ChaCha20-Poly1305 key per direction (consumer→host and
- * host→consumer) via HKDF, so each side only needs a fresh, monotonically
- * increasing nonce. We pin the format to a 12-byte big-endian counter
- * starting at 0, exactly matching ChaCha20-Poly1305's nonce size (RFC 8439
- * §2.8).
+ * Per [TempoCP `core.md` §6](https://github.com/tempoxyz/tempocp/blob/main/specs/core.md#encrypted-message-envelope-aead),
+ * each direction maintains a 12-byte big-endian counter that is
+ * **pre-incremented** before sealing — the very first wire nonce is
+ * `0x00…01`, the second `0x00…02`, etc. The receiver enforces strictly-
+ * greater than the highest accepted nonce (HWM) and updates the HWM only
+ * on successful AEAD open. Anti-replay + anti-reorder fall out of that
+ * single rule.
+ *
+ * Surface:
  *
  * - {@link encoder} produces an outbound counter — call `.next()` once per
- *   sealed frame.
- * - {@link decoder} verifies inbound nonces against the highest one already
- *   seen — call `.accept(nonce)` before each `Aead.open`.
+ *   sealed frame. Defaults to `start: 1n` so the first emitted nonce is
+ *   `0x00…01`.
+ * - {@link decoder} verifies inbound nonces against the HWM — call
+ *   `.accept(nonce)` before each `Aead.open`. Defaults to `hwm: 0n` so the
+ *   first accepted counter must be at least `1n`.
  * - {@link fromCounter} / {@link toCounter} are the underlying conversions
  *   for low-level callers.
  */
@@ -64,7 +70,8 @@ export function toCounter(nonce: Hex.Hex | Bytes.Bytes): bigint {
 
 /**
  * Create an outbound nonce encoder. `.next()` returns a fresh 12-byte nonce
- * each call, starting from 0 (or `start`) and incrementing by 1. Throws
+ * each call. Per spec §6 the counter is pre-incremented, so the very first
+ * emitted nonce is `0x00…01` (counter = `1n`). Throws
  * {@link Errors.ProtocolError} when the 96-bit counter space is exhausted.
  *
  * @example
@@ -72,12 +79,12 @@ export function toCounter(nonce: Hex.Hex | Bytes.Bytes): bigint {
  * import { Nonce, Aead } from 'handshakes'
  *
  * const out = Nonce.encoder()
- * Aead.seal({ key, nonce: out.next(), plaintext })
- * Aead.seal({ key, nonce: out.next(), plaintext })
+ * Aead.seal({ key, nonce: out.next(), plaintext })  // first nonce: 0x00…01
+ * Aead.seal({ key, nonce: out.next(), plaintext })  // second:      0x00…02
  * ```
  */
 export function encoder(options: encoder.Options = {}): encoder.ReturnType {
-  let counter = options.start ?? 0n
+  let counter = options.start ?? 1n
   return {
     next() {
       const nonce = fromCounter(counter)
@@ -93,7 +100,7 @@ export function encoder(options: encoder.Options = {}): encoder.ReturnType {
 export declare namespace encoder {
   /** Options for {@link encoder}. */
   type Options = {
-    /** Starting counter value (default `0n`). Useful for resumption. */
+    /** Starting counter value (default `1n`, per spec §6 pre-increment). Useful for resumption. */
     start?: bigint | undefined
   }
 
@@ -108,13 +115,15 @@ export declare namespace encoder {
 
 /**
  * Create an inbound nonce decoder. `.accept(nonce)` validates an incoming
- * nonce against the highest one already seen and updates state on success.
+ * nonce against the high-water mark (HWM = highest counter already seen)
+ * and updates the HWM on success.
  *
- * Default discipline is **strict monotonic** — every accepted nonce must be
- * exactly the next expected counter. This matches every transport TempoCP
- * targets in v1 (HTTPS, SSE, `MessageChannel`, deep links), all of which
- * deliver in order. Future transports that may reorder can swap this for a
- * sliding-window decoder later.
+ * Per spec §6 the rule is **strictly greater than HWM**: the very first
+ * accepted counter must be `> 0n` (i.e. at least `1n`, matching the
+ * encoder's pre-incremented start), and any out-of-order or replayed
+ * nonce is rejected. The HWM is updated only when {@link "./Aead".open}
+ * subsequently succeeds, so call this immediately before AEAD open and
+ * roll back on failure if the transport demands it.
  *
  * @example
  * ```ts
@@ -126,18 +135,18 @@ export declare namespace encoder {
  * ```
  */
 export function decoder(options: decoder.Options = {}): decoder.ReturnType {
-  let next = options.start ?? 0n
+  let hwm = options.hwm ?? 0n
   return {
     accept(nonce) {
       const counter = toCounter(nonce)
-      if (counter !== next)
-        throw new Errors.ProtocolError('nonce out of order', {
-          details: `expected counter=${next}, received counter=${counter}`,
+      if (counter <= hwm)
+        throw new Errors.ProtocolError('nonce not strictly greater than HWM', {
+          details: `hwm=${hwm}, received counter=${counter}`,
         })
-      next += 1n
+      hwm = counter
     },
-    get next() {
-      return next
+    get hwm() {
+      return hwm
     },
   }
 }
@@ -145,19 +154,19 @@ export function decoder(options: decoder.Options = {}): decoder.ReturnType {
 export declare namespace decoder {
   /** Options for {@link decoder}. */
   type Options = {
-    /** Starting expected counter value (default `0n`). Useful for resumption. */
-    start?: bigint | undefined
+    /** Initial high-water mark (default `0n`). Useful for resumption. */
+    hwm?: bigint | undefined
   }
 
   /** Result of {@link decoder}. */
   type ReturnType = {
     /**
-     * Verify that `nonce` matches the next expected counter. Throws
-     * {@link Errors.ProtocolError} on replay or out-of-order delivery and advances
-     * the counter on success.
+     * Verify that `nonce` is strictly greater than the current HWM.
+     * Throws {@link Errors.ProtocolError} on replay or out-of-order
+     * delivery and advances the HWM on success.
      */
     accept: (nonce: Hex.Hex | Bytes.Bytes) => void
-    /** Next expected counter value. */
-    readonly next: bigint
+    /** Current high-water mark (highest counter accepted so far). */
+    readonly hwm: bigint
   }
 }
