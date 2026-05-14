@@ -144,8 +144,14 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
   async function pollForResponse(
     deviceCodeValue: string,
     codeVerifier: string,
-    interval: number,
+    initialInterval: number,
   ): Promise<Envelope.Envelope> {
+    // RFC 8628 §3.5 — `interval` may grow over the life of the
+    // exchange (`slow_down` adds ≥5s each time). Track consecutive
+    // `slow_down` responses so we can give up if the host signals
+    // indefinite throttling.
+    let interval = initialInterval
+    let consecutiveSlowDown = 0
     while (!state.closed) {
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), pollingTimeout)
@@ -153,8 +159,11 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
       try {
         response = await fetchImpl(tokenUrl, {
           body: JSON.stringify({
+            // RFC 8628 §3.4 — `grant_type` is REQUIRED on the token
+            // endpoint and must be the device-code grant URN.
             code_verifier: codeVerifier,
             device_code: deviceCodeValue,
+            grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
           }),
           headers: { accept: 'application/json', 'content-type': 'application/json' },
           method: 'POST',
@@ -184,26 +193,40 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
           )
         }
       }
-      if (response.status === 202) {
-        // `authorization_pending` — host hasn't been approved yet. Sleep
-        // and try again. Honour an updated interval if the host pushed
-        // one (`Retry-After` semantics simplified). Wire `interval` is
-        // in seconds per the OAuth spec; convert to ms.
-        const nextWireInterval = readInterval(body)
-        const nextInterval = nextWireInterval !== undefined ? nextWireInterval * 1000 : interval
-        await sleep(Math.max(1, nextInterval))
+      if (response.status === 400 && readError(body) === 'authorization_pending') {
+        // RFC 8628 §3.5 — host hasn't been approved yet. Sleep and try
+        // again at the current cadence. Reset the `slow_down` streak —
+        // the host has resumed accepting polls at the normal rate.
+        consecutiveSlowDown = 0
+        await sleep(Math.max(1, interval))
+        continue
+      }
+      if (response.status === 400 && readError(body) === 'slow_down') {
+        // RFC 8628 §3.5 — `slow_down` is a non-terminal throttling
+        // signal. The consumer MUST add at least 5 seconds to the
+        // polling interval and continue. After three consecutive
+        // `slow_down`s with no intervening `authorization_pending`,
+        // treat the exchange as indefinitely throttled and tear it
+        // down with a transport-level error.
+        consecutiveSlowDown += 1
+        if (consecutiveSlowDown >= 3)
+          throw new Transport.TransportError(
+            'device-code host is signalling indefinite throttling (3 consecutive `slow_down` responses)',
+          )
+        interval += 5_000
+        await sleep(interval)
         continue
       }
       if (response.status === 400 && readError(body) === 'invalid_grant')
         throw new Errors.ProtocolError('device-code PKCE verification failed', {
-          details: readMessage(body),
+          details: readErrorDescription(body),
         })
-      if (response.status === 403 && readError(body) === 'access_denied')
-        throw new UserRejectedError(readMessage(body) ?? 'user denied the device-code request')
-      if (response.status === 404 || response.status === 410)
+      if (response.status === 400 && readError(body) === 'access_denied')
+        throw new UserRejectedError(readErrorDescription(body) ?? 'user denied the device-code request')
+      if (response.status === 400 && readError(body) === 'expired_token')
         throw new Transport.ClosedError('device-code expired or not found')
       throw new Transport.TransportError(
-        `unexpected device-code /token status ${response.status}: ${readMessage(body) ?? '<no body>'}`,
+        `unexpected device-code /token status ${response.status}: ${readErrorDescription(body) ?? '<no body>'}`,
       )
     }
     throw new Transport.ClosedError('device-code transport closed before response arrived')
@@ -240,10 +263,10 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
     if (response.status !== 200) {
       if (response.status === 400)
         throw new Errors.ProtocolError(
-          `host rejected device-code /register: ${readMessage(body) ?? '<no body>'}`,
+          `host rejected device-code /register: ${readErrorDescription(body) ?? '<no body>'}`,
         )
       throw new Transport.TransportError(
-        `device-code /register returned status ${response.status}: ${readMessage(body) ?? '<no body>'}`,
+        `device-code /register returned status ${response.status}: ${readErrorDescription(body) ?? '<no body>'}`,
       )
     }
 
@@ -268,7 +291,9 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
     // surface it to the user (and downstream poll loop) in ms.
     const interval =
       pollingInterval ??
-      (typeof fields.interval === 'number' && fields.interval > 0 ? fields.interval * 1000 : 2000)
+      // RFC 8628 §3.5 — when the host omits `interval`, the consumer
+      // MUST default to 5 seconds.
+      (typeof fields.interval === 'number' && fields.interval > 0 ? fields.interval * 1000 : 5000)
 
     const prompt: Prompt = {
       deviceCode: fields.device_code,
@@ -351,18 +376,13 @@ function readError(body: unknown): string | undefined {
   return undefined
 }
 
-function readMessage(body: unknown): string | undefined {
-  if (body && typeof body === 'object' && 'message' in body) {
-    const value = (body as { message: unknown }).message
+function readErrorDescription(body: unknown): string | undefined {
+  // Per uRPC Device Code §5 (RFC 6749 §5.2 shape), human-readable
+  // diagnostic text on a transport error lives in `error_description`.
+  // The legacy non-standard `message` field is not consulted.
+  if (body && typeof body === 'object' && 'error_description' in body) {
+    const value = (body as { error_description: unknown }).error_description
     if (typeof value === 'string') return value
-  }
-  return undefined
-}
-
-function readInterval(body: unknown): number | undefined {
-  if (body && typeof body === 'object' && 'interval' in body) {
-    const value = (body as { interval: unknown }).interval
-    if (typeof value === 'number' && value > 0) return value
   }
   return undefined
 }
