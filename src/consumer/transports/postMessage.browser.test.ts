@@ -29,9 +29,12 @@ describe('postMessage (consumer)', () => {
     const transport = postMessage_consumer({ target: () => port1 })
 
     // Stand in for the host: handshake reply (`hostReady`) plus inbound frame.
+    // Both sides must wrap outbound frames with a v4 UUID `id` per the
+    // window transport spec, and validate `id` on inbound frames.
     port2.addEventListener('message', (event) => {
-      if (event.data?.type === protocol.consumerHello.type)
-        port2.postMessage(protocol.hostReady)
+      const inbound = protocol.readFrame(event.data)
+      if (inbound && (inbound.frame as { type?: string }).type === protocol.consumerHello.type)
+        port2.postMessage(protocol.withId(protocol.hostReady))
     })
     port2.start()
 
@@ -41,7 +44,9 @@ describe('postMessage (consumer)', () => {
       transport.on('message', (envelope) => resolve(envelope))
     })
 
-    port2.postMessage(Envelope.rpcRequests([Rpc.notification({ method: 'ping', params: [] })]))
+    port2.postMessage(
+      protocol.withId(Envelope.rpcRequests([Rpc.notification({ method: 'ping', params: [] })])),
+    )
 
     expect(await received).toMatchInlineSnapshot(`
     	{
@@ -63,9 +68,10 @@ describe('postMessage (consumer)', () => {
     const { port1, port2 } = new MessageChannel()
     const transport = postMessage_consumer({ target: () => port1 })
 
+    // Strip the wire `id` so snapshots stay stable across runs.
     const received: unknown[] = []
     port2.addEventListener('message', (event) => {
-      received.push(event.data)
+      received.push(protocol.readFrame(event.data)?.frame ?? event.data)
     })
     port2.start()
 
@@ -82,7 +88,7 @@ describe('postMessage (consumer)', () => {
     received.length = 0
 
     // Now signal readiness — the buffered frames flush in order.
-    port2.postMessage(protocol.hostReady)
+    port2.postMessage(protocol.withId(protocol.hostReady))
 
     await new Promise((resolve) => setTimeout(resolve, 10))
 
@@ -135,14 +141,18 @@ describe('postMessage (consumer)', () => {
     // Wrong origin — should be ignored.
     source.dispatchEvent(
       new MessageEvent('message', {
-        data: Envelope.rpcRequests([Rpc.notification({ method: 'noisy', params: [] })]),
+        data: protocol.withId(
+          Envelope.rpcRequests([Rpc.notification({ method: 'noisy', params: [] })]),
+        ),
         origin: 'https://attacker.example',
       }),
     )
     // Right origin — should be delivered.
     source.dispatchEvent(
       new MessageEvent('message', {
-        data: Envelope.rpcRequests([Rpc.notification({ method: 'trusted', params: [] })]),
+        data: protocol.withId(
+          Envelope.rpcRequests([Rpc.notification({ method: 'trusted', params: [] })]),
+        ),
         origin: 'https://wallet.example',
       }),
     )
@@ -175,7 +185,7 @@ describe('postMessage (consumer)', () => {
     await transport.start()
     await new Promise((resolve) => setTimeout(resolve, 10))
 
-    port2.postMessage({ shape: 'not an envelope' })
+    port2.postMessage(protocol.withId({ shape: 'not an envelope' }))
 
     await new Promise((resolve) => setTimeout(resolve, 10))
 
@@ -183,6 +193,48 @@ describe('postMessage (consumer)', () => {
     	"invalid envelope
     	Details: type: Invalid discriminator value. Expected 'rpc-requests' | 'rpc-responses' | 'ready' | 'hello' | 'encrypted'"
     `)
+
+    await transport.close()
+  })
+
+  test('emits `error` when an inbound frame is missing the v4 UUID `id`', async () => {
+    const { port1, port2 } = new MessageChannel()
+    const transport = postMessage_consumer({ target: () => port1 })
+
+    const errors: Error[] = []
+    transport.on('error', (error) => errors.push(error))
+
+    await transport.start()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // Bare envelope shape without the spec-mandated top-level `id`.
+    port2.postMessage(Envelope.rpcRequests([Rpc.notification({ method: 'naked', params: [] })]))
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(errors[0]).toBeInstanceOf(PostMessage.InvalidFrameError)
+
+    await transport.close()
+  })
+
+  test('emits `error` when an inbound frame carries a malformed `id`', async () => {
+    const { port1, port2 } = new MessageChannel()
+    const transport = postMessage_consumer({ target: () => port1 })
+
+    const errors: Error[] = []
+    transport.on('error', (error) => errors.push(error))
+
+    await transport.start()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    port2.postMessage({
+      ...Envelope.rpcRequests([Rpc.notification({ method: 'bad-id', params: [] })]),
+      id: 'not-a-uuid',
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(errors[0]).toBeInstanceOf(PostMessage.InvalidFrameError)
 
     await transport.close()
   })
@@ -251,8 +303,9 @@ describe('postMessage (consumer)', () => {
     const transport = postMessage_consumer({ target: () => port1 })
 
     port2.addEventListener('message', (event) => {
-      if (event.data?.type === protocol.consumerHello.type)
-        port2.postMessage(protocol.hostReady)
+      const inbound = protocol.readFrame(event.data)
+      if (inbound && (inbound.frame as { type?: string }).type === protocol.consumerHello.type)
+        port2.postMessage(protocol.withId(protocol.hostReady))
     })
     port2.start()
 
@@ -264,10 +317,14 @@ describe('postMessage (consumer)', () => {
       signal: controller.signal,
     })
 
-    port2.postMessage(Envelope.rpcRequests([Rpc.notification({ method: 'first', params: [] })]))
+    port2.postMessage(
+      protocol.withId(Envelope.rpcRequests([Rpc.notification({ method: 'first', params: [] })])),
+    )
     await new Promise((resolve) => setTimeout(resolve, 10))
     controller.abort()
-    port2.postMessage(Envelope.rpcRequests([Rpc.notification({ method: 'second', params: [] })]))
+    port2.postMessage(
+      protocol.withId(Envelope.rpcRequests([Rpc.notification({ method: 'second', params: [] })])),
+    )
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(seen).toMatchInlineSnapshot(`
@@ -301,13 +358,10 @@ describe('postMessage (consumer)', () => {
     await transport.start()
     await new Promise((resolve) => setTimeout(resolve, 10))
 
-    expect(seen).toMatchInlineSnapshot(`
-      [
-        {
-          "type": "urpc.hello",
-        },
-      ]
-    `)
+    expect(seen).toHaveLength(1)
+    const hello = seen[0] as { type: string; id: string }
+    expect(hello.type).toBe('urpc.hello')
+    expect(protocol.isUuidV4(hello.id)).toBe(true)
 
     await transport.close()
   })
