@@ -18,6 +18,7 @@ export * as Kdf from './core/Kdf.js'
 export * as Nonce from './core/Nonce.js'
 export * as Rpc from './core/Rpc.js'
 export * as Schema from './core/Schema.js'
+export * as Session from './core/Session.js'
 export * as Transport from './core/Transport.js'
 
 export * as Handshake from './Handshake.js'
