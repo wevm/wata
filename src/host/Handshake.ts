@@ -232,7 +232,17 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   // `started` = currently in an active session. After close (peer popup
   // closes, transport tears down, …) drops back to `false`, and the
   // next `lazyConnect()` / `start()` re-acquires the transport.
-  const state = { started: false }
+  //
+  // `phase` enforces the spec §7 mode-discipline gate: while `pre-key`,
+  // any inbound `encrypted` envelope is rejected with JSON-RPC `-32600`
+  // and the session is torn down. Once the AEAD layer flips it to
+  // `keyed` (future commit, when key derivation lands), the inverse
+  // rule kicks in — any inbound plaintext envelope is rejected the same
+  // way. The transition is one-way; never reverts.
+  const state: { started: boolean; phase: 'pre-key' | 'keyed' } = {
+    started: false,
+    phase: 'pre-key',
+  }
   const pending = new Map<Rpc.Id, PendingRequest>()
 
   function settle(id: Rpc.Id, response: Rpc.Response): boolean {
@@ -404,17 +414,41 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     } as HostEventMap<schema>['notification'])
   }
 
+  /**
+   * Spec §7 mode-discipline rejection. Sends the peer an unsolicited
+   * JSON-RPC `-32600` error (`id: null`, since we have no request to
+   * correlate against), tears the transport down, and surfaces the
+   * cause to local listeners.
+   */
+  function rejectModeViolation(reason: string): void {
+    const error = new Errors.ProtocolError(reason)
+    void (async () => {
+      await safeSend(transport, [
+        Rpc.error({ id: null, code: -32600, message: 'invalid request', data: reason }),
+      ])
+      try {
+        await transport.close(error)
+      } catch {
+        // Surface via the local `error` event regardless.
+      }
+      emitter.emit('error', error)
+    })()
+  }
+
   transport.on('message', async (envelope) => {
-    // Pre-keying mode: encrypted frames rejected until the AEAD layer
-    // lands. Once it does, this branch flips to "must be `encrypted`"
-    // per spec §7 mode discipline.
-    if (envelope.type === 'encrypted') {
-      emitter.emit(
-        'error',
-        new Errors.ProtocolError(
-          'host received an encrypted envelope before key derivation',
-        ),
-      )
+    // Pre-key phase: encrypted frames are not yet allowed (the AEAD
+    // layer has not derived keys for this session). Spec §7 mandates
+    // a JSON-RPC `-32600` response and immediate teardown.
+    if (state.phase === 'pre-key' && envelope.type === 'encrypted') {
+      rejectModeViolation('encrypted envelope received before key derivation')
+      return
+    }
+    // Keyed phase: the inverse — any plaintext envelope is rejected
+    // because the spec forbids mixing plaintext and ciphertext after
+    // keying. Reachable once the AEAD wiring lands; harmless dead code
+    // until then because nothing flips `state.phase` to `keyed` yet.
+    if (state.phase === 'keyed' && envelope.type !== 'encrypted') {
+      rejectModeViolation('plaintext envelope received after key derivation')
       return
     }
     if (envelope.type === 'rpc-requests') {

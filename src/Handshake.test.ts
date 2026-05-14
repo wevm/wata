@@ -1,4 +1,4 @@
-import { Handshake, Rpc, Schema, loopback } from 'handshakes'
+import { Envelope, Errors, Handshake, Rpc, Schema, loopback } from 'handshakes'
 import { Handshake as HostHandshake } from 'handshakes/host'
 import { describe, expect, test } from 'vp/test'
 import { z } from 'zod'
@@ -385,5 +385,103 @@ describe('on', () => {
     await consumer.notify({ method: 'ping', params: [] })
 
     expect(count).toMatchInlineSnapshot(`1`)
+  })
+})
+
+describe('mode discipline', () => {
+  test('host rejects a pre-key encrypted frame with -32600 and tears down', async () => {
+    const { consumer: cTransport, host: hTransport } = loopback()
+    const host = HostHandshake.create({ transport: hTransport })
+    await cTransport.start()
+    await host.start()
+
+    const inbound: unknown[] = []
+    cTransport.on('message', (envelope) => inbound.push(envelope))
+
+    const errors: Error[] = []
+    host.on('error', (error) => errors.push(error))
+    const closes: unknown[] = []
+    host.on('close', (cause) => closes.push(cause))
+
+    await cTransport.send(
+      Envelope.encrypted({
+        from: 'consumer',
+        nonce: `0x${'00'.repeat(12)}`,
+        ciphertext: `0x${'aa'.repeat(16)}`,
+      }),
+    )
+
+    // Allow the host's async rejection (send + close + emit) to settle.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(inbound).toMatchInlineSnapshot(`
+      [
+        {
+          "payload": [
+            {
+              "error": {
+                "code": -32600,
+                "data": "encrypted envelope received before key derivation",
+                "message": "invalid request",
+              },
+              "id": null,
+              "jsonrpc": "2.0",
+            },
+          ],
+          "type": "rpc-responses",
+        },
+      ]
+    `)
+    expect(errors[0]).toBeInstanceOf(Errors.ProtocolError)
+    expect(errors[0]?.message).toMatchInlineSnapshot(
+      `"encrypted envelope received before key derivation"`,
+    )
+    expect(closes.length).toBe(1)
+  })
+
+  test('consumer rejects a pre-key encrypted frame with -32600 and tears down', async () => {
+    const { consumer: cTransport, host: hTransport } = loopback()
+    const consumer = Handshake.create({ transport: cTransport })
+    await consumer.start()
+    await hTransport.start()
+
+    const inbound: unknown[] = []
+    hTransport.on('message', (envelope) => inbound.push(envelope))
+
+    const errors: Error[] = []
+    consumer.on('error', (error) => errors.push(error))
+    const closes: unknown[] = []
+    consumer.on('close', (cause) => closes.push(cause))
+
+    await hTransport.send(
+      Envelope.encrypted({
+        from: 'host',
+        nonce: `0x${'00'.repeat(12)}`,
+        ciphertext: `0x${'aa'.repeat(16)}`,
+      }),
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(inbound).toMatchInlineSnapshot(`
+      [
+        {
+          "payload": [
+            {
+              "error": {
+                "code": -32600,
+                "data": "encrypted envelope received before key derivation",
+                "message": "invalid request",
+              },
+              "id": null,
+              "jsonrpc": "2.0",
+            },
+          ],
+          "type": "rpc-responses",
+        },
+      ]
+    `)
+    expect(errors[0]).toBeInstanceOf(Errors.ProtocolError)
+    expect(closes.length).toBe(1)
   })
 })
