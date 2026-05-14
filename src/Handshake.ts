@@ -182,7 +182,12 @@ export function create<const schema extends Schema.Schema | undefined = undefine
 
   const pending = new Map<Rpc.Id, Pending>()
   const methodById = new Map<Rpc.Id, string>()
-  const state = { started: false, closed: false }
+  // `started` = currently in an active session. After close, drops back
+  // to `false`, and the next `send()` / `notify()` lazily re-starts the
+  // transport — popups closing externally is a normal end-of-session
+  // event, not a permanent handshake failure.
+  const state = { started: false }
+  let startPromise: Promise<void> | undefined
   let nextId = 1
 
   function rejectPending(cause: Error) {
@@ -239,8 +244,8 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   })
 
   transport.on('close', (cause) => {
-    if (state.closed) return
-    state.closed = true
+    if (!state.started) return
+    state.started = false
     rejectPending(cause ?? new Transport.ClosedError('handshake transport closed'))
     emitter.emit('close', cause)
   })
@@ -249,20 +254,28 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     emitter.emit('error', error)
   })
 
+  async function start(): Promise<void> {
+    if (state.started) return
+    if (startPromise) return startPromise
+    startPromise = (async () => {
+      try {
+        await transport.start()
+        state.started = true
+        emitter.emit('open', undefined)
+      } finally {
+        startPromise = undefined
+      }
+    })()
+    return startPromise
+  }
+
   return {
     role: 'consumer',
     transport,
     schema,
-    async start() {
-      if (state.closed) throw new Transport.ClosedError('handshake already closed')
-      if (state.started) return
-      state.started = true
-      await transport.start()
-      emitter.emit('open', undefined)
-    },
+    start,
     async send(opts) {
-      if (state.closed) throw new Transport.ClosedError('handshake already closed')
-      if (!state.started) await this.start()
+      if (!state.started) await start()
 
       const id = opts.id ?? nextId++
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
@@ -285,16 +298,15 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       return (await deferred) as SendResult<Consumer.ResultOf<schema, typeof opts.method>>
     },
     async notify(opts) {
-      if (state.closed) throw new Transport.ClosedError('handshake already closed')
-      if (!state.started) await this.start()
+      if (!state.started) await start()
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
       await transport.send(
         Envelope.plain(Rpc.notification({ method: opts.method, params: opts.params })),
       )
     },
     async close(cause) {
-      if (state.closed) return
-      state.closed = true
+      if (!state.started) return
+      state.started = false
       rejectPending(cause ?? new Transport.ClosedError('handshake closed locally'))
       await transport.close(cause)
       emitter.emit('close', cause)

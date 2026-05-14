@@ -1,16 +1,17 @@
 /**
  * Consumer-side React app for the postMessage playground.
  *
- * Layout: app header (title + iframe/popup toggle) above two macOS-style
- * window chromes side-by-side — consumer log on the left, host on the
- * right — with a vertical strip of `send()` / `notify()` controls between
- * them. In iframe mode the host renders inside the right chrome's body;
- * in popup mode the right chrome shows a placeholder and `window.open()`
- * positions the popup over the chrome's screen rect.
+ * Runs on its own dev server (5181) and talks to the host running on
+ * a different origin (5182) — exercising real cross-origin postMessage
+ * behavior. Layout: app header (title + iframe/popup toggle) above two
+ * macOS-style window chromes side-by-side. In iframe mode the host
+ * renders inside the right chrome's body; in popup mode the popup is
+ * positioned over the right chrome's screen rect. The host renders its
+ * own log, so the consumer only shows its own log here.
  */
 
 import { Handshake, PostMessage, postMessage } from 'handshakes'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Button, Input, Tag } from 'regen-ui'
 
@@ -18,6 +19,8 @@ import * as Log from './Log.js'
 import { Window } from './Window.js'
 
 import './styles.css'
+
+const hostOrigin = 'http://localhost:5182'
 
 type Mount = 'popup' | 'iframe'
 
@@ -35,58 +38,48 @@ function App() {
   const [state, setState] = useState<State>('idle')
   const [message, setMessage] = useState('')
   const log = Log.useLog()
-  const hostLog = Log.useLog()
   const handshakeRef = useRef<Handshake.Consumer | undefined>(undefined)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const hostChromeRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    const channel = new BroadcastChannel('handshakes-host-log')
-    channel.onmessage = (event) => {
-      hostLog.push(event.data as Omit<Log.Entry, 'id' | 'time'>)
-    }
-    return () => channel.close()
-  }, [hostLog])
 
   const ensureHandshake = useCallback(() => {
     if (handshakeRef.current) return handshakeRef.current
 
     let cleanup = () => {}
-    const transport = postMessage<Window>({
-      targetOrigin: window.location.origin,
-      open: () => {
-        const url = new URL('./host.html', window.location.href)
-        url.searchParams.set('consumerOrigin', window.location.origin)
-        if (mount === 'popup') {
-          const popup = window.open(url.toString(), 'handshakes-host', popupFeatures(hostChromeRef.current))
-          if (!popup) throw new PostMessage.PopupBlockedError('window.open returned null')
-          cleanup = () => popup.close()
-          return popup
-        }
-        const iframe = iframeRef.current
-        if (!iframe) throw new Error('iframe mount missing')
-        iframe.src = url.toString()
-        return new Promise<Window>((resolve, reject) => {
-          iframe.addEventListener(
-            'load',
-            () => {
-              const win = iframe.contentWindow
-              if (win) resolve(win)
-              else reject(new Error('iframe.contentWindow was null'))
-            },
-            { once: true },
-          )
-        })
-      },
-      close: (handle: Window) => {
-        if (mount === 'popup' && handle.close) handle.close()
-        cleanup()
-        const iframe = iframeRef.current
-        if (iframe) iframe.removeAttribute('src')
-      },
+    const handshake = Handshake.create({
+      transport: postMessage<Window>({
+        targetOrigin: hostOrigin,
+        target: () => {
+          const url = new URL(hostOrigin)
+          if (mount === 'popup') {
+            const popup = window.open(url.toString(), 'handshakes-host', popupFeatures(hostChromeRef.current))
+            if (!popup) throw new PostMessage.PopupBlockedError('window.open returned null')
+            cleanup = () => popup.close()
+            return popup
+          }
+          const iframe = iframeRef.current
+          if (!iframe) throw new Error('iframe mount missing')
+          iframe.src = url.toString()
+          return new Promise<Window>((resolve, reject) => {
+            iframe.addEventListener(
+              'load',
+              () => {
+                const win = iframe.contentWindow
+                if (win) resolve(win)
+                else reject(new Error('iframe.contentWindow was null'))
+              },
+              { once: true },
+            )
+          })
+        },
+        close: (handle: Window) => {
+          if (mount === 'popup' && handle.close) handle.close()
+          cleanup()
+          const iframe = iframeRef.current
+          if (iframe) iframe.removeAttribute('src')
+        },
+      }),
     })
-
-    const handshake = Handshake.create({ transport })
     handshake.on('open', () => {
       setState('open')
       log.push({ intent: 'positive', label: 'open' })
@@ -134,7 +127,7 @@ function App() {
   return (
     <div className="flex flex-col bg-background">
       <header className="flex items-center gap-[8px] border-b border-border px-[14px] py-[10px]">
-        <strong className="copy-13">handshakes · postMessage</strong>
+        <strong className="copy-13">handshakes · postMessage · consumer</strong>
         <span className="ml-auto inline-flex gap-[4px]">
           <Button
             variant={mount === 'iframe' ? 'primary' : 'secondary'}
@@ -210,15 +203,9 @@ function App() {
         </Window>
       </main>
 
-      <section className="grid grid-cols-2 gap-[16px] border-t border-border p-[16px]">
-        <div>
-          <div className="copy-13 mb-[8px] font-medium text-foreground-secondary">consumer log</div>
-          <Log.LogView log={log} />
-        </div>
-        <div>
-          <div className="copy-13 mb-[8px] font-medium text-foreground-secondary">host log</div>
-          <Log.LogView log={hostLog} />
-        </div>
+      <section className="border-t border-border p-[16px]">
+        <div className="copy-13 mb-[8px] font-medium text-foreground-secondary">consumer log</div>
+        <Log.LogView log={log} />
       </section>
     </div>
   )

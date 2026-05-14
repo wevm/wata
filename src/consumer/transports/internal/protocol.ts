@@ -35,9 +35,16 @@ export function isControlFrame(value: unknown): value is WireFrame {
 export function isWindowLike(value: unknown): value is Window {
   if (typeof value !== 'object' || value === null) return false
   const candidate = value as { postMessage?: unknown; addEventListener?: unknown }
-  return (
-    typeof candidate.postMessage === 'function' && typeof candidate.addEventListener === 'function'
-  )
+  if (typeof candidate.postMessage !== 'function') return false
+  try {
+    return typeof candidate.addEventListener === 'function'
+  } catch {
+    // Cross-origin `WindowProxy` blocks reads of most properties but
+    // always exposes `postMessage`. If we got past the `postMessage`
+    // check and reading `addEventListener` throws, this is a
+    // cross-origin window — treat it as Window-like.
+    return true
+  }
 }
 
 /** Best-effort `MessagePort` shape detection. */
@@ -48,9 +55,15 @@ export function isPortLike(value: unknown): value is MessagePort {
     start?: unknown
     addEventListener?: unknown
   }
-  return (
-    typeof candidate.postMessage === 'function' &&
-    typeof candidate.start === 'function' &&
-    typeof candidate.addEventListener === 'function'
-  )
+  if (typeof candidate.postMessage !== 'function') return false
+  try {
+    return (
+      typeof candidate.start === 'function' &&
+      typeof candidate.addEventListener === 'function'
+    )
+  } catch {
+    // Cross-origin `WindowProxy` throws when reading non-whitelisted
+    // properties — definitely not a `MessagePort`.
+    return false
+  }
 }

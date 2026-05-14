@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>handshakes — postMessage host</title>
+  </head>
+  <body>
+    <h2>host</h2>
+    <div id="pending" hidden>
+      <p>received: <code id="received"></code></p>
+      <input id="message" placeholder="pong from host" />
+      <button id="respond">respond</button>
+    </div>
+    <pre id="log"></pre>
+    <script type="module" src="./src/host.ts"></script>
+  </body>
+</html>

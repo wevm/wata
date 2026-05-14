@@ -43,6 +43,9 @@ catalogs:
       specifier: ^4.4.3
       version: 4.4.3
 
+overrides:
+  handshakes: workspace:*
+
 importers:
 
   .:
@@ -84,6 +87,19 @@ importers:
       zile:
         specifier: 'catalog:'
         version: 0.0.25(typescript@5.9.3)
+
+  examples/postMessage:
+    dependencies:
+      handshakes:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vp:
+        specifier: 'catalog:'
+        version: vite-plus@0.1.20(@types/node@25.7.0)(@vitest/coverage-v8@4.1.5)(jiti@2.7.0)(typescript@5.9.3)(vite@8.0.12(@types/node@25.7.0)(jiti@2.7.0))
 
   playgrounds/postMessage:
     dependencies:
