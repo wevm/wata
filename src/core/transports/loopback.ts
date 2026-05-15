@@ -14,7 +14,7 @@
  *
  * @example
  * ```ts
- * import { loopback } from 'handshakes'
+ * import { loopback } from 'wata'
  *
  * const { consumer, host } = loopback()
  * await consumer.start()
@@ -34,7 +34,7 @@ import * as Transport from '../Transport.js'
  *
  * @example
  * ```ts
- * import { loopback } from 'handshakes'
+ * import { loopback } from 'wata'
  *
  * const { consumer, host } = loopback()
  * ```

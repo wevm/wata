@@ -1,4 +1,4 @@
-import { Rpc } from 'handshakes'
+import { Rpc } from 'wata'
 import { describe, expectTypeOf, test } from 'vp/test'
 
 describe('request', () => {

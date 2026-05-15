@@ -6,7 +6,7 @@
  * inbound request via a text input + button.
  */
 
-import { Handshake, postMessage } from 'handshakes/host'
+import { Handshake, postMessage } from 'wata/host'
 
 const pending = document.getElementById('pending') as HTMLDivElement
 const received = document.getElementById('received') as HTMLElement

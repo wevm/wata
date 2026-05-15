@@ -220,7 +220,7 @@ export function parseConsumer(value: unknown): ConsumerDocument {
  *
  * @example
  * ```ts
- * import { Discovery } from 'handshakes'
+ * import { Discovery } from 'wata'
  *
  * const host = await Discovery.fetchHost('https://wallet.example')
  * ```

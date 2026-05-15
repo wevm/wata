@@ -10,7 +10,7 @@
  * `BroadcastChannel`.
  */
 
-import { Handshake, postMessage } from 'handshakes/host'
+import { Handshake, postMessage } from 'wata/host'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Button, Input, Tag } from 'regen-ui'
@@ -131,7 +131,7 @@ function App() {
   return (
     <div className="flex flex-col bg-background">
       <header className="flex items-center gap-[8px] border-b border-border px-[14px] py-[10px]">
-        <strong className="copy-13">handshakes · postMessage · host</strong>
+        <strong className="copy-13">wata · postMessage · host</strong>
         <Tag intent={stateIntent[state]} dot>
           {state}
         </Tag>

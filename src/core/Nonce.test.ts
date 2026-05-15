@@ -1,4 +1,4 @@
-import { Errors, Nonce } from 'handshakes'
+import { Errors, Nonce } from 'wata'
 import { describe, expect, test } from 'vp/test'
 
 describe('fromCounter', () => {

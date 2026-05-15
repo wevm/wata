@@ -1,9 +1,9 @@
 /**
- * `handshakes` `Handshake` namespace — the consumer-side public surface
+ * `wata` `Handshake` namespace — the consumer-side public surface
  * plus the shared types both sides re-export.
  *
  * `Handshake.create` here always returns a {@link Consumer}. To create a
- * host, import from `handshakes/host` (where `Handshake.create` returns a
+ * host, import from `wata/host` (where `Handshake.create` returns a
  * {@link Host}). Splitting per-side keeps the return type a literal
  * narrowing rather than a `transport['role'] extends 'consumer' ?
  * Consumer : Host` conditional, which gives editors and type-error
@@ -163,7 +163,7 @@ export declare namespace Consumer {
  *
  * @example
  * ```ts
- * import { Handshake, loopback } from 'handshakes'
+ * import { Handshake, loopback } from 'wata'
  *
  * const { consumer } = loopback()
  * const handshake = Handshake.create({ transport: consumer })

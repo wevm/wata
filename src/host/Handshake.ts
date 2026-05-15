@@ -1,10 +1,10 @@
 /**
- * `handshakes/host` `Handshake` namespace — the host-side public surface.
+ * `wata/host` `Handshake` namespace — the host-side public surface.
  *
  * `Handshake.create` here always returns a {@link Host}. To create a
- * consumer, import from `handshakes` instead. Shared types
+ * consumer, import from `wata` instead. Shared types
  * (`SendResult`, `Listener`, `LifecycleEventMap`, `BootstrapRequiredError`)
- * live on the consumer-side `Handshake` namespace at `handshakes`; reach
+ * live on the consumer-side `Handshake` namespace at `wata`; reach
  * for them there when you need to type both sides in the same module.
  *
  * Host-only types ({@link RequestEvent}, {@link NotificationEvent},
@@ -191,7 +191,7 @@ export declare namespace reject {
  * @example
  * Synchronous answer from inside the listener.
  * ```ts
- * import { Handshake } from 'handshakes/host'
+ * import { Handshake } from 'wata/host'
  *
  * const handshake = Handshake.create({ transport })
  * await handshake.start()

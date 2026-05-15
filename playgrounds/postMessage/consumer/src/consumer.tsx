@@ -10,7 +10,7 @@
  * own log, so the consumer only shows its own log here.
  */
 
-import { Handshake, PostMessage, postMessage } from 'handshakes'
+import { Handshake, PostMessage, postMessage } from 'wata'
 import { useCallback, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Button, Input, Tag } from 'regen-ui'
@@ -52,7 +52,7 @@ function App() {
         target: () => {
           const url = new URL(hostOrigin)
           if (mount === 'popup') {
-            const popup = window.open(url.toString(), 'handshakes-host', popupFeatures(hostChromeRef.current))
+            const popup = window.open(url.toString(), 'wata-host', popupFeatures(hostChromeRef.current))
             if (!popup) throw new PostMessage.PopupBlockedError('window.open returned null')
             cleanup = () => popup.close()
             return popup
@@ -127,7 +127,7 @@ function App() {
   return (
     <div className="flex flex-col bg-background">
       <header className="flex items-center gap-[8px] border-b border-border px-[14px] py-[10px]">
-        <strong className="copy-13">handshakes · postMessage · consumer</strong>
+        <strong className="copy-13">wata · postMessage · consumer</strong>
         <span className="ml-auto inline-flex gap-[4px]">
           <Button
             variant={mount === 'iframe' ? 'primary' : 'secondary'}
@@ -191,7 +191,7 @@ function App() {
             {mount === 'iframe' ? (
               <iframe
                 ref={iframeRef}
-                title="handshakes-host"
+                title="wata-host"
                 className="block h-full w-full border-0"
               />
             ) : (

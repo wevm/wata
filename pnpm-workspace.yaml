@@ -23,7 +23,7 @@ catalog:
 minimumReleaseAge: 1440
 
 overrides:
-  handshakes: workspace:*
+  wata: workspace:*
 
 minimumReleaseAgeExclude:
   - regen-ui

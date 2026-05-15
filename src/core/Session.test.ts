@@ -1,4 +1,4 @@
-import { Crypto, Errors, Kdf, Session } from 'handshakes'
+import { Crypto, Errors, Kdf, Session } from 'wata'
 import { Bytes, Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
 

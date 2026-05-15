@@ -1,5 +1,5 @@
 /**
- * Generic error infrastructure shared across `handshakes`.
+ * Generic error infrastructure shared across `wata`.
  *
  * Errors are the only exception to the project-wide "factory functions only"
  * rule — they're classes so consumers can branch on `instanceof`.
@@ -18,7 +18,7 @@
  */
 
 /**
- * Base error class inherited by every error thrown from `handshakes`.
+ * Base error class inherited by every error thrown from `wata`.
  *
  * Subclasses set `name` (used for `instanceof` discrimination at runtime) and
  * pass a short human-readable message + optional structured fields.

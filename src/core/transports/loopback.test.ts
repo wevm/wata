@@ -1,5 +1,5 @@
-import { Aad, Aead, Envelope, Handshake, Nonce, Rpc, Schema, Transport } from 'handshakes'
-import { Handshake as HostHandshake } from 'handshakes/host'
+import { Aad, Aead, Envelope, Handshake, Nonce, Rpc, Schema, Transport } from 'wata'
+import { Handshake as HostHandshake } from 'wata/host'
 import type { Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
 import { z } from 'zod'
