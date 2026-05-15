@@ -28,7 +28,7 @@
  * @example minimal Node host
  * ```ts
  * import { createServer } from 'node:http'
- * import { Handshake, Kv, deviceCode } from 'wata/host'
+ * import { Wata, Kv, deviceCode } from 'wata/host'
  *
  * const transport = deviceCode({
  *   store: Kv.memory(),
@@ -44,8 +44,8 @@
  *   },
  * })
  *
- * const handshake = Handshake.create({ transport })
- * handshake.on('request', (event) => event.respond({ ok: true }))
+ * const wata = Wata.create({ transport })
+ * wata.on('request', (event) => event.respond({ ok: true }))
  *
  * createServer(transport.listener).listen(3000)
  * ```
@@ -178,7 +178,7 @@ export declare namespace html {
     /**
      * Mark the device-code as approved. The transport then emits the
      * pending `rpc-requests` envelope as a `'message'` event so the
-     * host-side `Handshake` dispatches it and produces a response.
+     * host-side `Wata` dispatches it and produces a response.
      */
     approve: (userCode: string) => Promise<void>
     /**
@@ -200,7 +200,7 @@ export type DeviceCodeTransport = Transport.Transport<'host'> & HttpServer.HttpS
  *
  * @example
  * ```ts
- * import { Handshake, Kv, deviceCode } from 'wata/host'
+ * import { Wata, Kv, deviceCode } from 'wata/host'
  *
  * const transport = deviceCode({
  *   store: Kv.memory(),
@@ -211,14 +211,7 @@ export type DeviceCodeTransport = Transport.Transport<'host'> & HttpServer.HttpS
  * ```
  */
 export function deviceCode(options: Options): DeviceCodeTransport {
-  const {
-    baseUrl,
-    expiresIn = 600,
-    html,
-    path,
-    pollingInterval = 5000,
-    store,
-  } = options
+  const { baseUrl, expiresIn = 600, html, path, pollingInterval = 5000, store } = options
   const origin = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
   const verificationUri = `${origin}${path ?? ''}/verify`
 
@@ -243,7 +236,7 @@ export function deviceCode(options: Options): DeviceCodeTransport {
       record.status = 'approved'
       await store.set(deviceCodeKey(record.deviceCode), record)
       await store.set(userCodeKey(record.userCode), record)
-      // Hand the queued requests to `Handshake` for dispatch. The
+      // Hand the queued requests to `Wata` for dispatch. The
       // host-side `'request'` listener responds via `transport.send`,
       // which is keyed back to this `device_code`.
       state.activeDeviceCode = record.deviceCode
@@ -281,7 +274,10 @@ export function deviceCode(options: Options): DeviceCodeTransport {
 
   app.onError((cause, c) => {
     emitter.emit('error', cause as Error)
-    return c.json({ error: 'server_error', error_description: (cause as Error).message }, { status: 500 })
+    return c.json(
+      { error: 'server_error', error_description: (cause as Error).message },
+      { status: 500 },
+    )
   })
 
   app.post('/register', async (c) => {
@@ -300,7 +296,10 @@ export function deviceCode(options: Options): DeviceCodeTransport {
       )
     if (body.code_challenge_method !== 'S256')
       return c.json(
-        { error: 'invalid_request', error_description: 'expected `code_challenge_method` of `S256`' },
+        {
+          error: 'invalid_request',
+          error_description: 'expected `code_challenge_method` of `S256`',
+        },
         { status: 400 },
       )
 
@@ -315,7 +314,10 @@ export function deviceCode(options: Options): DeviceCodeTransport {
     }
     if (envelope.type !== 'rpc-requests')
       return c.json(
-        { error: 'invalid_request', error_description: '`message` must be an `rpc-requests` envelope' },
+        {
+          error: 'invalid_request',
+          error_description: '`message` must be an `rpc-requests` envelope',
+        },
         { status: 400 },
       )
 
@@ -435,8 +437,7 @@ export function deviceCode(options: Options): DeviceCodeTransport {
       // field; the human-readable text belongs in `error_description`
       // if present at all.
       return c.json({ error: 'access_denied' }, { status: 400 })
-    if (record.status === 'expired')
-      return c.json({ error: 'expired_token' }, { status: 400 })
+    if (record.status === 'expired') return c.json({ error: 'expired_token' }, { status: 400 })
 
     if (!record.response)
       return c.json(

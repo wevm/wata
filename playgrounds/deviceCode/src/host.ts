@@ -17,40 +17,39 @@
  */
 
 import { serve } from '@hono/node-server'
-import { Handshake, Kv, deviceCode } from 'wata/host'
 import { Hono } from 'hono'
+import { Wata, Kv, deviceCode } from 'wata/host'
 
 const port = Number(process.env['PORT'] ?? 4747)
 const baseUrl = process.env['BASE_URL'] ?? `http://localhost:${port}`
 
-const store = Kv.memory()
-
-const transport = deviceCode({
-  store,
-  baseUrl,
-  path: '/auth/device',
-  pollingInterval: 1000,
-  html: {
-    render({ userCode, record }) {
-      if (!userCode || !record)
-        return html(`
+const wata = Wata.create({
+  transport: deviceCode({
+    store: Kv.memory(),
+    baseUrl,
+    path: '/auth/device',
+    pollingInterval: 1000,
+    html: {
+      render({ userCode, record }) {
+        if (!userCode || !record)
+          return html(`
           <h1>Enter your device code</h1>
           <form method="get" action="/auth/device/verify">
             <input name="user_code" placeholder="ABCD-EFGH" autofocus required />
             <button type="submit">Continue</button>
           </form>
         `)
-        
-      const requests =
-        record.message.type === 'rpc-requests'
-          ? record.message.payload
-              .map((m) => {
-                const id = 'id' in m ? `#${String(m.id)}` : '(notification)'
-                return `<li><code>${m.method}</code> ${id} ${escape(JSON.stringify(m.params))}</li>`
-              })
-              .join('')
-          : '<li>(unknown payload)</li>'
-      return html(`
+
+        const requests =
+          record.message.type === 'rpc-requests'
+            ? record.message.payload
+                .map((m) => {
+                  const id = 'id' in m ? `#${String(m.id)}` : '(notification)'
+                  return `<li><code>${m.method}</code> ${id} ${escape(JSON.stringify(m.params))}</li>`
+                })
+                .join('')
+            : '<li>(unknown payload)</li>'
+        return html(`
         <h1>Approve request?</h1>
         <p>Code: <code>${userCode}</code></p>
         <p>Pending JSON-RPC requests:</p>
@@ -61,27 +60,26 @@ const transport = deviceCode({
           <button type="submit" name="decision" value="deny">Deny</button>
         </form>
       `)
+      },
+      async authenticate({ request, actions }) {
+        const form = await request.formData()
+        const userCode = String(form.get('user_code') ?? '')
+        const decision = String(form.get('decision') ?? '')
+        if (!userCode) return html('<p>missing <code>user_code</code></p>', 400)
+        const record = await actions.get(userCode)
+        if (!record) return html('<p>unknown <code>user_code</code></p>', 404)
+        if (decision === 'approve') {
+          await actions.approve(userCode)
+          return html('<h1>Approved ✅</h1><p>You may close this tab.</p>')
+        }
+        await actions.deny(userCode)
+        return html('<h1>Denied ❌</h1><p>You may close this tab.</p>')
+      },
     },
-    async authenticate({ request, actions }) {
-      const form = await request.formData()
-      const userCode = String(form.get('user_code') ?? '')
-      const decision = String(form.get('decision') ?? '')
-      if (!userCode) return html('<p>missing <code>user_code</code></p>', 400)
-      const record = await actions.get(userCode)
-      if (!record) return html('<p>unknown <code>user_code</code></p>', 404)
-      if (decision === 'approve') {
-        await actions.approve(userCode)
-        return html('<h1>Approved ✅</h1><p>You may close this tab.</p>')
-      }
-      await actions.deny(userCode)
-      return html('<h1>Denied ❌</h1><p>You may close this tab.</p>')
-    },
-  },
+  }),
 })
 
-const handshake = Handshake.create({ transport })
-
-handshake.on('request', (event) => {
+wata.on('request', (event) => {
   console.log(`[host] request: ${event.method}`, event.params)
   if (event.method === 'ping') event.respond({ ok: true, at: new Date().toISOString() })
   else if (event.method === 'echo') event.respond(event.params)
@@ -89,12 +87,12 @@ handshake.on('request', (event) => {
 })
 
 const app = new Hono()
-app.all('/auth/device/*', (c) => transport.fetch(c.req.raw))
-app.get('/', (c) =>
-  c.html(
-    `<h1>device-code host</h1><p>visit <a href="/auth/device/verify">/auth/device/verify</a> to approve a request.</p>`,
-  ),
-)
+  .all('/auth/*', (c) => wata.fetch(c.req.raw))
+  .get('/', (c) =>
+    c.html(
+      `<h1>device-code host</h1><p>visit <a href="/auth/device/verify">/auth/device/verify</a> to approve a request.</p>`,
+    ),
+  )
 
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`[host] listening on http://localhost:${info.port}`)

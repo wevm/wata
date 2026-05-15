@@ -7,7 +7,7 @@
  *
  * - `role` / `exchange` — protocol-level metadata. `role` is pinned by the
  *   import path (`wata` for consumer, `wata/host` for host) so
- *   `Handshake.create` can shape its return type from a literal. `exchange`
+ *   `Wata.create` can shape its return type from a literal. `exchange`
  *   discriminates ongoing transports (`window`, `mobileLink`, `relay`) from
  *   single-exchange transports (`deviceCode`, `webhookCallback`,
  *   `mobileWebAuth`) and gates the `auto-close after terminal response`
@@ -17,7 +17,7 @@
  *   propagation. Listeners receive the typed payload directly (the parsed
  *   envelope, the close cause, or the error). Cancel a subscription by
  *   passing `{ signal }` to the `on` call and aborting the controller.
- *   Phase 1 `Handshake` wraps this into the consumer-facing event surface.
+ *   Phase 1 `Wata` wraps this into the consumer-facing event surface.
  *
  * Adapters MUST only carry normalized {@link "./core/Envelope".Envelope}
  * frames over the wire — never raw protocol-internal shapes — so the

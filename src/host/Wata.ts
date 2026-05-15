@@ -1,10 +1,10 @@
 /**
- * `wata/host` `Handshake` namespace — the host-side public surface.
+ * `wata/host` `Wata` namespace — the host-side public surface.
  *
- * `Handshake.create` here always returns a {@link Host}. To create a
+ * `Wata.create` here always returns a {@link Host}. To create a
  * consumer, import from `wata` instead. Shared types
  * (`SendResult`, `Listener`, `LifecycleEventMap`, `BootstrapRequiredError`)
- * live on the consumer-side `Handshake` namespace at `wata`; reach
+ * live on the consumer-side `Wata` namespace at `wata`; reach
  * for them there when you need to type both sides in the same module.
  *
  * Host-only types ({@link RequestEvent}, {@link NotificationEvent},
@@ -18,7 +18,7 @@ import * as Events from '../core/Events.js'
 import * as Rpc from '../core/Rpc.js'
 import * as Schema from '../core/Schema.js'
 import * as Transport from '../core/Transport.js'
-import * as Handshake from '../Handshake.js'
+import * as Wata from '../Wata.js'
 
 /**
  * Event payload delivered to host `'request'` listeners.
@@ -41,14 +41,14 @@ export type RequestEvent<
   method: method
   /** Method params. */
   params: params
-  /** Sugar for `handshake.reject(event.id, error)`. Idempotent. */
+  /** Sugar for `wata.reject(event.id, error)`. Idempotent. */
   reject: (error: { code: number; data?: unknown; message: string }) => void
   /** The full JSON-RPC request envelope as parsed off the wire. */
   request: Rpc.Request<method, params>
   /**
-   * Sugar for `handshake.respond(event.id, result)`. Settles the request
+   * Sugar for `wata.respond(event.id, result)`. Settles the request
    * synchronously from inside the listener; idempotent across
-   * `event.respond` / `event.reject` / `handshake.respond` / `handshake.reject`.
+   * `event.respond` / `event.reject` / `wata.respond` / `wata.reject`.
    */
   respond: (result: result) => void
 }
@@ -104,21 +104,39 @@ export type SchemaNotificationEvent<schema extends Schema.Schema | undefined> =
     : NotificationEvent
 
 /** Host-side event map (lifecycle + request/notification dispatch). */
-export type HostEventMap<schema extends Schema.Schema | undefined> = Handshake.LifecycleEventMap & {
+export type HostEventMap<schema extends Schema.Schema | undefined> = Wata.LifecycleEventMap & {
   /** Inbound JSON-RPC notification — fire-and-forget. */
   notification: SchemaNotificationEvent<schema>
   /** Inbound JSON-RPC request — first non-`undefined` listener return wins. */
   request: SchemaRequestEvent<schema>
 }
 
-/** Host-side `Handshake`. Returned by {@link create}. */
-export type Host<schema extends Schema.Schema | undefined = undefined> = {
+/** Host-side `Wata`. Returned by {@link create}. */
+export type Host<
+  schema extends Schema.Schema | undefined = undefined,
+  transport extends Transport.Transport<'host'> = Transport.Transport<'host'>,
+> = {
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
+  /**
+   * Web-standard fetch handler forwarded from the transport when
+   * present. HTTP-shaped transports (`deviceCode`, `webhookCallback`,
+   * …) expose a `(request: Request) => Promise<Response>` that drops
+   * onto Cloudflare Workers, Bun, Deno, Vercel Edge, etc. Non-HTTP
+   * transports (`postMessage`, `loopback`, …) leave this `undefined`.
+   */
+  fetch: transport extends { fetch: infer fn } ? fn : undefined
+  /**
+   * Node `http.RequestListener` forwarded from the transport when
+   * present. HTTP-shaped transports expose a listener compatible with
+   * `node:http`'s `createServer`. Non-HTTP transports leave this
+   * `undefined`.
+   */
+  listener: transport extends { listener: infer fn } ? fn : undefined
   /** Remove a previously subscribed listener. */
   off: <type extends keyof HostEventMap<schema>>(
     type: type,
-    listener: Handshake.Listener<HostEventMap<schema>[type]>,
+    listener: Wata.Listener<HostEventMap<schema>[type]>,
   ) => void
   /**
    * Subscribe to a host event. Returns an `AbortController` so the
@@ -129,7 +147,7 @@ export type Host<schema extends Schema.Schema | undefined = undefined> = {
    */
   on: <type extends keyof HostEventMap<schema>>(
     type: type,
-    listener: Handshake.Listener<HostEventMap<schema>[type]>,
+    listener: Wata.Listener<HostEventMap<schema>[type]>,
   ) => AbortController
   /**
    * Settle a still-pending inbound request by id with a JSON-RPC error.
@@ -142,20 +160,20 @@ export type Host<schema extends Schema.Schema | undefined = undefined> = {
   /**
    * Settle a still-pending inbound request by id with a JSON-RPC `result`.
    *
-   * Pair with `handshake.on('request', (event) => setPending((p) => [...p, event]))`
+   * Pair with `wata.on('request', (event) => setPending((p) => [...p, event]))`
    * for UI flows where the response is gathered asynchronously (approval
    * dialogs, late confirmations, …) — no need for per-request closures
    * or to return a Promise from the listener.
    *
    * Throws {@link UnknownRequestError} if no request with that id is
    * currently pending (already responded, never received, or the
-   * handshake is closed).
+   * wata is closed).
    *
    * @param id - Id of the pending request to settle.
    * @param result - Success `result` payload to send.
    */
   respond: <result = unknown>(id: Rpc.Id, result: result) => void
-  /** Side of the protocol this handshake speaks for. */
+  /** Side of the protocol this wata speaks for. */
   role: 'host'
   /** Optional method-registry schema flowed through `'request'` / `'notification'` events. */
   schema: schema
@@ -170,7 +188,7 @@ export type Host<schema extends Schema.Schema | undefined = undefined> = {
    */
   start: () => Promise<void>
   /** The wrapped transport. */
-  transport: Transport.Transport<'host'>
+  transport: transport
 }
 
 export declare namespace reject {
@@ -186,38 +204,39 @@ export declare namespace reject {
 }
 
 /**
- * Create a host-side {@link Host} `Handshake` around a transport.
+ * Create a host-side {@link Host} `Wata` around a transport.
  *
  * @example
  * Synchronous answer from inside the listener.
  * ```ts
- * import { Handshake } from 'wata/host'
+ * import { Wata } from 'wata/host'
  *
- * const handshake = Handshake.create({ transport })
- * await handshake.start()
- * handshake.on('request', (event) => {
+ * const wata = Wata.create({ transport })
+ * await wata.start()
+ * wata.on('request', (event) => {
  *   if (event.method === 'ping') event.respond({ ok: true })
  * })
  * ```
  *
  * @example
- * Late answer by id (UI / approval flows). `Handshake.on` lazy-connects
+ * Late answer by id (UI / approval flows). `Wata.on` lazy-connects
  * the transport on first call, so an explicit `start()` is optional.
  * ```ts
- * const handshake = Handshake.create({ transport })
+ * const wata = Wata.create({ transport })
  *
- * handshake.on('request', (event) => {
+ * wata.on('request', (event) => {
  *   setPending((prev) => [...prev, event])
  * })
  *
  * // Later, when the user clicks "approve":
- * handshake.respond(event.id, { ok: true })
+ * wata.respond(event.id, { ok: true })
  * ```
  */
-export function create<const schema extends Schema.Schema | undefined = undefined>(
-  options: create.Options<schema>,
-): Host<schema> {
-  const { transport } = options
+export function create<
+  const schema extends Schema.Schema | undefined = undefined,
+  const transport extends Transport.Transport<'host'> = Transport.Transport<'host'>,
+>(options: create.Options<schema, transport>): Host<schema, transport> {
+  const transport = options.transport as transport
   const schema = options.schema as schema
 
   const emitter = Events.create<HostEventMap<schema>>()
@@ -227,7 +246,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   // first-non-undefined-wins resolution semantics. Tracked here rather
   // than via `emitter.on('request', ...)` because the wrapper swallows
   // listener errors and never surfaces return values back to the caller.
-  const requestListeners = new Set<Handshake.Listener<HostEventMap<schema>['request']>>()
+  const requestListeners = new Set<Wata.Listener<HostEventMap<schema>['request']>>()
 
   // `started` = currently in an active session. After close (peer popup
   // closes, transport tears down, …) drops back to `false`, and the
@@ -291,7 +310,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   async function dispatchRequest(request: Rpc.Request) {
     if (schema) {
       try {
-        Handshake.validateParamsIfKnown(schema, request.method, request.params)
+        Wata.validateParamsIfKnown(schema, request.method, request.params)
       } catch (cause) {
         await safeSend(transport, [
           Rpc.error({
@@ -320,9 +339,9 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     }
 
     // Track the request so `event.respond` / `event.reject` and the
-    // top-level `handshake.respond` / `handshake.reject` can all settle
+    // top-level `wata.respond` / `wata.reject` can all settle
     // by id. The entry stays in `pending` until a listener answers
-    // (now or later) or the handshake closes.
+    // (now or later) or the wata closes.
     pending.set(request.id, { request })
 
     const payload = {
@@ -396,13 +415,13 @@ export function create<const schema extends Schema.Schema | undefined = undefine
 
     // Otherwise: the request stays pending. A listener acknowledged it
     // by being registered, so the host trusts the application to settle
-    // later via `handshake.respond(id, ...)` / `handshake.reject(id, ...)`.
+    // later via `wata.respond(id, ...)` / `wata.reject(id, ...)`.
   }
 
   function dispatchNotification(message: Rpc.Notification) {
     if (schema) {
       try {
-        Handshake.validateParamsIfKnown(schema, message.method, message.params)
+        Wata.validateParamsIfKnown(schema, message.method, message.params)
       } catch (cause) {
         emitter.emit('error', cause as Error)
         return
@@ -474,6 +493,19 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     emitter.emit('error', error)
   })
 
+  // HTTP-shaped transports (e.g. `deviceCode`) augment the base
+  // `Transport.Transport<'host'>` with `.fetch` / `.listener` so the
+  // host can be served directly. Forward those references onto the
+  // `Wata` instance so callers can write `createServer(wata.listener)`
+  // instead of reaching through `wata.transport.listener`. The
+  // conditional `Host` type collapses these to `undefined` when the
+  // wrapped transport doesn't carry them.
+  type HttpHandlers = {
+    fetch?: (request: Request) => Promise<Response>
+    listener?: (req: unknown, res: unknown) => void
+  }
+  const http = transport as HttpHandlers
+
   return {
     async close(cause) {
       if (!state.started) return
@@ -482,9 +514,11 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       await transport.close(cause)
       emitter.emit('close', cause)
     },
+    fetch: http.fetch as Host<schema, transport>['fetch'],
+    listener: http.listener as Host<schema, transport>['listener'],
     off(type, listener) {
       if (type === 'request') {
-        requestListeners.delete(listener as Handshake.Listener<HostEventMap<schema>['request']>)
+        requestListeners.delete(listener as Wata.Listener<HostEventMap<schema>['request']>)
         return
       }
       emitter.off(type, listener)
@@ -493,13 +527,11 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       lazyConnect()
       const controller = new AbortController()
       if (type === 'request') {
-        requestListeners.add(listener as Handshake.Listener<HostEventMap<schema>['request']>)
+        requestListeners.add(listener as Wata.Listener<HostEventMap<schema>['request']>)
         controller.signal.addEventListener(
           'abort',
           () => {
-            requestListeners.delete(
-              listener as Handshake.Listener<HostEventMap<schema>['request']>,
-            )
+            requestListeners.delete(listener as Wata.Listener<HostEventMap<schema>['request']>)
           },
           { once: true },
         )
@@ -519,11 +551,14 @@ export function create<const schema extends Schema.Schema | undefined = undefine
 
 export declare namespace create {
   /** Options for {@link create}. */
-  type Options<schema extends Schema.Schema | undefined> = {
+  type Options<
+    schema extends Schema.Schema | undefined,
+    transport extends Transport.Transport<'host'> = Transport.Transport<'host'>,
+  > = {
     /** Optional method-registry schema (typed `'request'` / `'notification'` payloads). */
     schema?: schema | undefined
-    /** Host-role transport this handshake wraps. */
-    transport: Transport.Transport<'host'>
+    /** Host-role transport this wata wraps. */
+    transport: transport
   }
 }
 
@@ -546,10 +581,10 @@ async function safeSend(
 /**
  * Thrown by {@link Host.respond} / {@link Host.reject} when no inbound
  * request with the supplied id is currently pending. Means the request
- * was already settled, never received, or the handshake has closed.
+ * was already settled, never received, or the wata has closed.
  */
 export class UnknownRequestError extends Errors.BaseError {
-  override name = 'Handshake.UnknownRequestError'
+  override name = 'Wata.UnknownRequestError'
 
   constructor(id: Rpc.Id) {
     super(`no pending request with id \`${String(id)}\``)

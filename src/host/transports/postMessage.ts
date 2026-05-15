@@ -3,7 +3,7 @@
  * `WindowProxy`, or `MessagePort` handle.
  *
  * The host side is the mirror of the consumer transport: same `target`
- * callback shape, same origin pinning, but the ready handshake is
+ * callback shape, same origin pinning, but the ready wata is
  * inverted (host emits `urpc.ready`, waits for the consumer's
  * `urpc.hello`). Unlike the consumer, the host's `target` is
  * **optional** — it defaults to `window.opener ?? window.parent`, the
@@ -12,62 +12,68 @@
  *
  * @example default target (popup or iframe)
  * ```ts
- * import { Handshake, postMessage } from 'wata/host'
+ * import { Wata, postMessage } from 'wata/host'
  *
- * const handshake = Handshake.create({
+ * const wata = Wata.create({
  *   transport: postMessage({ targetOrigin: 'https://app.example' }),
  * })
- * await handshake.start()
+ * await wata.start()
  * ```
  *
  * @example explicit MessagePort target
  * ```ts
- * const handshake = Handshake.create({
+ * const wata = Wata.create({
  *   transport: postMessage({ target: () => receivedPort }),
  * })
  * ```
  */
 
-import * as Errors from '../../core/Errors.js'
 import * as protocol from '../../consumer/transports/internal/protocol.js'
 import * as ConsumerPostMessage from '../../consumer/transports/postMessage.js'
+import * as Errors from '../../core/Errors.js'
 import * as Transport from '../../core/Transport.js'
 
 /**
- * Options accepted by the host-side {@link postMessage}. Identical to the
- * consumer's {@link ConsumerPostMessage.Options}, except both `target`
+ * Options accepted by the host-side {@link postMessage}. Both `target`
  * and `targetOrigin` are optional — the host genuinely doesn't know its
  * peer up front.
  */
-export type Options<target extends ConsumerPostMessage.Target = Window> =
-  target extends ConsumerPostMessage.Target
-    ? Omit<ConsumerPostMessage.Options<target>, 'target' | 'targetOrigin'> & {
-        /**
-         * Called lazily on `start()` to acquire the postMessage target —
-         * the consumer `Window` / `MessagePort` to talk back to. Defaults
-         * to `window.opener ?? window.parent` when omitted, throwing
-         * {@link NoPeerError} if neither is present.
-         */
-        target?: (() => target | Promise<target>) | undefined
-        /**
-         * `postMessage` `targetOrigin`. Defaults to `'*'` because the
-         * host can't know the consumer's origin up front. Tighten this
-         * to a specific origin (passed via URL param, derived from
-         * `document.referrer`, or pinned after the first inbound frame)
-         * whenever the consumer's identity is known.
-         */
-        targetOrigin?: string | undefined
-      }
-    : never
+export type Options<target extends ConsumerPostMessage.Target = Window> = {
+  /**
+   * Optional cleanup. Called from `close()` after the transport
+   * unsubscribes its `message` listener. Defaults to `handle.close?.()`.
+   */
+  close?: ((handle: target) => void | Promise<void>) | undefined
+  /**
+   * `Window` / `WindowProxy` realm where inbound `message` events are
+   * received. Defaults to the global `window`.
+   */
+  source?: ConsumerPostMessage.WindowLike | undefined
+  /**
+   * Called lazily on `start()` to acquire the postMessage target —
+   * the consumer `Window` / `MessagePort` to talk back to. Defaults
+   * to `window.opener ?? window.parent` when omitted, throwing
+   * {@link NoPeerError} if neither is present.
+   */
+  target?: (() => target | Promise<target>) | undefined
+  /**
+   * `postMessage` `targetOrigin`. Defaults to `'*'` because the host
+   * can't know the consumer's origin up front. Tighten this to a
+   * specific origin (passed via URL param, derived from
+   * `document.referrer`, or pinned after the first inbound frame)
+   * whenever the consumer's identity is known.
+   */
+  targetOrigin?: string | undefined
+}
 
 /**
  * Create a host-side `postMessage` transport.
  *
  * @example
  * ```ts
- * import { Handshake, postMessage } from 'wata/host'
+ * import { Wata, postMessage } from 'wata/host'
  *
- * const handshake = Handshake.create({
+ * const wata = Wata.create({
  *   transport: postMessage({ targetOrigin: 'https://app.example' }),
  * })
  * ```
@@ -78,8 +84,7 @@ export function postMessage<const target extends ConsumerPostMessage.Target = Wi
   const target_resolved =
     options.target ??
     ((() => {
-      const peer =
-        window.opener ?? (window.parent !== window ? window.parent : undefined)
+      const peer = window.opener ?? (window.parent !== window ? window.parent : undefined)
       if (!peer)
         throw new NoPeerError(
           'no `window.opener` or `window.parent` — open this page from a consumer or pass an explicit `target`',
@@ -88,12 +93,13 @@ export function postMessage<const target extends ConsumerPostMessage.Target = Wi
     }) as () => target | Promise<target>)
 
   return ConsumerPostMessage.createSide({
-    handshake: { expect: protocol.consumerHello.type, send: protocol.hostReady },
+    wata: { expect: protocol.consumerHello.type, send: protocol.hostReady },
     options: {
-      ...options,
+      close: options.close,
+      source: options.source,
       target: target_resolved,
       targetOrigin: options.targetOrigin ?? '*',
-    } as never,
+    },
     role: 'host',
   })
 }

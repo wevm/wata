@@ -1,5 +1,5 @@
-import { Transport, postMessage } from 'wata/host'
 import { describe, expectTypeOf, test } from 'vp/test'
+import { Transport, postMessage } from 'wata/host'
 
 declare const popupHandle: Window
 declare const portHandle: MessagePort

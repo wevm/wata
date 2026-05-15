@@ -1,6 +1,6 @@
-import { Crypto } from 'wata'
 import { Ed25519, Hex, X25519 } from 'ox'
 import { describe, expect, test } from 'vp/test'
+import { Crypto } from 'wata'
 
 describe('randomKeypair', () => {
   test('returns 32-byte Ed25519 keypair plus derived X25519 keypair', () => {
@@ -54,8 +54,6 @@ describe('toX25519', () => {
     const ed = Ed25519.createKeyPair()
     const result = Crypto.toX25519({ publicKey: ed.publicKey, privateKey: ed.privateKey })
     expect(result.publicKey).toBe(Ed25519.toX25519PublicKey({ publicKey: ed.publicKey }))
-    expect(result.privateKey).toBe(
-      Ed25519.toX25519PrivateKey({ privateKey: ed.privateKey }),
-    )
+    expect(result.privateKey).toBe(Ed25519.toX25519PrivateKey({ privateKey: ed.privateKey }))
   })
 })

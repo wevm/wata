@@ -1,9 +1,9 @@
 /**
- * `wata` `Handshake` namespace — the consumer-side public surface
+ * `wata` `Wata` namespace — the consumer-side public surface
  * plus the shared types both sides re-export.
  *
- * `Handshake.create` here always returns a {@link Consumer}. To create a
- * host, import from `wata/host` (where `Handshake.create` returns a
+ * `Wata.create` here always returns a {@link Consumer}. To create a
+ * host, import from `wata/host` (where `Wata.create` returns a
  * {@link Host}). Splitting per-side keeps the return type a literal
  * narrowing rather than a `transport['role'] extends 'consumer' ?
  * Consumer : Host` conditional, which gives editors and type-error
@@ -11,7 +11,7 @@
  *
  * Shared types (lifecycle event map, listener signature, send result) live
  * in this file and are re-exported verbatim from
- * {@link "./host/Handshake"} so user code can reach them from either side.
+ * {@link "./host/Wata"} so user code can reach them from either side.
  *
  * Phase 1 ships the minimum vertical slice — enough to drive the `window`
  * transport end-to-end through real `postMessage`. AEAD, batched requests,
@@ -38,14 +38,14 @@ export type SendResult<result> = {
 }
 
 /**
- * Listener supplied to {@link Consumer.on} (and to {@link "./host/Handshake".Host.on}).
+ * Listener supplied to {@link Consumer.on} (and to {@link "./host/Wata".Host.on}).
  * Receives the typed payload for the subscribed event directly — the
  * underlying `rettime` `TypedEvent` is unwrapped to keep call sites
  * focused on the data they care about.
  */
 export type Listener<payload> = (payload: payload) => unknown
 
-/** Lifecycle events emitted on every `Handshake` (consumer + host). */
+/** Lifecycle events emitted on every `Wata` (consumer + host). */
 export type LifecycleEventMap = {
   /** Emitted exactly once when the session closes, cleanly or with cause. */
   close: Error | undefined
@@ -56,7 +56,7 @@ export type LifecycleEventMap = {
 }
 
 /**
- * Consumer-side `Handshake`. Returned by {@link create}.
+ * Consumer-side `Wata`. Returned by {@link create}.
  */
 export type Consumer<schema extends Schema.Schema | undefined = undefined> = {
   /** Close the session. Idempotent. Emits `'close'`. */
@@ -84,7 +84,7 @@ export type Consumer<schema extends Schema.Schema | undefined = undefined> = {
     type: type,
     listener: Listener<LifecycleEventMap[type]>,
   ) => AbortController
-  /** Side of the protocol this handshake speaks for. */
+  /** Side of the protocol this wata speaks for. */
   role: 'consumer'
   /** Optional method-registry schema flowed through `send` / `notify`. */
   schema: schema
@@ -105,7 +105,7 @@ export type Consumer<schema extends Schema.Schema | undefined = undefined> = {
    *
    * Optional: {@link Consumer.send} and {@link Consumer.notify} call
    * `start` internally on first use, so most callers can skip it.
-   * Reach for it when the open handshake should overlap other work, or
+   * Reach for it when the open wata should overlap other work, or
    * when a UI wants to surface the connecting state before any traffic.
    */
   start: () => Promise<void>
@@ -159,17 +159,17 @@ export declare namespace Consumer {
 }
 
 /**
- * Create a consumer-side {@link Consumer} `Handshake` around a transport.
+ * Create a consumer-side {@link Consumer} `Wata` around a transport.
  *
  * @example
  * ```ts
- * import { Handshake, loopback } from 'wata'
+ * import { Wata, loopback } from 'wata'
  *
  * const { consumer } = loopback()
- * const handshake = Handshake.create({ transport: consumer })
+ * const wata = Wata.create({ transport: consumer })
  *
- * await handshake.start()
- * const { result } = await handshake.send({ method: 'ping', params: [] })
+ * await wata.start()
+ * const { result } = await wata.send({ method: 'ping', params: [] })
  * ```
  */
 export function create<const schema extends Schema.Schema | undefined = undefined>(
@@ -185,7 +185,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   // `started` = currently in an active session. After close, drops back
   // to `false`, and the next `send()` / `notify()` lazily re-starts the
   // transport — popups closing externally is a normal end-of-session
-  // event, not a permanent handshake failure.
+  // event, not a permanent wata failure.
   //
   // `phase` enforces the spec §7 mode-discipline gate: while `pre-key`,
   // any inbound `encrypted` envelope is rejected with JSON-RPC `-32600`
@@ -291,7 +291,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
   transport.on('close', (cause) => {
     if (!state.started) return
     state.started = false
-    rejectPending(cause ?? new Transport.ClosedError('handshake transport closed'))
+    rejectPending(cause ?? new Transport.ClosedError('wata transport closed'))
     emitter.emit('close', cause)
   })
 
@@ -318,7 +318,7 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     async close(cause) {
       if (!state.started) return
       state.started = false
-      rejectPending(cause ?? new Transport.ClosedError('handshake closed locally'))
+      rejectPending(cause ?? new Transport.ClosedError('wata closed locally'))
       await transport.close(cause)
       emitter.emit('close', cause)
     },
@@ -370,7 +370,7 @@ export declare namespace create {
   type Options<schema extends Schema.Schema | undefined> = {
     /** Optional method-registry schema (typed `send` / `notify` payloads). */
     schema?: schema | undefined
-    /** Consumer-role transport this handshake wraps. */
+    /** Consumer-role transport this wata wraps. */
     transport: Transport.Transport<'consumer'>
   }
 }

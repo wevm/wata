@@ -1,11 +1,10 @@
-import { Envelope, Rpc } from 'wata'
 import { describe, expect, test } from 'vp/test'
+import { Envelope, Rpc } from 'wata'
 
 describe('rpcRequests', () => {
   test('wraps a single request', () => {
-    expect(
-      Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
-    ).toMatchInlineSnapshot(`
+    expect(Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]))
+      .toMatchInlineSnapshot(`
       {
         "payload": [
           {
@@ -51,9 +50,8 @@ describe('rpcRequests', () => {
 
 describe('rpcResponses', () => {
   test('wraps a single success response', () => {
-    expect(
-      Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]),
-    ).toMatchInlineSnapshot(`
+    expect(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]))
+      .toMatchInlineSnapshot(`
       {
         "payload": [
           {
@@ -70,9 +68,8 @@ describe('rpcResponses', () => {
   })
 
   test('wraps a single error response', () => {
-    expect(
-      Envelope.rpcResponses([Rpc.error({ id: 1, code: -32601, message: 'method not found' })]),
-    ).toMatchInlineSnapshot(`
+    expect(Envelope.rpcResponses([Rpc.error({ id: 1, code: -32601, message: 'method not found' })]))
+      .toMatchInlineSnapshot(`
       {
         "payload": [
           {

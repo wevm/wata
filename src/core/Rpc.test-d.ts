@@ -1,5 +1,5 @@
-import { Rpc } from 'wata'
 import { describe, expectTypeOf, test } from 'vp/test'
+import { Rpc } from 'wata'
 
 describe('request', () => {
   test('infers literal method and params', () => {

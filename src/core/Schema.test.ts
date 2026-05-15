@@ -1,5 +1,5 @@
-import { Errors, Schema } from 'wata'
 import { describe, expect, test } from 'vp/test'
+import { Errors, Schema } from 'wata'
 import { z } from 'zod'
 
 const ping = Schema.method({
