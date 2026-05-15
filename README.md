@@ -1,29 +1,4 @@
-<p align="center">
-  <a href="https://www.npmjs.com/package/wata">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/v/wata?colorA=21262d&colorB=21262d&style=flat">
-      <img src="https://img.shields.io/npm/v/wata?colorA=f6f8fa&colorB=f6f8fa&style=flat" alt="Version">
-    </picture>
-  </a>
-  <a href="https://github.com/wevm/wata/blob/main/LICENSE">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/l/wata?colorA=21262d&colorB=21262d&style=flat">
-      <img src="https://img.shields.io/npm/l/wata?colorA=f6f8fa&colorB=f6f8fa&style=flat" alt="MIT License">
-    </picture>
-  </a>
-</p>
-
-<p align="center"><b>Encrypted JSON-RPC sessions between a consumer and a host, over any transport.</b></p>
-
-<p align="center">
-  <a href="#features">Features</a> · <a href="#install">Install</a> · <a href="#transports">Transports</a> · <a href="#usage">Usage</a> · <a href="#license">License</a>
-</p>
-
-## Features
-
-- **End-to-end encrypted**: every session is AEAD-encrypted with per-session keys derived from an authenticated key exchange. Transports never see plaintext payloads.
-- **Bidirectional JSON-RPC**: request/response and fire-and-forget notifications in both directions, with id correlation, batching, and structured errors.
-- **Transport-agnostic**: the same `Wata` API runs over `postMessage`, OAuth-style device codes, mobile deep-links, webhook callbacks, and relays.
+# Wata
 
 ## Install
 
@@ -52,6 +27,8 @@ bun i wata
 
 Same-device browser session over a `Window`, `WindowProxy`, or `MessagePort`. The consumer supplies a `target` (popup, iframe, or channel port); the host defaults to its opener.
 
+[See example →](./examples/postMessage)
+
 #### Consumer
 
 ```ts
@@ -79,14 +56,16 @@ const wata = Wata.create({
   transport: postMessage(),
 })
 
-wata.on('request', (event) => {
-  if (event.method === 'wallet_getAccounts') event.respond(['0xabc…'])
+wata.on('request', (c) => {
+  if (c.method === 'wallet_getAccounts') c.respond(['0xabc…'])
 })
 ```
 
 ### `deviceCode`
 
 Cross-device session over HTTP using the OAuth 2.0 Device Authorization Grant (RFC 8628) with PKCE. The consumer surfaces a short `user_code` to the user and polls until the host approves.
+
+[See example →](./examples/deviceCode)
 
 #### Consumer
 
@@ -116,9 +95,7 @@ import { Wata, Kv, deviceCode } from 'wata/host'
 
 const wata = Wata.create({ 
   transport: deviceCode({
-    store: Kv.memory(),
     baseUrl: 'https://wallet.example',
-    path: '/auth/device',
     html: {
       render: ({ userCode }) =>
         new Response(
@@ -131,11 +108,13 @@ const wata = Wata.create({
         return new Response('approved')
       },
     },
+    path: '/auth/device',
+    store: Kv.memory(),
   }) 
 })
 
-wata.on('request', (event) => {
-  if (event.method === 'wallet_signMessage') event.respond('0xdeadbeef')
+wata.on('request', (c) => {
+  if (c.method === 'wallet_signMessage') c.respond('0xdeadbeef')
 })
 
 createServer(wata.listener).listen(3000)
