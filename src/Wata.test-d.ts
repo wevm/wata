@@ -1,6 +1,6 @@
-import { Handshake, Rpc, Schema, loopback } from 'wata'
-import { Handshake as HostHandshake } from 'wata/host'
 import { describe, expectTypeOf, test } from 'vp/test'
+import { Wata, Rpc, Schema, loopback } from 'wata'
+import { Wata as HostWata } from 'wata/host'
 import { z } from 'zod'
 
 const schema = Schema.create({
@@ -19,59 +19,59 @@ const schema = Schema.create({
 describe('create', () => {
   test('returns a Consumer when given a consumer transport', () => {
     const { consumer } = loopback()
-    const handshake = Handshake.create({ transport: consumer, schema })
-    expectTypeOf(handshake.role).toEqualTypeOf<'consumer'>()
-    expectTypeOf(handshake).toMatchTypeOf<{ start: () => Promise<void> }>()
-    expectTypeOf(handshake).toMatchTypeOf<{ send: Function }>()
-    expectTypeOf(handshake).toMatchTypeOf<{ notify: Function }>()
+    const wata = Wata.create({ transport: consumer, schema })
+    expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
+    expectTypeOf(wata).toMatchTypeOf<{ start: () => Promise<void> }>()
+    expectTypeOf(wata).toMatchTypeOf<{ send: Function }>()
+    expectTypeOf(wata).toMatchTypeOf<{ notify: Function }>()
   })
 
   test('returns a Host when given a host transport', () => {
     const { host } = loopback()
-    const handshake = HostHandshake.create({ transport: host, schema })
-    expectTypeOf(handshake.role).toEqualTypeOf<'host'>()
-    expectTypeOf(handshake).toMatchTypeOf<{ start: () => Promise<void> }>()
-    expectTypeOf(handshake).toMatchTypeOf<{ on: Function }>()
+    const wata = HostWata.create({ transport: host, schema })
+    expectTypeOf(wata.role).toEqualTypeOf<'host'>()
+    expectTypeOf(wata).toMatchTypeOf<{ start: () => Promise<void> }>()
+    expectTypeOf(wata).toMatchTypeOf<{ on: Function }>()
   })
 })
 
 describe('Consumer.send', () => {
   test('infers the result type from the schema entry', async () => {
     const { consumer } = loopback()
-    const handshake = Handshake.create({ transport: consumer, schema })
+    const wata = Wata.create({ transport: consumer, schema })
 
-    const ping = await handshake.send({ method: 'ping', params: [] })
+    const ping = await wata.send({ method: 'ping', params: [] })
     expectTypeOf(ping.result).toEqualTypeOf<{ ok: true }>()
 
-    const sig = await handshake.send({ method: 'eth_sign', params: ['0x', '0x'] })
+    const sig = await wata.send({ method: 'eth_sign', params: ['0x', '0x'] })
     expectTypeOf(sig.result).toEqualTypeOf<string>()
   })
 
   test('rejects unknown methods at compile time', () => {
     const { consumer } = loopback()
-    const handshake = Handshake.create({ transport: consumer, schema })
+    const wata = Wata.create({ transport: consumer, schema })
     // @ts-expect-error 'nope' is not in the schema
-    handshake.send({ method: 'nope', params: [] })
+    wata.send({ method: 'nope', params: [] })
   })
 
   test('rejects wrong params shape at compile time', () => {
     const { consumer } = loopback()
-    const handshake = Handshake.create({ transport: consumer, schema })
+    const wata = Wata.create({ transport: consumer, schema })
     // @ts-expect-error params must be [number, number]-shaped per schema… or []
-    handshake.send({ method: 'ping', params: ['oops'] })
+    wata.send({ method: 'ping', params: ['oops'] })
   })
 
   test('returns { id, result } shape (preserves JSON-RPC identity)', async () => {
     const { consumer } = loopback()
-    const handshake = Handshake.create({ transport: consumer, schema })
-    const out = await handshake.send({ method: 'ping', params: [] })
+    const wata = Wata.create({ transport: consumer, schema })
+    const out = await wata.send({ method: 'ping', params: [] })
     expectTypeOf(out.id).toEqualTypeOf<Rpc.Id>()
   })
 
   test('falls back to unknown when no schema is supplied', async () => {
     const { consumer } = loopback()
-    const handshake = Handshake.create({ transport: consumer })
-    const out = await handshake.send({ method: 'whatever', params: [] })
+    const wata = Wata.create({ transport: consumer })
+    const out = await wata.send({ method: 'whatever', params: [] })
     expectTypeOf(out.result).toEqualTypeOf<unknown>()
   })
 })
@@ -79,18 +79,18 @@ describe('Consumer.send', () => {
 describe('Consumer.notify', () => {
   test('inherits the same method-name narrowing as send', () => {
     const { consumer } = loopback()
-    const handshake = Handshake.create({ transport: consumer, schema })
-    handshake.notify({ method: 'ping', params: [] })
+    const wata = Wata.create({ transport: consumer, schema })
+    wata.notify({ method: 'ping', params: [] })
     // @ts-expect-error 'nope' is not in the schema
-    handshake.notify({ method: 'nope', params: [] })
+    wata.notify({ method: 'nope', params: [] })
   })
 })
 
 describe('Host events', () => {
   test('`request` is a discriminated union over method (params + respond narrow together)', () => {
     const { host } = loopback()
-    const handshake = HostHandshake.create({ transport: host, schema })
-    handshake.on('request', (event) => {
+    const wata = HostWata.create({ transport: host, schema })
+    wata.on('request', (event) => {
       expectTypeOf(event.method).toEqualTypeOf<'ping' | 'eth_sign'>()
       if (event.method === 'ping') {
         expectTypeOf(event.params).toMatchTypeOf<readonly []>()
@@ -111,8 +111,8 @@ describe('Host events', () => {
 
   test('`notification` payload is narrowed against the schema', () => {
     const { host } = loopback()
-    const handshake = HostHandshake.create({ transport: host, schema })
-    handshake.on('notification', (event) => {
+    const wata = HostWata.create({ transport: host, schema })
+    wata.on('notification', (event) => {
       expectTypeOf(event.method).toEqualTypeOf<'ping' | 'eth_sign'>()
       if (event.method === 'eth_sign')
         expectTypeOf(event.params).toMatchTypeOf<readonly [string, string]>()
@@ -121,45 +121,45 @@ describe('Host events', () => {
 
   test('lifecycle event payloads', () => {
     const { host } = loopback()
-    const handshake = HostHandshake.create({ transport: host, schema })
-    handshake.on('open', (payload) => {
+    const wata = HostWata.create({ transport: host, schema })
+    wata.on('open', (payload) => {
       expectTypeOf(payload).toEqualTypeOf<void>()
     })
-    handshake.on('close', (payload) => {
+    wata.on('close', (payload) => {
       expectTypeOf(payload).toEqualTypeOf<Error | undefined>()
     })
-    handshake.on('error', (payload) => {
+    wata.on('error', (payload) => {
       expectTypeOf(payload).toEqualTypeOf<Error>()
     })
   })
 
   test('rejects unknown event types at compile time', () => {
     const { host } = loopback()
-    const handshake = HostHandshake.create({ transport: host, schema })
+    const wata = HostWata.create({ transport: host, schema })
     // @ts-expect-error 'nope' is not a known event
-    handshake.on('nope', () => {})
+    wata.on('nope', () => {})
   })
 })
 
 describe('Consumer events', () => {
   test('only exposes lifecycle events (no `request` / `notification`)', () => {
     const { consumer } = loopback()
-    const handshake = Handshake.create({ transport: consumer, schema })
-    handshake.on('open', () => {})
-    handshake.on('close', () => {})
-    handshake.on('error', () => {})
+    const wata = Wata.create({ transport: consumer, schema })
+    wata.on('open', () => {})
+    wata.on('close', () => {})
+    wata.on('error', () => {})
     // @ts-expect-error consumers don't receive `request`
-    handshake.on('request', () => {})
+    wata.on('request', () => {})
     // @ts-expect-error consumers don't receive `notification`
-    handshake.on('notification', () => {})
+    wata.on('notification', () => {})
   })
 })
 
 describe('on returns AbortController', () => {
   test('subscription returns an AbortController', () => {
     const { host } = loopback()
-    const handshake = HostHandshake.create({ transport: host, schema })
-    const controller = handshake.on('open', () => {})
+    const wata = HostWata.create({ transport: host, schema })
+    const controller = wata.on('open', () => {})
     expectTypeOf(controller).toEqualTypeOf<AbortController>()
   })
 })

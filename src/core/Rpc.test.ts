@@ -1,5 +1,5 @@
-import { Errors, Rpc } from 'wata'
 import { describe, expect, test } from 'vp/test'
+import { Errors, Rpc } from 'wata'
 
 describe('RpcError', () => {
   test('exposes JSON-RPC code and data', () => {

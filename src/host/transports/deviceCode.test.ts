@@ -1,6 +1,6 @@
 /**
  * End-to-end test for the device-code transport, exercised against the
- * real consumer + host adapters wired together by `Handshake.create`.
+ * real consumer + host adapters wired together by `Wata.create`.
  *
  * The host's HTTP routes are exposed via `transport.fetch` (no real
  * `node:http` server), and the consumer talks to them through a `fetch`
@@ -10,13 +10,13 @@
  * path.
  */
 
-import { Envelope, Handshake, Kv, deviceCode } from 'wata'
+import { describe, expect, test } from 'vp/test'
+import { Envelope, Wata, Kv, deviceCode } from 'wata'
 import {
   DeviceCode as HostDeviceCode,
-  Handshake as HostHandshake,
+  Wata as HostWata,
   deviceCode as hostDeviceCode,
 } from 'wata/host'
-import { describe, expect, test } from 'vp/test'
 
 const grantType = 'urn:ietf:params:oauth:grant-type:device_code'
 
@@ -137,18 +137,18 @@ function pair() {
   return { baseUrl, consumer, host, store, approve, deny }
 }
 
-describe('handshake-device-code', () => {
+describe('wata-device-code', () => {
   test('end-to-end approval delivers the host response', async () => {
     const { consumer, host, approve } = pair()
 
-    const handshake = Handshake.create({ transport: consumer })
-    const hostHandshake = HostHandshake.create({ transport: host })
+    const wata = Wata.create({ transport: consumer })
+    const hostWata = HostWata.create({ transport: host })
 
-    hostHandshake.on('request', (event) => {
+    hostWata.on('request', (event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
-    const sendPromise = handshake.send({ method: 'ping', params: [] })
+    const sendPromise = wata.send({ method: 'ping', params: [] })
     await approve()
     const { result } = await sendPromise
     expect(result).toEqual({ ok: true })
@@ -156,10 +156,10 @@ describe('handshake-device-code', () => {
 
   test('user denial surfaces as `UserRejectedError`', async () => {
     const { consumer, host, deny } = pair()
-    const handshake = Handshake.create({ transport: consumer })
-    HostHandshake.create({ transport: host })
+    const wata = Wata.create({ transport: consumer })
+    HostWata.create({ transport: host })
 
-    const sendPromise = handshake.send({ method: 'ping', params: [] })
+    const sendPromise = wata.send({ method: 'ping', params: [] })
     await deny()
 
     await expect(sendPromise).rejects.toThrowErrorMatchingInlineSnapshot(
@@ -202,20 +202,18 @@ describe('handshake-device-code', () => {
 
   test('post-terminal `send()` rejects with `ClosedError`', async () => {
     const { consumer, host, approve } = pair()
-    const handshake = Handshake.create({ transport: consumer })
-    const hostHandshake = HostHandshake.create({ transport: host })
-    hostHandshake.on('request', (event) => {
+    const wata = Wata.create({ transport: consumer })
+    const hostWata = HostWata.create({ transport: host })
+    hostWata.on('request', (event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
-    const sendPromise = handshake.send({ method: 'ping', params: [] })
+    const sendPromise = wata.send({ method: 'ping', params: [] })
     await approve()
     await sendPromise
 
     await expect(
-      consumer.send(
-        Envelope.rpcRequests([{ jsonrpc: '2.0', id: 2, method: 'ping', params: [] }]),
-      ),
+      consumer.send(Envelope.rpcRequests([{ jsonrpc: '2.0', id: 2, method: 'ping', params: [] }])),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.ClosedError: device-code transport already closed]`,
     )
@@ -223,16 +221,14 @@ describe('handshake-device-code', () => {
 
   test('concurrent `send()` on the same single-exchange transport rejects with `TransportError`', async () => {
     const { consumer, host } = pair()
-    HostHandshake.create({ transport: host })
+    HostWata.create({ transport: host })
 
     await consumer.start()
     const first = consumer.send(
       Envelope.rpcRequests([{ jsonrpc: '2.0', id: 1, method: 'ping', params: [] }]),
     )
     await expect(
-      consumer.send(
-        Envelope.rpcRequests([{ jsonrpc: '2.0', id: 2, method: 'ping', params: [] }]),
-      ),
+      consumer.send(Envelope.rpcRequests([{ jsonrpc: '2.0', id: 2, method: 'ping', params: [] }])),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.TransportError: device-code is single-exchange; a previous send is still in flight]`,
     )
@@ -439,11 +435,9 @@ describe('handshake-device-code', () => {
         return await host.fetch(new Request(url, init))
       },
     })
-    HostHandshake.create({ transport: host })
-    const handshake = Handshake.create({ transport: consumer })
-    const sendPromise = handshake
-      .send({ method: 'ping', params: [] })
-      .catch(() => undefined)
+    HostWata.create({ transport: host })
+    const wata = Wata.create({ transport: consumer })
+    const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
 
     const start = Date.now()
     while (!lastTokenBody) {
@@ -459,89 +453,97 @@ describe('handshake-device-code', () => {
   // 20s timeout: each `slow_down` adds ≥5s sleep per RFC 8628 §3.5.
   // One `slow_down` + one `authorization_pending` + one success ≈ 10s
   // of real-time sleeping; 20s leaves comfortable headroom.
-  test('consumer increases interval and continues after `slow_down`, then succeeds', { timeout: 20_000 }, async () => {
-    // Mock fetch: /register succeeds, /token returns slow_down once,
-    // then authorization_pending, then a real success envelope.
-    let tokenCalls = 0
-    const responsePayload = Envelope.rpcResponses([
-      { jsonrpc: '2.0', id: 1, result: { ok: true } },
-    ])
-    const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 50,
-      fetch: async (input) => {
-        const url = input instanceof Request ? input.url : String(input)
-        if (url.endsWith('/register'))
-          return new Response(
-            JSON.stringify({
-              device_code: 'dc',
-              expires_in: 600,
-              interval: 1,
-              user_code: 'AAAA-BBBB',
-              verification_uri: 'https://example/verify',
-            }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
-          )
-        if (url.endsWith('/token')) {
-          tokenCalls += 1
-          if (tokenCalls === 1)
+  test(
+    'consumer increases interval and continues after `slow_down`, then succeeds',
+    { timeout: 20_000 },
+    async () => {
+      // Mock fetch: /register succeeds, /token returns slow_down once,
+      // then authorization_pending, then a real success envelope.
+      let tokenCalls = 0
+      const responsePayload = Envelope.rpcResponses([
+        { jsonrpc: '2.0', id: 1, result: { ok: true } },
+      ])
+      const consumer = deviceCode({
+        url: 'https://example/auth/device',
+        pollingInterval: 50,
+        fetch: async (input) => {
+          const url = input instanceof Request ? input.url : String(input)
+          if (url.endsWith('/register'))
+            return new Response(
+              JSON.stringify({
+                device_code: 'dc',
+                expires_in: 600,
+                interval: 1,
+                user_code: 'AAAA-BBBB',
+                verification_uri: 'https://example/verify',
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } },
+            )
+          if (url.endsWith('/token')) {
+            tokenCalls += 1
+            if (tokenCalls === 1)
+              return new Response(JSON.stringify({ error: 'slow_down' }), {
+                status: 400,
+                headers: { 'content-type': 'application/json' },
+              })
+            if (tokenCalls === 2)
+              return new Response(JSON.stringify({ error: 'authorization_pending' }), {
+                status: 400,
+                headers: { 'content-type': 'application/json' },
+              })
+            return new Response(JSON.stringify(responsePayload), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            })
+          }
+          throw new Error(`unexpected ${url}`)
+        },
+      })
+      const wata = Wata.create({ transport: consumer })
+      const { result } = await wata.send({ method: 'ping', params: [] })
+      expect(result).toEqual({ ok: true })
+      expect(tokenCalls).toBe(3)
+    },
+  )
+
+  // 25s timeout: 3 `slow_down`s back-to-back sleep ≈ 5s + 10s + 0s
+  // (3rd throws immediately) ≈ 15s of real-time sleeping.
+  test(
+    'consumer terminates with `TransportError` after 3 consecutive `slow_down`s',
+    { timeout: 25_000 },
+    async () => {
+      const consumer = deviceCode({
+        url: 'https://example/auth/device',
+        pollingInterval: 50,
+        fetch: async (input) => {
+          const url = input instanceof Request ? input.url : String(input)
+          if (url.endsWith('/register'))
+            return new Response(
+              JSON.stringify({
+                device_code: 'dc',
+                expires_in: 600,
+                interval: 1,
+                user_code: 'AAAA-BBBB',
+                verification_uri: 'https://example/verify',
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } },
+            )
+          if (url.endsWith('/token'))
             return new Response(JSON.stringify({ error: 'slow_down' }), {
               status: 400,
               headers: { 'content-type': 'application/json' },
             })
-          if (tokenCalls === 2)
-            return new Response(JSON.stringify({ error: 'authorization_pending' }), {
-              status: 400,
-              headers: { 'content-type': 'application/json' },
-            })
-          return new Response(JSON.stringify(responsePayload), {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          })
-        }
-        throw new Error(`unexpected ${url}`)
-      },
-    })
-    const handshake = Handshake.create({ transport: consumer })
-    const { result } = await handshake.send({ method: 'ping', params: [] })
-    expect(result).toEqual({ ok: true })
-    expect(tokenCalls).toBe(3)
-  })
-
-  // 25s timeout: 3 `slow_down`s back-to-back sleep ≈ 5s + 10s + 0s
-  // (3rd throws immediately) ≈ 15s of real-time sleeping.
-  test('consumer terminates with `TransportError` after 3 consecutive `slow_down`s', { timeout: 25_000 }, async () => {
-    const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 50,
-      fetch: async (input) => {
-        const url = input instanceof Request ? input.url : String(input)
-        if (url.endsWith('/register'))
-          return new Response(
-            JSON.stringify({
-              device_code: 'dc',
-              expires_in: 600,
-              interval: 1,
-              user_code: 'AAAA-BBBB',
-              verification_uri: 'https://example/verify',
-            }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
-          )
-        if (url.endsWith('/token'))
-          return new Response(JSON.stringify({ error: 'slow_down' }), {
-            status: 400,
-            headers: { 'content-type': 'application/json' },
-          })
-        throw new Error(`unexpected ${url}`)
-      },
-    })
-    const handshake = Handshake.create({ transport: consumer })
-    await expect(
-      handshake.send({ method: 'ping', params: [] }),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Transport.TransportError: device-code host is signalling indefinite throttling (3 consecutive \`slow_down\` responses)]`,
-    )
-  })
+          throw new Error(`unexpected ${url}`)
+        },
+      })
+      const wata = Wata.create({ transport: consumer })
+      await expect(
+        wata.send({ method: 'ping', params: [] }),
+      ).rejects.toThrowErrorMatchingInlineSnapshot(
+        `[Transport.TransportError: device-code host is signalling indefinite throttling (3 consecutive \`slow_down\` responses)]`,
+      )
+    },
+  )
 
   test('`/register` rejects a missing `code_challenge` with `invalid_request`', async () => {
     const { baseUrl, host } = pair()
@@ -792,9 +794,9 @@ describe('handshake-device-code', () => {
         throw new Error(`unexpected ${url}`)
       },
     })
-    const handshake = Handshake.create({ transport: consumer })
+    const wata = Wata.create({ transport: consumer })
     await expect(
-      handshake.send({ method: 'ping', params: [] }),
+      wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(`[DeviceCode.UserRejectedError: user said no]`)
   })
 
@@ -823,9 +825,9 @@ describe('handshake-device-code', () => {
         throw new Error(`unexpected ${url}`)
       },
     })
-    const handshake = Handshake.create({ transport: consumer })
+    const wata = Wata.create({ transport: consumer })
     await expect(
-      handshake.send({ method: 'ping', params: [] }),
+      wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.ClosedError: device-code expired or not found]`,
     )
@@ -856,9 +858,9 @@ describe('handshake-device-code', () => {
         throw new Error(`unexpected ${url}`)
       },
     })
-    const handshake = Handshake.create({ transport: consumer })
+    const wata = Wata.create({ transport: consumer })
     await expect(
-      handshake.send({ method: 'ping', params: [] }),
+      wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.TransportError: unexpected device-code /token status 418: host bug]`,
     )
@@ -889,10 +891,9 @@ describe('handshake-device-code', () => {
         throw new Error(`unexpected ${url}`)
       },
     })
-    const handshake = Handshake.create({ transport: consumer })
-    await expect(
-      handshake.send({ method: 'ping', params: [] }),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(`
+    const wata = Wata.create({ transport: consumer })
+    await expect(wata.send({ method: 'ping', params: [] })).rejects
+      .toThrowErrorMatchingInlineSnapshot(`
     	[Transport.TransportError: host returned an invalid response envelope: invalid envelope
     	Details: type: Invalid discriminator value. Expected 'encrypted' | 'hello' | 'ready' | 'rpc-requests' | 'rpc-responses']
     `)
@@ -913,9 +914,9 @@ describe('handshake-device-code', () => {
           { status: 200, headers: { 'content-type': 'application/json' } },
         ),
     })
-    const handshake = Handshake.create({ transport: consumer })
+    const wata = Wata.create({ transport: consumer })
     await expect(
-      handshake.send({ method: 'ping', params: [] }),
+      wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.TransportError: host /register response missing \`device_code\`]`,
     )
@@ -931,9 +932,9 @@ describe('handshake-device-code', () => {
           { status: 400, headers: { 'content-type': 'application/json' } },
         ),
     })
-    const handshake = Handshake.create({ transport: consumer })
+    const wata = Wata.create({ transport: consumer })
     await expect(
-      handshake.send({ method: 'ping', params: [] }),
+      wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[ProtocolError: host rejected device-code /register: bad message envelope]`,
     )
@@ -949,9 +950,9 @@ describe('handshake-device-code', () => {
           headers: { 'content-type': 'application/json' },
         }),
     })
-    const handshake = Handshake.create({ transport: consumer })
+    const wata = Wata.create({ transport: consumer })
     await expect(
-      handshake.send({ method: 'ping', params: [] }),
+      wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.TransportError: device-code /register returned status 502: oops]`,
     )
@@ -965,9 +966,9 @@ describe('handshake-device-code', () => {
         throw new Error('network down')
       },
     })
-    const handshake = Handshake.create({ transport: consumer })
+    const wata = Wata.create({ transport: consumer })
     await expect(
-      handshake.send({ method: 'ping', params: [] }),
+      wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.TransportError: device-code register failed: network down]`,
     )
@@ -985,7 +986,9 @@ describe('handshake-device-code', () => {
   })
 
   test('`onPrompt` receives the host-derived prompt fields', async () => {
-    let prompt: Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]> | undefined
+    let prompt:
+      | Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]>
+      | undefined
     const consumer = deviceCode({
       url: 'https://example/auth/device',
       pollingInterval: 5,
@@ -1013,8 +1016,8 @@ describe('handshake-device-code', () => {
         })
       },
     })
-    const handshake = Handshake.create({ transport: consumer })
-    const sendPromise = handshake.send({ method: 'ping', params: [] }).catch(() => undefined)
+    const wata = Wata.create({ transport: consumer })
+    const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
 
     const start = Date.now()
     while (!prompt) {
@@ -1035,7 +1038,9 @@ describe('handshake-device-code', () => {
   })
 
   test('consumer falls back to host-supplied `interval` when `pollingInterval` is omitted', async () => {
-    let prompt: Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]> | undefined
+    let prompt:
+      | Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]>
+      | undefined
     const consumer = deviceCode({
       url: 'https://example/auth/device',
       onPrompt: (received) => {
@@ -1060,8 +1065,8 @@ describe('handshake-device-code', () => {
         })
       },
     })
-    const handshake = Handshake.create({ transport: consumer })
-    const sendPromise = handshake.send({ method: 'ping', params: [] }).catch(() => undefined)
+    const wata = Wata.create({ transport: consumer })
+    const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
     const start = Date.now()
     while (!prompt) {
       if (Date.now() - start > 2000) throw new Error('timed out waiting for onPrompt')
@@ -1075,7 +1080,9 @@ describe('handshake-device-code', () => {
   })
 
   test('consumer defaults to 5000ms polling when host omits `interval` (RFC 8628 §3.5)', async () => {
-    let prompt: Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]> | undefined
+    let prompt:
+      | Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]>
+      | undefined
     const consumer = deviceCode({
       url: 'https://example/auth/device',
       onPrompt: (received) => {
@@ -1100,8 +1107,8 @@ describe('handshake-device-code', () => {
         })
       },
     })
-    const handshake = Handshake.create({ transport: consumer })
-    const sendPromise = handshake.send({ method: 'ping', params: [] }).catch(() => undefined)
+    const wata = Wata.create({ transport: consumer })
+    const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
     const start = Date.now()
     while (!prompt) {
       if (Date.now() - start > 2000) throw new Error('timed out waiting for onPrompt')
@@ -1119,25 +1126,23 @@ describe('handshake-device-code', () => {
     consumer.on('close', (cause) => {
       closed.push(cause)
     })
-    const handshake = Handshake.create({ transport: consumer })
-    const hostHandshake = HostHandshake.create({ transport: host })
-    hostHandshake.on('request', (event) => {
+    const wata = Wata.create({ transport: consumer })
+    const hostWata = HostWata.create({ transport: host })
+    hostWata.on('request', (event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
-    const sendPromise = handshake.send({ method: 'ping', params: [] })
+    const sendPromise = wata.send({ method: 'ping', params: [] })
     await approve()
     await sendPromise
 
     expect(closed.length).toBe(1)
-    // `Handshake.create` may surface `undefined` or `null` depending on
+    // `Wata.create` may surface `undefined` or `null` depending on
     // how the close cause is normalized — both mean "clean close".
     expect(closed[0] ?? undefined).toBeUndefined()
 
     await expect(
-      consumer.send(
-        Envelope.rpcRequests([{ jsonrpc: '2.0', id: 2, method: 'ping', params: [] }]),
-      ),
+      consumer.send(Envelope.rpcRequests([{ jsonrpc: '2.0', id: 2, method: 'ping', params: [] }])),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.ClosedError: device-code transport already closed]`,
     )
@@ -1149,12 +1154,12 @@ describe('handshake-device-code', () => {
     host.on('close', (cause) => {
       closed.push(cause)
     })
-    const handshake = Handshake.create({ transport: consumer })
-    const hostHandshake = HostHandshake.create({ transport: host })
-    hostHandshake.on('request', (event) => {
+    const wata = Wata.create({ transport: consumer })
+    const hostWata = HostWata.create({ transport: host })
+    hostWata.on('request', (event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
-    const sendPromise = handshake.send({ method: 'ping', params: [] })
+    const sendPromise = wata.send({ method: 'ping', params: [] })
     await approve()
     await sendPromise
     expect(closed.length).toBe(1)
@@ -1214,8 +1219,8 @@ describe('handshake-device-code', () => {
         })
       },
     })
-    const handshake = Handshake.create({ transport: consumer })
-    const sendPromise = handshake.send({ method: 'ping', params: [] })
+    const wata = Wata.create({ transport: consumer })
+    const sendPromise = wata.send({ method: 'ping', params: [] })
 
     // Wait until the in-flight token poll has actually been kicked off.
     const start = Date.now()
@@ -1229,7 +1234,7 @@ describe('handshake-device-code', () => {
     // loop unwinds quickly.
     resolveToken!(new Response('', { status: 500 }))
     await expect(sendPromise).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Transport.ClosedError: handshake transport closed]`,
+      `[Transport.ClosedError: wata transport closed]`,
     )
   })
 

@@ -46,10 +46,7 @@ export type Emitter<map extends Record<string, unknown>> = {
     options?: Options,
   ) => void
   /** Remove a previously-subscribed listener (matched by reference). */
-  off: <type extends keyof map & string>(
-    type: type,
-    listener: Listener<map[type]>,
-  ) => void
+  off: <type extends keyof map & string>(type: type, listener: Listener<map[type]>) => void
   /**
    * Emit an event with its payload. Returns `true` if any listeners
    * were invoked, `false` otherwise.
@@ -85,10 +82,7 @@ export function create<map extends Record<string, unknown>>(): Emitter<map> {
   const inner = new RettimeEmitter<{
     [K in keyof map & string]: RettimeTypedEvent<map[K]>
   }>()
-  const wrappers = new WeakMap<
-    Listener<unknown>,
-    (event: RettimeTypedEvent<unknown>) => unknown
-  >()
+  const wrappers = new WeakMap<Listener<unknown>, (event: RettimeTypedEvent<unknown>) => unknown>()
   return {
     on(type, listener, options) {
       const wrapped = (event: RettimeTypedEvent<unknown>) => {

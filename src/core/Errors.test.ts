@@ -1,5 +1,5 @@
-import { Errors } from 'wata'
 import { describe, expect, test } from 'vp/test'
+import { Errors } from 'wata'
 
 describe('BaseError', () => {
   test('renders short message only when no details/metaMessages', () => {

@@ -1,5 +1,5 @@
-import { Errors, Nonce } from 'wata'
 import { describe, expect, test } from 'vp/test'
+import { Errors, Nonce } from 'wata'
 
 describe('fromCounter', () => {
   test('encodes 0 as 12 zero bytes', () => {

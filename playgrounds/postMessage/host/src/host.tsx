@@ -4,19 +4,18 @@
  * Runs on its own dev server (5182) so it lives on a different origin
  * from the consumer (5181) — exercising real cross-origin postMessage
  * behavior. Detects the consumer (iframe parent or popup opener), opens
- * a `Handshake` session, and lets the user manually respond/reject each
+ * a `Wata` session, and lets the user manually respond/reject each
  * inbound request via a text input + buttons. Renders its own log
  * directly in the host window since cross-origin pages can't share a
  * `BroadcastChannel`.
  */
 
-import { Handshake, postMessage } from 'wata/host'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Button, Input, Tag } from 'regen-ui'
+import { Wata, postMessage } from 'wata/host'
 
 import * as Log from './Log.js'
-
 import './styles.css'
 
 const stateIntent = {
@@ -35,7 +34,7 @@ function App() {
   const [pending, setPending] = useState<readonly Pending[]>([])
   const [pongs, setPongs] = useState<Record<string, string>>({})
   const log = Log.useLog()
-  const handshakeRef = useRef<Handshake.Host | undefined>(undefined)
+  const wataRef = useRef<Wata.Host | undefined>(undefined)
   const startedRef = useRef(false)
 
   useEffect(() => {
@@ -48,30 +47,30 @@ function App() {
       return
     }
 
-    const handshake = Handshake.create({
+    const wata = Wata.create({
       transport: postMessage<Window>({
         targetOrigin: peer.origin ?? '*',
         target: () => peer.window,
       }),
     })
-    handshakeRef.current = handshake
+    wataRef.current = wata
 
-    handshake.on('open', () => {
+    wata.on('open', () => {
       setState('open')
       log.push({ intent: 'positive', label: 'open' })
     })
-    handshake.on('close', (cause) => {
+    wata.on('close', (cause) => {
       setState('closed')
       log.push({ intent: 'neutral', label: 'close', detail: cause })
     })
-    handshake.on('error', (error) => {
+    wata.on('error', (error) => {
       setState('error')
       log.push({ intent: 'negative', label: 'error', detail: error })
     })
-    handshake.on('notification', (event) => {
+    wata.on('notification', (event) => {
       log.push({ intent: 'accent', label: 'notification', detail: event.params })
     })
-    handshake.on('request', (event) => {
+    wata.on('request', (event) => {
       log.push({
         intent: 'accent',
         label: 'request',
@@ -84,11 +83,11 @@ function App() {
 
   const respond = useCallback(
     (item: Pending) => {
-      const handshake = handshakeRef.current
-      if (!handshake) return
+      const wata = wataRef.current
+      if (!wata) return
       const message = pongs[String(item.id)] || 'pong from host'
       const result = { message }
-      handshake.respond(item.id, result)
+      wata.respond(item.id, result)
       log.push({
         intent: 'positive',
         label: 'respond',
@@ -107,11 +106,11 @@ function App() {
 
   const reject = useCallback(
     (item: Pending) => {
-      const handshake = handshakeRef.current
-      if (!handshake) return
+      const wata = wataRef.current
+      if (!wata) return
       const message = pongs[String(item.id)] || 'rejected by host'
       const error = { code: -32000, message }
-      handshake.reject(item.id, error)
+      wata.reject(item.id, error)
       log.push({
         intent: 'negative',
         label: 'reject',
@@ -156,9 +155,7 @@ function App() {
                 <Input
                   size="small"
                   value={pongs[key] ?? ''}
-                  onChange={(event) =>
-                    setPongs((prev) => ({ ...prev, [key]: event.target.value }))
-                  }
+                  onChange={(event) => setPongs((prev) => ({ ...prev, [key]: event.target.value }))}
                   placeholder="pong from host"
                 />
                 <Button variant="primary" size="small" onClick={() => respond(item)}>

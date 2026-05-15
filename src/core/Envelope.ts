@@ -16,7 +16,7 @@
  * | `rpc-responses`  | either              | Array of JSON-RPC 2.0 response objects.                 |
  * | `ready`          | either              | `{}` or transport-defined readiness metadata.           |
  * | `encrypted`      | either              | AEAD-sealed envelope `{v, from, nonce, ct}`.            |
- * | `hello`          | host → consumer     | Transport-defined handshake metadata.                   |
+ * | `hello`          | host → consumer     | Transport-defined wata metadata.                   |
  *
  * Encrypted variant wire shape:
  *
@@ -152,16 +152,12 @@ export function rpcResponses(
 }
 
 /** Construct a `ready` envelope (optionally carrying transport-defined metadata). */
-export function ready(
-  payload: Record<string, unknown> = {},
-): Extract<Envelope, { type: 'ready' }> {
+export function ready(payload: Record<string, unknown> = {}): Extract<Envelope, { type: 'ready' }> {
   return { payload, type: 'ready' }
 }
 
 /** Construct a `hello` envelope (host → consumer). */
-export function hello(
-  payload: Record<string, unknown> = {},
-): Extract<Envelope, { type: 'hello' }> {
+export function hello(payload: Record<string, unknown> = {}): Extract<Envelope, { type: 'hello' }> {
   return { payload, type: 'hello' }
 }
 

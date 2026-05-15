@@ -21,7 +21,7 @@
  *
  * @example
  * ```ts
- * import { Handshake, deviceCode } from 'wata'
+ * import { Wata, deviceCode } from 'wata'
  *
  * const transport = deviceCode({
  *   url: 'https://wallet.example/auth/device',
@@ -30,8 +30,8 @@
  *   },
  * })
  *
- * const handshake = Handshake.create({ transport })
- * const { result } = await handshake.send({ method: 'ping', params: [] })
+ * const wata = Wata.create({ transport })
+ * const { result } = await wata.send({ method: 'ping', params: [] })
  * ```
  */
 
@@ -222,7 +222,9 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
           details: readErrorDescription(body),
         })
       if (response.status === 400 && readError(body) === 'access_denied')
-        throw new UserRejectedError(readErrorDescription(body) ?? 'user denied the device-code request')
+        throw new UserRejectedError(
+          readErrorDescription(body) ?? 'user denied the device-code request',
+        )
       if (response.status === 400 && readError(body) === 'expired_token')
         throw new Transport.ClosedError('device-code expired or not found')
       throw new Transport.TransportError(

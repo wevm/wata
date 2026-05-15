@@ -1,5 +1,5 @@
-import { Kdf } from 'wata'
 import { describe, expect, test } from 'vp/test'
+import { Kdf } from 'wata'
 
 // RFC 5869 Appendix A test vectors for HKDF-SHA256.
 // https://datatracker.ietf.org/doc/html/rfc5869#appendix-A

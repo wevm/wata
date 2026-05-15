@@ -1,16 +1,6 @@
-import {
-  Envelope,
-  Handshake,
-  PostMessage,
-  Rpc,
-  Schema,
-  postMessage as postMessage_consumer,
-} from 'wata'
-import {
-  Handshake as HostHandshake,
-  postMessage as postMessage_host,
-} from 'wata/host'
 import { describe, expect, test } from 'vp/test'
+import { Envelope, Wata, PostMessage, Rpc, Schema, postMessage as postMessage_consumer } from 'wata'
+import { Wata as HostWata, postMessage as postMessage_host } from 'wata/host'
 import { z } from 'zod'
 
 import * as protocol from './internal/protocol.js'
@@ -18,17 +8,17 @@ import * as protocol from './internal/protocol.js'
 /**
  * Browser unit tests for the consumer-side `postMessage` transport.
  *
- * These exercise the wire mechanics — ready handshake, origin pinning,
+ * These exercise the wire mechanics — ready wata, origin pinning,
  * buffering, listener cleanup, error mapping — directly against real
  * `MessageChannel` / `postMessage` semantics in Chromium. The end-to-end
- * `Handshake` flow is covered separately in `test/handshake-postMessage.browser.test.ts`.
+ * `Wata` flow is covered separately in `test/wata-postMessage.browser.test.ts`.
  */
 describe('postMessage (consumer)', () => {
   test('round-trips a plain envelope through a MessagePort peer', async () => {
     const { port1, port2 } = new MessageChannel()
     const transport = postMessage_consumer({ target: () => port1 })
 
-    // Stand in for the host: handshake reply (`hostReady`) plus inbound frame.
+    // Stand in for the host: wata reply (`hostReady`) plus inbound frame.
     // Both sides must wrap outbound frames with a v4 UUID `id` per the
     // window transport spec, and validate `id` on inbound frames.
     port2.addEventListener('message', (event) => {
@@ -130,7 +120,7 @@ describe('postMessage (consumer)', () => {
 
     const transport = postMessage_consumer({
       target: () => handle,
-      targetOrigin: 'https://wallet.example',
+      host: 'https://wallet.example',
       source,
     })
     await transport.start()
@@ -242,7 +232,7 @@ describe('postMessage (consumer)', () => {
   test('throws `PopupBlockedError` when `target` returns null', async () => {
     const transport = postMessage_consumer({
       target: () => null as unknown as Window,
-      targetOrigin: 'https://wallet.example',
+      host: 'https://wallet.example',
     })
     await expect(transport.start()).rejects.toBeInstanceOf(PostMessage.PopupBlockedError)
   })
@@ -382,21 +372,21 @@ const integrationSchema = Schema.create({
 
 /**
  * High-level browser integration tests — exercises the full
- * `Handshake` ↔ `postMessage` ↔ `Handshake` pipeline through a real
+ * `Wata` ↔ `postMessage` ↔ `Wata` pipeline through a real
  * `MessageChannel` in Chromium. `MessageChannel` exercises the `MessagePort`
  * code path; cross-`Window` `postMessage` (popup / iframe) is covered by the
  * playground rather than the test suite (popups can't be opened outside a
  * user gesture in headless browsers).
  */
-describe('handshake + postMessage (MessageChannel) integration', () => {
+describe('wata + postMessage (MessageChannel) integration', () => {
   test('round-trips a typed request through real postMessage', async () => {
     const { port1, port2 } = new MessageChannel()
 
-    const consumer = Handshake.create({
+    const consumer = Wata.create({
       transport: postMessage_consumer({ target: () => port1 }),
       schema: integrationSchema,
     })
-    const host = HostHandshake.create({
+    const host = HostWata.create({
       transport: postMessage_host({ target: () => port2 }),
       schema: integrationSchema,
     })
@@ -409,7 +399,7 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
       }
     })
 
-    // Bootstrap consumer + connect host concurrently — readiness handshake
+    // Bootstrap consumer + connect host concurrently — readiness wata
     // races between both sides, so neither order matters.
     await Promise.all([consumer.start(), host.start()])
 
@@ -432,11 +422,11 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
   test('buffers outbound frames sent before the peer is ready', async () => {
     const { port1, port2 } = new MessageChannel()
 
-    const consumer = Handshake.create({
+    const consumer = Wata.create({
       transport: postMessage_consumer({ target: () => port1 }),
       schema: integrationSchema,
     })
-    const host = HostHandshake.create({
+    const host = HostWata.create({
       transport: postMessage_host({ target: () => port2 }),
       schema: integrationSchema,
     })
@@ -466,11 +456,11 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
   test('emits `close` on both sides when consumer closes', async () => {
     const { port1, port2 } = new MessageChannel()
 
-    const consumer = Handshake.create({
+    const consumer = Wata.create({
       transport: postMessage_consumer({ target: () => port1 }),
       schema: integrationSchema,
     })
-    const host = HostHandshake.create({
+    const host = HostWata.create({
       transport: postMessage_host({ target: () => port2 }),
       schema: integrationSchema,
     })
@@ -491,10 +481,10 @@ describe('handshake + postMessage (MessageChannel) integration', () => {
   })
 
   test('rejects target() returning null with PopupBlockedError', async () => {
-    const consumer = Handshake.create({
+    const consumer = Wata.create({
       transport: postMessage_consumer({
         target: () => null as unknown as Window,
-        targetOrigin: 'https://wallet.example',
+        host: 'https://wallet.example',
       }),
     })
 

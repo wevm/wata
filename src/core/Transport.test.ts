@@ -1,5 +1,5 @@
-import { Errors, Transport } from 'wata'
 import { describe, expect, test } from 'vp/test'
+import { Errors, Transport } from 'wata'
 
 describe('TransportError', () => {
   test('has the Transport.TransportError name and inherits BaseError', () => {
