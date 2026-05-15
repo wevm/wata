@@ -31,23 +31,29 @@ Same-device browser session over a `Window`, `WindowProxy`, or `MessagePort`. Th
 
 #### Consumer
 
+Opens a popup at the host URL and sends a `wallet_connect` request once the handshake completes.
+
 ```ts
 import { Wata, postMessage } from 'wata'
 
 const wata = Wata.create({
   transport: postMessage({
     host: 'https://wallet.example',
-    target: ({ host }) => window.open(host, '_blank', 'popup=1'),
+    target(c) {
+      return window.open(c.host, '_blank', 'popup=1')
+    },
   }),
 })
 
 const { result } = await wata.send({
-  method: 'wallet_getAccounts',
+  method: 'wallet_connect',
   params: [],
 })
 ```
 
 #### Host
+
+Listens on its opener for incoming requests and responds to `wallet_connect` with a list of addresses.
 
 ```ts
 import { Wata, postMessage } from 'wata/host'
@@ -57,7 +63,7 @@ const wata = Wata.create({
 })
 
 wata.on('request', (c) => {
-  if (c.method === 'wallet_getAccounts') c.respond(['0xabc…'])
+  if (c.method === 'wallet_connect') c.respond(['0xabc…'])
 })
 ```
 
@@ -69,25 +75,29 @@ Cross-device session over HTTP using the OAuth 2.0 Device Authorization Grant (R
 
 #### Consumer
 
+Requests a device code from the host, prints the verification URL and `user_code` for the user, then polls until approval and dispatches a `wallet_connect` request.
+
 ```ts
 import { Wata, deviceCode } from 'wata'
 
 const wata = Wata.create({
   transport: deviceCode({
     url: 'https://wallet.example/auth/device',
-    onPrompt: ({ userCode, verificationUri }) => {
-      console.log(`Visit ${verificationUri} and enter ${userCode}`)
+    onPrompt(c) {
+      console.log(`Visit ${c.verificationUri} and enter ${c.userCode}`)
     },
   }),
 })
 
 const { result } = await wata.send({
-  method: 'wallet_signMessage',
-  params: ['hello'],
+  method: 'wallet_connect',
+  params: [],
 })
 ```
 
 #### Host
+
+Mounts the device-code endpoints under `/auth/device`, renders a minimal approval form, marks the request as approved on submit, and answers `wallet_connect` requests.
 
 ```ts
 import { createServer } from 'node:http'
@@ -97,15 +107,16 @@ const wata = Wata.create({
   transport: deviceCode({
     baseUrl: 'https://wallet.example',
     html: {
-      render: ({ userCode }) =>
-        new Response(
-          `<form method="post"><input name="user_code" value="${userCode ?? ''}" /><button>Approve</button></form>`,
-          { headers: { 'content-type': 'text/html' } },
-        ),
-      authenticate: async ({ request, actions }) => {
-        const body = await request.formData()
-        await actions.approve(String(body.get('user_code')))
+      async authenticate(c) {
+        const body = await c.request.formData()
+        await c.actions.approve(String(body.get('user_code')))
         return new Response('approved')
+      },
+      render(c) {
+        return new Response(
+          `<form method="post"><input name="user_code" value="${c.userCode ?? ''}" /><button>Approve</button></form>`,
+          { headers: { 'content-type': 'text/html' } },
+        )
       },
     },
     path: '/auth/device',
@@ -114,7 +125,7 @@ const wata = Wata.create({
 })
 
 wata.on('request', (c) => {
-  if (c.method === 'wallet_signMessage') c.respond('0xdeadbeef')
+  if (c.method === 'wallet_connect') c.respond(['0xabc…'])
 })
 
 createServer(wata.listener).listen(3000)
