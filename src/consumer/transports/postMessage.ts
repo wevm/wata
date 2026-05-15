@@ -4,34 +4,39 @@
  *
  * The transport never opens popups or iframes itself. Instead the caller
  * passes a `target` callback that returns a handle on demand. The library
- * owns the **wire** (origin pinning, ready handshake, listener cleanup,
+ * owns the **wire** (origin pinning, ready wata, listener cleanup,
  * closed detection); the caller owns the **mount** (popup vs iframe vs
  * channel vs opener-supplied window).
  *
+ * For `Window` / `WindowProxy` targets, the caller passes the `host`
+ * (URL or origin) the consumer is connecting to. The transport derives
+ * `postMessage`'s `targetOrigin` from it and forwards the `host` value
+ * back to the `target` callback so the same string drives both.
+ *
  * @example popup
  * ```ts
- * import { Handshake, postMessage } from 'wata'
+ * import { Wata, postMessage } from 'wata'
  *
- * const handshake = Handshake.create({
+ * const wata = Wata.create({
  *   transport: postMessage({
-  *     target: () => window.open('https://wallet.example/auth', '_blank', 'popup=1'),
- *     targetOrigin: 'https://wallet.example',
+ *     host: 'https://wallet.example',
+ *     target: ({ host }) => window.open(host, '_blank', 'popup=1'),
  *   }),
  * })
- * await handshake.start()
+ * await wata.start()
  * ```
  *
  * @example iframe
  * ```ts
  * const transport = postMessage({
-  *   target: () => {
+ *   host: 'https://wallet.example/auth',
+ *   target: ({ host }) => {
  *     const iframe = document.createElement('iframe')
- *     iframe.src = 'https://wallet.example/auth'
+ *     iframe.src = host
  *     iframe.hidden = true
  *     document.body.appendChild(iframe)
  *     return iframe.contentWindow!
  *   },
- *   targetOrigin: 'https://wallet.example',
  *   close: (handle) => (handle as Window).frameElement?.remove(),
  * })
  * ```
@@ -39,7 +44,7 @@
  * @example MessageChannel
  * ```ts
  * const transport = postMessage({
-  *   target: () => {
+ *   target: () => {
  *     const { port1, port2 } = new MessageChannel()
  *     sendPortSomehow(port2)
  *     return port1
@@ -58,52 +63,42 @@ import * as protocol from './internal/protocol.js'
 export type Target = Window | MessagePort
 
 /**
- * Common options shared between every {@link postMessage} call shape.
+ * Options accepted by {@link postMessage}.
  *
- * @internal — exported only so the host transport can re-export {@link Options}.
+ * `host` is the URL or origin the consumer is connecting to. The
+ * transport derives `postMessage`'s `targetOrigin` from it and forwards
+ * the value to `target` so the same string drives both the popup /
+ * iframe URL and the origin pin. Required for `Window` / `WindowProxy`
+ * targets at runtime; `MessagePort` targets ignore it (channels don't
+ * carry origin information).
  */
-export type CommonOptions<target extends Target> = {
+export type Options<target extends Target> = {
   /**
    * Optional cleanup. Called from `close()` after the transport
    * unsubscribes its `message` listener. Defaults to `handle.close?.()`.
    */
   close?: ((handle: target) => void | Promise<void>) | undefined
   /**
+   * URL or origin of the host the consumer is connecting to. Drives
+   * `postMessage`'s `targetOrigin` (inbound events whose `origin`
+   * doesn't match are rejected) and is forwarded to `target` so the
+   * same string opens the popup / iframe. Required for `Window` /
+   * `WindowProxy` targets; optional and unused for `MessagePort`.
+   */
+  host?: string | undefined
+  /**
    * `Window` / `WindowProxy` realm where inbound `message` events are
    * received. Defaults to the global `window`.
    */
   source?: WindowLike | undefined
   /**
-   * Called lazily on `start()` to acquire the postMessage target — the
-   * `Window` / `MessagePort` the transport will postMessage to. Lazy so
-   * popup-blocker-sensitive callers can wire `start()` to a user-gesture
-   * handler (button click). On the host side this typically just returns
-   * `window.opener` / `window.parent`; on the consumer it usually opens
-   * a popup or iframe.
+   * Called lazily on `start()` to acquire the postMessage target.
+   * Lazy so popup-blocker-sensitive callers can wire `start()` to a
+   * user-gesture handler (button click). Receives the caller's `host`
+   * value (or `undefined` for `MessagePort` targets that omitted it).
    */
-  target: () => target | Promise<target>
+  target: (parameters: { host: string | undefined }) => target | Promise<target>
 }
-
-/**
- * Options accepted by {@link postMessage}.
- *
- * `targetOrigin` is **required** when the handle is a `Window` /
- * `WindowProxy`, and optional for `MessagePort` (channels don't carry
- * origin information).
- */
-export type Options<target extends Target> = target extends MessagePort
-  ? CommonOptions<target> & {
-      /** `MessagePort` targets don't carry origin — this field is unused. */
-      targetOrigin?: string | undefined
-    }
-  : CommonOptions<target> & {
-      /**
-       * Required for `Window` / `WindowProxy` targets — `postMessage`'s
-       * `targetOrigin`. Inbound events whose `origin` doesn't match are
-       * rejected.
-       */
-      targetOrigin: string
-    }
 
 /** Minimal `Window`-shaped contract used internally. */
 export type WindowLike = {
@@ -121,31 +116,53 @@ export type WindowLike = {
  * import { postMessage } from 'wata'
  *
  * const transport = postMessage({
-  *   target: () => window.open('https://wallet.example', '_blank', 'popup=1'),
- *   targetOrigin: 'https://wallet.example',
+ *   host: 'https://wallet.example',
+ *   target: ({ host }) => window.open(host, '_blank', 'popup=1'),
  * })
  * ```
  */
 export function postMessage<const target extends Target>(
   options: Options<target>,
 ): Transport.Transport<'consumer'> {
-  return createSide({
-    handshake: { expect: protocol.hostReady.type, send: protocol.consumerHello },
-    options,
+  const { close, host, source, target: acquire } = options
+  const targetOrigin = host ? originFrom(host) : undefined
+  return createSide<'consumer', target>({
+    wata: { expect: protocol.hostReady.type, send: protocol.consumerHello },
+    options: {
+      close,
+      source,
+      target: () => acquire({ host }),
+      targetOrigin,
+    },
     role: 'consumer',
   })
 }
 
 /**
+ * Derive the `postMessage` `targetOrigin` value (an origin string) from
+ * a caller-supplied `host` (either a full URL or an origin). Throws an
+ * {@link InvalidHostError} if the value can't be parsed as a URL.
+ *
+ * @internal
+ */
+function originFrom(host: string): string {
+  try {
+    return new URL(host).origin
+  } catch {
+    throw new InvalidHostError(`\`host\` must be a valid URL or origin (received \`${host}\`)`)
+  }
+}
+
+/**
  * Internal helper — both consumer and host sides share the wire mechanics
- * (ready handshake, origin pinning, listener cleanup, closed detection),
+ * (ready wata, origin pinning, listener cleanup, closed detection),
  * so the actual transport object is built here. The host re-exports the
  * same routine via `wata/host`.
  */
 export function createSide<role extends 'consumer' | 'host', target extends Target>(
   parameters: createSide.Options<role, target>,
 ): Transport.Transport<role> {
-  const { role, handshake, options } = parameters
+  const { role, wata, options } = parameters
   const source = options.source ?? (globalThis as { window?: WindowLike }).window
 
   const emitter = Events.create<Transport.EventMap>()
@@ -239,20 +256,18 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     // carry a top-level v4 UUID `id`. Frames missing or malforming `id`
     // are a protocol violation; we surface them as `error` and drop the
     // frame (no JSON-RPC response — the peer might be a stale tab still
-    // emitting non-spec frames, and the handshake-level mode discipline
+    // emitting non-spec frames, and the wata-level mode discipline
     // gate covers the keyed-phase tear-down case).
     const inbound = protocol.readFrame(data)
     if (!inbound) {
       emitError(
-        new InvalidFrameError(
-          'inbound postMessage frame is missing or has malformed v4 UUID `id`',
-        ),
+        new InvalidFrameError('inbound postMessage frame is missing or has malformed v4 UUID `id`'),
       )
       return
     }
     const { frame } = inbound
     if (protocol.isControlFrame(frame)) {
-      if (frame.type === handshake.expect) markReady()
+      if (frame.type === wata.expect) markReady()
       return
     }
     let envelope: Envelope.Envelope
@@ -315,7 +330,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
         attachClosedPoll()
         // Send our hello after the listener is attached so the peer's reply
         // is never missed.
-        postRaw(handshake.send)
+        postRaw(wata.send)
       } finally {
         startPromise = undefined
       }
@@ -357,15 +372,29 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
   }
 }
 
-type PostMessageOptions<target extends Target> = Options<target>
+/**
+ * Internal options shape consumed by {@link createSide}. The public
+ * consumer / host {@link Options} shapes are normalized into this form
+ * before being handed off — `targetOrigin` is derived from the caller's
+ * `host` (consumer) or defaulted to `'*'` (host), and `target` is bound
+ * to a parameterless callback.
+ *
+ * @internal
+ */
+export type InternalOptions<target extends Target> = {
+  close?: ((handle: target) => void | Promise<void>) | undefined
+  source?: WindowLike | undefined
+  target: () => target | Promise<target>
+  targetOrigin: string | undefined
+}
 
 export declare namespace createSide {
   /** Parameters for {@link createSide}. */
   type Options<role extends 'consumer' | 'host', target extends Target> = {
     /** Outbound control frame and the inbound frame type to wait for. */
-    handshake: { expect: protocol.WireFrame['type']; send: protocol.WireFrame }
-    /** Caller-supplied options for the underlying `postMessage` transport. */
-    options: PostMessageOptions<target>
+    wata: { expect: protocol.WireFrame['type']; send: protocol.WireFrame }
+    /** Normalized options for the underlying `postMessage` transport. */
+    options: InternalOptions<target>
     /** Side of the protocol this transport speaks for. */
     role: role
   }
@@ -408,10 +437,22 @@ export class InvalidTargetError<
  * frame is missing the spec-mandated top-level `{ id: <uuid v4> }`, or
  * the value is not a syntactically valid v4 UUID. The frame is dropped
  * — non-conforming peers (or stale tabs) shouldn't be able to inject
- * envelopes into the handshake by accident.
+ * envelopes into the wata by accident.
  */
 export class InvalidFrameError<
   cause extends Error | undefined = Error | undefined,
 > extends Errors.ProtocolError<cause> {
   override name = 'PostMessage.InvalidFrameError'
+}
+
+/**
+ * Thrown when the caller's `host` option is not a valid URL or origin.
+ * The transport derives `postMessage`'s `targetOrigin` from `host` via
+ * `new URL(host).origin`, so unparseable values are rejected at start
+ * time rather than silently broadcasting to `'*'`.
+ */
+export class InvalidHostError<
+  cause extends Error | undefined = Error | undefined,
+> extends Errors.ProtocolError<cause> {
+  override name = 'PostMessage.InvalidHostError'
 }

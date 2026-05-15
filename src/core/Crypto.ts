@@ -95,9 +95,7 @@ export function randomKeypair(): Keypair {
  * const self = Crypto.toX25519({ publicKey: '0x...', privateKey: '0x...' })
  * ```
  */
-export function toX25519(
-  options: toX25519.Options & { privateKey: Hex.Hex },
-): X25519Keypair
+export function toX25519(options: toX25519.Options & { privateKey: Hex.Hex }): X25519Keypair
 export function toX25519(options: toX25519.Options): { publicKey: Hex.Hex }
 export function toX25519(options: toX25519.Options): {
   privateKey?: Hex.Hex

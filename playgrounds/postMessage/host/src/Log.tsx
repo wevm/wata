@@ -3,8 +3,8 @@
  * pages. Compact: one row per entry, time + tag + inline detail preview.
  */
 
-import { Tag } from 'regen-ui'
 import { useCallback, useState } from 'react'
+import { Tag } from 'regen-ui'
 
 /** Color intent for a log entry (maps directly to `Tag` intents). */
 export type Intent = 'accent' | 'info' | 'negative' | 'neutral' | 'positive' | 'warning'

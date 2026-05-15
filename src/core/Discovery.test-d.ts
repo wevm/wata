@@ -1,6 +1,6 @@
-import { Discovery } from 'wata'
 import type { Hex } from 'ox'
 import { describe, expectTypeOf, test } from 'vp/test'
+import { Discovery } from 'wata'
 import type { z } from 'zod'
 
 describe('schema.hexPubkey', () => {

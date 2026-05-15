@@ -1,6 +1,6 @@
-import { Crypto, Errors, Kdf, Session } from 'wata'
 import { Bytes, Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
+import { Crypto, Errors, Kdf, Session } from 'wata'
 
 describe('shared', () => {
   test('two peers compute the same secret (X25519 ECDH)', () => {

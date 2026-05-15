@@ -1,5 +1,5 @@
-import { Aad, Errors } from 'wata'
 import { describe, expect, test } from 'vp/test'
+import { Aad, Errors } from 'wata'
 
 const publicKey = '0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff' as const
 
@@ -71,10 +71,7 @@ describe('decode', () => {
 
   test('rejects a wrong AAD version prefix', () => {
     // Mutate the first prefix byte (`u` → `U`).
-    const aad = ('0x55' +
-      '7270632f7631' +
-      publicKey.slice(2) +
-      '01') as `0x${string}`
+    const aad = ('0x55' + '7270632f7631' + publicKey.slice(2) + '01') as `0x${string}`
     expect(() => Aad.decode(aad)).toThrowErrorMatchingInlineSnapshot(
       `
       [ProtocolError: aad version prefix mismatch
@@ -84,9 +81,7 @@ describe('decode', () => {
   })
 
   test('rejects an invalid role byte', () => {
-    const aad = ('0x757270632f7631' +
-      publicKey.slice(2) +
-      '03') as `0x${string}`
+    const aad = ('0x757270632f7631' + publicKey.slice(2) + '03') as `0x${string}`
     expect(() => Aad.decode(aad)).toThrowError(Errors.ProtocolError)
   })
 })

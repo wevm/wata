@@ -1,5 +1,5 @@
-import { Discovery, Errors } from 'wata'
 import { describe, expect, test, vi } from 'vp/test'
+import { Discovery, Errors } from 'wata'
 
 const validHostJson = {
   version: '1.0' as const,

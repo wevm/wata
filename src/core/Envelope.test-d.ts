@@ -1,5 +1,5 @@
-import { Envelope, Rpc } from 'wata'
 import { describe, expectTypeOf, test } from 'vp/test'
+import { Envelope, Rpc } from 'wata'
 
 describe('rpcRequests', () => {
   test('returns the `rpc-requests` variant', () => {

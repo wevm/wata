@@ -1,21 +1,13 @@
-import {
-  Envelope,
-  Handshake,
-  Rpc,
-  postMessage as postMessage_consumer,
-} from 'wata'
-import {
-  Handshake as HostHandshake,
-  postMessage,
-} from 'wata/host'
 import { describe, expect, test } from 'vp/test'
+import { Envelope, Wata, Rpc, postMessage as postMessage_consumer } from 'wata'
+import { Wata as HostWata, postMessage } from 'wata/host'
 
 import * as protocol from '../../consumer/transports/internal/protocol.js'
 
 /**
  * Browser unit tests for the host-side `postMessage` transport. The host is
  * a thin wrapper around the same `createSide` helper as the consumer — these
- * tests cover the host-specific bits (role + inverted handshake direction).
+ * tests cover the host-specific bits (role + inverted wata direction).
  */
 describe('postMessage (host)', () => {
   test('emits `urpc.ready` on start and waits for the consumer hello', async () => {
@@ -103,20 +95,20 @@ describe('postMessage (host)', () => {
 })
 
 /**
- * End-to-end coverage for the host-side `Handshake.respond` / `Handshake.reject`
+ * End-to-end coverage for the host-side `Wata.respond` / `Wata.reject`
  * API over real `postMessage` (`MessageChannel` peers). Mirrors
- * `src/Handshake.test.ts` but on the wire, and exercises the
+ * `src/Wata.test.ts` but on the wire, and exercises the
  * "no listener at all → method not found" fallthrough too.
  */
-describe('Handshake.respond / Handshake.reject (postMessage)', () => {
+describe('Wata.respond / Wata.reject (postMessage)', () => {
   function pair() {
     const { port1, port2 } = new MessageChannel()
-    const consumer = Handshake.create({ transport: postMessage_consumer({ target: () => port1 }) })
-    const host = HostHandshake.create({ transport: postMessage({ target: () => port2 }) })
+    const consumer = Wata.create({ transport: postMessage_consumer({ target: () => port1 }) })
+    const host = HostWata.create({ transport: postMessage({ target: () => port2 }) })
     return { consumer, host }
   }
 
-  test('handshake.respond settles a pending request by id (lazy connect)', async () => {
+  test('wata.respond settles a pending request by id (lazy connect)', async () => {
     // Both sides skip the explicit `start()` — `on(...)`
     // and `send(...)` should self-start the transports.
     const { consumer, host } = pair()
@@ -140,7 +132,7 @@ describe('Handshake.respond / Handshake.reject (postMessage)', () => {
     await consumer.close()
   })
 
-  test('handshake.reject sends a JSON-RPC error response by id', async () => {
+  test('wata.reject sends a JSON-RPC error response by id', async () => {
     const { consumer, host } = pair()
     await Promise.all([consumer.start(), host.start()])
 

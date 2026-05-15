@@ -1,9 +1,9 @@
 /**
  * Method-registry schema used to type and validate the JSON-RPC traffic
- * carried by a `Handshake`.
+ * carried by a `Wata`.
  *
  * A schema is a map from method name → `{ params, result }` Zod schemas.
- * `Handshake.create({ schema })` flows these schemas through generics so
+ * `Wata.create({ schema })` flows these schemas through generics so
  * `send`, `notify`, `onRequest`, etc. all infer the right `params` and
  * `result` shape from a literal method name.
  *
@@ -13,7 +13,7 @@
  *
  * v1 is Zod-only on purpose (see the plan's "Why Zod-only" rationale); the
  * indirection exists so we can swap the dialect without touching every
- * `Handshake` callsite.
+ * `Wata` callsite.
  */
 
 import { z } from 'zod'
@@ -62,7 +62,7 @@ export type Schema<methods extends Record<string, Method> = Record<string, Metho
 /**
  * Create a method-registry schema. The `const` generic on `methods`
  * preserves the literal method-name keys so consumers see the right
- * narrowed type when they call `handshake.send({ method: 'ping', ... })`.
+ * narrowed type when they call `wata.send({ method: 'ping', ... })`.
  *
  * @example
  * ```ts

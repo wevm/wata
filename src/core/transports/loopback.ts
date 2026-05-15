@@ -8,8 +8,8 @@
  *   message/close/error subscriptions) without spinning up a network,
  * - it accepts and emits Envelope frames just like a real transport, so
  *   the encryption + JSON-RPC layers can be exercised end-to-end against
- *   it without a `Handshake` instance (Phase 0 exit criteria),
- * - and once `Handshake.create` lands in Phase 1, the same loopback pair
+ *   it without a `Wata` instance (Phase 0 exit criteria),
+ * - and once `Wata.create` lands in Phase 1, the same loopback pair
  *   becomes the substrate for high-level integration tests.
  *
  * @example

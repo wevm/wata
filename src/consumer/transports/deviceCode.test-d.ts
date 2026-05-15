@@ -1,5 +1,5 @@
-import { Handshake, Transport, deviceCode } from 'wata'
 import { describe, expectTypeOf, test } from 'vp/test'
+import { Wata, Transport, deviceCode } from 'wata'
 
 describe('deviceCode (consumer)', () => {
   test('returns a single-exchange consumer-role transport', () => {
@@ -11,11 +11,11 @@ describe('deviceCode (consumer)', () => {
     expectTypeOf(transport).toMatchTypeOf<Transport.Transport<'consumer'>>()
   })
 
-  test('feeds Handshake.create as a consumer transport', () => {
+  test('feeds Wata.create as a consumer transport', () => {
     const transport = deviceCode({
       url: 'https://wallet.example/auth/device',
     })
-    const handshake = Handshake.create({ transport })
-    expectTypeOf(handshake.role).toEqualTypeOf<'consumer'>()
+    const wata = Wata.create({ transport })
+    expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
   })
 })

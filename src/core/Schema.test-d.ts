@@ -1,5 +1,5 @@
-import { Schema } from 'wata'
 import { describe, expectTypeOf, test } from 'vp/test'
+import { Schema } from 'wata'
 import { z } from 'zod'
 
 const schema = Schema.create({

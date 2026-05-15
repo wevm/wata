@@ -9,7 +9,7 @@
  * - provides {@link parse} that validates an inbound JSON value and narrows
  *   it to the correct shape,
  * - is fully generic on `method`, `params`, and `result`, so {@link Schema}
- *   can flow inferred types through to `Handshake.send` and friends.
+ *   can flow inferred types through to `Wata.send` and friends.
  */
 
 import { z } from 'zod'

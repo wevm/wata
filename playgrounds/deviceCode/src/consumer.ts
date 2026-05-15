@@ -13,7 +13,7 @@
  */
 
 import * as Clack from '@clack/prompts'
-import { Handshake, deviceCode } from 'wata'
+import { Wata, deviceCode } from 'wata'
 
 const baseUrl = process.env['BASE_URL'] ?? 'http://localhost:4747'
 
@@ -31,7 +31,7 @@ if (Clack.isCancel(method)) {
   process.exit(0)
 }
 
-const handshake = Handshake.create({
+const wata = Wata.create({
   transport: deviceCode({
     onPrompt({ userCode, verificationUri, verificationUriFull }) {
       Clack.note(
@@ -51,7 +51,7 @@ const spinner = Clack.spinner()
 spinner.start('waiting for approval...')
 
 try {
-  const response = await handshake.send({ method: method as string, params: params as never })
+  const response = await wata.send({ method: method as string, params: params as never })
   spinner.stop('approved')
   Clack.outro(`response: ${JSON.stringify(response.result)}`)
 } catch (cause) {

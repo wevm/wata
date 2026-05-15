@@ -10,14 +10,13 @@
  * own log, so the consumer only shows its own log here.
  */
 
-import { Handshake, PostMessage, postMessage } from 'wata'
 import { useCallback, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Button, Input, Tag } from 'regen-ui'
+import { Wata, PostMessage, postMessage } from 'wata'
 
 import * as Log from './Log.js'
 import { Window } from './Window.js'
-
 import './styles.css'
 
 const hostOrigin = 'http://localhost:5182'
@@ -38,21 +37,26 @@ function App() {
   const [state, setState] = useState<State>('idle')
   const [message, setMessage] = useState('')
   const log = Log.useLog()
-  const handshakeRef = useRef<Handshake.Consumer | undefined>(undefined)
+  const wataRef = useRef<Wata.Consumer | undefined>(undefined)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const hostChromeRef = useRef<HTMLDivElement | null>(null)
 
-  const ensureHandshake = useCallback(() => {
-    if (handshakeRef.current) return handshakeRef.current
+  const ensureWata = useCallback(() => {
+    if (wataRef.current) return wataRef.current
 
     let cleanup = () => {}
-    const handshake = Handshake.create({
+    const wata = Wata.create({
       transport: postMessage<Window>({
-        targetOrigin: hostOrigin,
-        target: () => {
-          const url = new URL(hostOrigin)
+        host: hostOrigin,
+        target: ({ host }) => {
+          if (!host) throw new Error('host is required')
+          const url = new URL(host)
           if (mount === 'popup') {
-            const popup = window.open(url.toString(), 'wata-host', popupFeatures(hostChromeRef.current))
+            const popup = window.open(
+              url.toString(),
+              'wata-host',
+              popupFeatures(hostChromeRef.current),
+            )
             if (!popup) throw new PostMessage.PopupBlockedError('window.open returned null')
             cleanup = () => popup.close()
             return popup
@@ -80,39 +84,39 @@ function App() {
         },
       }),
     })
-    handshake.on('open', () => {
+    wata.on('open', () => {
       setState('open')
       log.push({ intent: 'positive', label: 'open' })
     })
-    handshake.on('close', (cause) => {
+    wata.on('close', (cause) => {
       setState('closed')
-      handshakeRef.current = undefined
+      wataRef.current = undefined
       log.push({ intent: 'neutral', label: 'close', detail: cause })
     })
-    handshake.on('error', (error) => {
+    wata.on('error', (error) => {
       setState('error')
       log.push({ intent: 'negative', label: 'error', detail: error })
     })
 
-    handshakeRef.current = handshake
-    return handshake
+    wataRef.current = wata
+    return wata
   }, [log, mount])
 
   const setup = useCallback(async () => {
     log.push({ intent: 'accent', label: 'setup' })
     try {
-      await ensureHandshake().start()
+      await ensureWata().start()
     } catch (error) {
       log.push({ intent: 'negative', label: 'setup threw', detail: error })
     }
-  }, [ensureHandshake, log])
+  }, [ensureWata, log])
 
   const send = useCallback(async () => {
     const id = nextRequestId()
     const params = [{ message: message || 'hello from consumer' }]
     log.push({ intent: 'accent', label: 'send', requestId: id, detail: params })
     try {
-      const response = await ensureHandshake().send({ id, method: 'ping', params })
+      const response = await ensureWata().send({ id, method: 'ping', params })
       log.push({
         intent: 'positive',
         label: 'result',
@@ -122,7 +126,7 @@ function App() {
     } catch (error) {
       log.push({ intent: 'negative', label: 'send threw', requestId: id, detail: error })
     }
-  }, [ensureHandshake, log, message])
+  }, [ensureWata, log, message])
 
   return (
     <div className="flex flex-col bg-background">
@@ -189,11 +193,7 @@ function App() {
           )}
           <div className="flex-1 min-h-0">
             {mount === 'iframe' ? (
-              <iframe
-                ref={iframeRef}
-                title="wata-host"
-                className="block h-full w-full border-0"
-              />
+              <iframe ref={iframeRef} title="wata-host" className="block h-full w-full border-0" />
             ) : (
               <p className="m-auto copy-13 text-foreground-tertiary">
                 host opens in a popup over this chrome

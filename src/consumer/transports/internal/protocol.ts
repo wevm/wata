@@ -41,8 +41,7 @@ export function isControlFrame(value: unknown): value is WireFrame {
  * RFC 4122 v4 UUID — 8-4-4-4-12 hex with the version + variant bits set.
  * Validation pattern matches the uRPC window-transport spec requirement.
  */
-const uuidV4Pattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 /** True when `value` matches the RFC 4122 v4 UUID shape. */
 export function isUuidV4(value: unknown): value is string {
@@ -117,10 +116,7 @@ export function isPortLike(value: unknown): value is MessagePort {
   }
   if (typeof candidate.postMessage !== 'function') return false
   try {
-    return (
-      typeof candidate.start === 'function' &&
-      typeof candidate.addEventListener === 'function'
-    )
+    return typeof candidate.start === 'function' && typeof candidate.addEventListener === 'function'
   } catch {
     // Cross-origin `WindowProxy` throws when reading non-whitelisted
     // properties — definitely not a `MessagePort`.

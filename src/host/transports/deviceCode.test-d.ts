@@ -1,5 +1,5 @@
-import { DeviceCode, Handshake, Kv, Transport, deviceCode } from 'wata/host'
 import { describe, expectTypeOf, test } from 'vp/test'
+import { DeviceCode, Wata, Kv, Transport, deviceCode } from 'wata/host'
 
 describe('deviceCode (host)', () => {
   test('returns a single-exchange host-role transport with `.fetch` + `.listener`', () => {
@@ -20,7 +20,7 @@ describe('deviceCode (host)', () => {
     expectTypeOf(transport.listener).toBeFunction()
   })
 
-  test('feeds Handshake.create as a host transport', () => {
+  test('feeds Wata.create as a host transport', () => {
     const store = Kv.memory()
     const transport = deviceCode({
       store,
@@ -31,8 +31,8 @@ describe('deviceCode (host)', () => {
         authenticate: () => new Response('ok'),
       },
     })
-    const handshake = Handshake.create({ transport })
-    expectTypeOf(handshake.role).toEqualTypeOf<'host'>()
+    const wata = Wata.create({ transport })
+    expectTypeOf(wata.role).toEqualTypeOf<'host'>()
   })
 
   test('html.render receives `userCode`, `record`, and `request`', () => {

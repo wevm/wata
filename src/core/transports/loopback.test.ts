@@ -1,7 +1,7 @@
-import { Aad, Aead, Envelope, Handshake, Nonce, Rpc, Schema, Transport } from 'wata'
-import { Handshake as HostHandshake } from 'wata/host'
 import type { Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
+import { Aad, Aead, Envelope, Wata, Nonce, Rpc, Schema, Transport } from 'wata'
+import { Wata as HostWata } from 'wata/host'
 import { z } from 'zod'
 
 import * as Loopback from './loopback.js'
@@ -18,9 +18,7 @@ describe('loopback', () => {
     const received: Envelope.Envelope[] = []
     host.on('message', (envelope) => received.push(envelope))
 
-    await consumer.send(
-      Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
-    )
+    await consumer.send(Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]))
 
     expect(received).toMatchInlineSnapshot(`
       [
@@ -84,9 +82,7 @@ describe('loopback', () => {
       host.on('message', (envelope) => resolve(envelope))
     })
 
-    await consumer.send(
-      Envelope.encrypted({ from: Envelope.from.consumer, nonce, ciphertext }),
-    )
+    await consumer.send(Envelope.encrypted({ from: Envelope.from.consumer, nonce, ciphertext }))
 
     const envelope = await inbound
     if (envelope.type !== 'encrypted') throw new Error('expected encrypted envelope')
@@ -107,12 +103,8 @@ describe('loopback', () => {
     await consumer.start()
     await host.start()
 
-    await consumer.send(
-      Envelope.rpcRequests([Rpc.notification({ method: 'first', params: [] })]),
-    )
-    await consumer.send(
-      Envelope.rpcRequests([Rpc.notification({ method: 'second', params: [] })]),
-    )
+    await consumer.send(Envelope.rpcRequests([Rpc.notification({ method: 'first', params: [] })]))
+    await consumer.send(Envelope.rpcRequests([Rpc.notification({ method: 'second', params: [] })]))
 
     const received: unknown[] = []
     host.on('message', (envelope) => {
@@ -183,13 +175,9 @@ describe('loopback', () => {
       },
       { signal: controller.signal },
     )
-    await consumer.send(
-      Envelope.rpcRequests([Rpc.notification({ method: 'first', params: [] })]),
-    )
+    await consumer.send(Envelope.rpcRequests([Rpc.notification({ method: 'first', params: [] })]))
     controller.abort()
-    await consumer.send(
-      Envelope.rpcRequests([Rpc.notification({ method: 'second', params: [] })]),
-    )
+    await consumer.send(Envelope.rpcRequests([Rpc.notification({ method: 'second', params: [] })]))
 
     expect(received).toMatchInlineSnapshot(`
       [
@@ -214,15 +202,15 @@ const integrationSchema = Schema.create({
 
 /**
  * High-level integration tests — exercises the full
- * `Handshake.create` ↔ `loopback` ↔ `Handshake.create` pipeline so the
+ * `Wata.create` ↔ `loopback` ↔ `Wata.create` pipeline so the
  * outermost contract (typed `send` / `'request'` flow with a real schema)
  * is locked down on top of the loopback transport.
  */
-describe('handshake + loopback integration', () => {
+describe('wata + loopback integration', () => {
   test('round-trips a single typed request', async () => {
     const { consumer: cT, host: hT } = Loopback.loopback()
-    const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
-    const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
+    const consumer = Wata.create({ transport: cT, schema: integrationSchema })
+    const host = HostWata.create({ transport: hT, schema: integrationSchema })
 
     await consumer.start()
     await host.start()
@@ -242,8 +230,8 @@ describe('handshake + loopback integration', () => {
 
   test('correlates concurrent requests by id', async () => {
     const { consumer: cT, host: hT } = Loopback.loopback()
-    const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
-    const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
+    const consumer = Wata.create({ transport: cT, schema: integrationSchema })
+    const host = HostWata.create({ transport: hT, schema: integrationSchema })
 
     await consumer.start()
     await host.start()
@@ -275,8 +263,8 @@ describe('handshake + loopback integration', () => {
 
   test('host listener throwing surfaces as Rpc.RpcError on consumer', async () => {
     const { consumer: cT, host: hT } = Loopback.loopback()
-    const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
-    const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
+    const consumer = Wata.create({ transport: cT, schema: integrationSchema })
+    const host = HostWata.create({ transport: hT, schema: integrationSchema })
 
     await consumer.start()
     await host.start()
@@ -292,8 +280,8 @@ describe('handshake + loopback integration', () => {
 
   test('cascading close rejects in-flight requests on both sides', async () => {
     const { consumer: cT, host: hT } = Loopback.loopback()
-    const consumer = Handshake.create({ transport: cT, schema: integrationSchema })
-    const host = HostHandshake.create({ transport: hT, schema: integrationSchema })
+    const consumer = Wata.create({ transport: cT, schema: integrationSchema })
+    const host = HostWata.create({ transport: hT, schema: integrationSchema })
 
     await consumer.start()
     await host.start()

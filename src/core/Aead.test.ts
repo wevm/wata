@@ -1,6 +1,6 @@
-import { Aead, Errors } from 'wata'
 import { Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
+import { Aead, Errors } from 'wata'
 
 describe('OpenError', () => {
   test('has the Aead.OpenError name and inherits BaseError', () => {

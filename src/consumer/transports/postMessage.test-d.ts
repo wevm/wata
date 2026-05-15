@@ -1,5 +1,5 @@
-import { Transport, postMessage } from 'wata'
 import { describe, expectTypeOf, test } from 'vp/test'
+import { Transport, postMessage } from 'wata'
 
 declare const popupHandle: Window
 declare const portHandle: MessagePort
@@ -7,32 +7,37 @@ declare const portHandle: MessagePort
 describe('postMessage (consumer)', () => {
   test('returns a consumer-role transport', () => {
     const transport = postMessage({
+      host: 'https://wallet.example',
       target: () => popupHandle,
-      targetOrigin: 'https://wallet.example',
     })
     expectTypeOf(transport).toEqualTypeOf<Transport.Transport<'consumer'>>()
     expectTypeOf(transport.role).toEqualTypeOf<'consumer'>()
   })
 
-  test('Window/WindowProxy targets require targetOrigin', () => {
-    // @ts-expect-error `targetOrigin` is required for Window targets
-    postMessage({ target: () => popupHandle })
-  })
-
-  test('MessagePort targets allow targetOrigin to be omitted or undefined', () => {
+  test('host may be omitted or undefined', () => {
     postMessage({ target: () => portHandle })
-    postMessage({ target: () => portHandle, targetOrigin: undefined })
+    postMessage({ host: undefined, target: () => portHandle })
   })
 
-  test('open may return a Promise', () => {
+  test('target callback receives { host }', () => {
     postMessage({
+      host: 'https://wallet.example',
+      target: ({ host }) => {
+        expectTypeOf(host).toEqualTypeOf<string | undefined>()
+        return popupHandle
+      },
+    })
+  })
+
+  test('target may return a Promise', () => {
+    postMessage({
+      host: 'https://wallet.example',
       target: async () => popupHandle,
-      targetOrigin: 'https://wallet.example',
     })
   })
 
   test('rejects neither-Window-nor-Port handles', () => {
     // @ts-expect-error 'string' is not a valid postMessage target
-    postMessage({ target: () => 'nope', targetOrigin: 'https://wallet.example' })
+    postMessage({ host: 'https://wallet.example', target: () => 'nope' })
   })
 })

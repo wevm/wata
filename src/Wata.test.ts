@@ -1,6 +1,6 @@
-import { Envelope, Errors, Handshake, Rpc, Schema, loopback } from 'wata'
-import { Handshake as HostHandshake } from 'wata/host'
 import { describe, expect, test } from 'vp/test'
+import { Envelope, Errors, Wata, Rpc, Schema, loopback } from 'wata'
+import { Wata as HostWata } from 'wata/host'
 import { z } from 'zod'
 
 const schema = Schema.create({
@@ -18,26 +18,26 @@ const schema = Schema.create({
 
 function pair() {
   const { consumer: cTransport, host: hTransport } = loopback()
-  const consumer = Handshake.create({ transport: cTransport, schema })
-  const host = HostHandshake.create({ transport: hTransport, schema })
+  const consumer = Wata.create({ transport: cTransport, schema })
+  const host = HostWata.create({ transport: hTransport, schema })
   return { consumer, host }
 }
 
 describe('create', () => {
-  test('wata Handshake.create returns a consumer', () => {
+  test('wata Wata.create returns a consumer', () => {
     const { consumer } = loopback()
-    const handshake = Handshake.create({ transport: consumer })
-    expect(handshake.role).toMatchInlineSnapshot(`"consumer"`)
-    expect(typeof handshake.start).toMatchInlineSnapshot(`"function"`)
-    expect(typeof handshake.send).toMatchInlineSnapshot(`"function"`)
+    const wata = Wata.create({ transport: consumer })
+    expect(wata.role).toMatchInlineSnapshot(`"consumer"`)
+    expect(typeof wata.start).toMatchInlineSnapshot(`"function"`)
+    expect(typeof wata.send).toMatchInlineSnapshot(`"function"`)
   })
 
-  test('wata/host Handshake.create returns a host', () => {
+  test('wata/host Wata.create returns a host', () => {
     const { host } = loopback()
-    const handshake = HostHandshake.create({ transport: host })
-    expect(handshake.role).toMatchInlineSnapshot(`"host"`)
-    expect(typeof handshake.start).toMatchInlineSnapshot(`"function"`)
-    expect(typeof handshake.on).toMatchInlineSnapshot(`"function"`)
+    const wata = HostWata.create({ transport: host })
+    expect(wata.role).toMatchInlineSnapshot(`"host"`)
+    expect(typeof wata.start).toMatchInlineSnapshot(`"function"`)
+    expect(typeof wata.on).toMatchInlineSnapshot(`"function"`)
   })
 })
 
@@ -149,7 +149,7 @@ describe('send', () => {
     `)
   })
 
-  test('handshake.respond settles the matching pending request by id', async () => {
+  test('wata.respond settles the matching pending request by id', async () => {
     const { consumer, host } = pair()
     await consumer.start()
     await host.start()
@@ -176,7 +176,7 @@ describe('send', () => {
     expect((await b).result).toMatchInlineSnapshot(`5`)
   })
 
-  test('handshake.reject settles the matching pending request by id', async () => {
+  test('wata.reject settles the matching pending request by id', async () => {
     const { consumer, host } = pair()
     await consumer.start()
     await host.start()
@@ -195,16 +195,16 @@ describe('send', () => {
     await expect(inflight).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: denied]`)
   })
 
-  test('handshake.respond throws Handshake.UnknownRequestError for unknown ids', async () => {
+  test('wata.respond throws Wata.UnknownRequestError for unknown ids', async () => {
     const { host } = pair()
     await host.start()
 
-    expect(() =>
-      host.respond(999, 'nope'),
-    ).toThrowErrorMatchingInlineSnapshot(`[Handshake.UnknownRequestError: no pending request with id \`999\`]`)
+    expect(() => host.respond(999, 'nope')).toThrowErrorMatchingInlineSnapshot(
+      `[Wata.UnknownRequestError: no pending request with id \`999\`]`,
+    )
   })
 
-  test('handshake.respond is a no-op double-call once event.respond settled', async () => {
+  test('wata.respond is a no-op double-call once event.respond settled', async () => {
     const { consumer, host } = pair()
     await consumer.start()
     await host.start()
@@ -224,10 +224,8 @@ describe('send', () => {
 
     // The pending entry is gone after the synchronous respond, so a late
     // top-level respond throws (the request isn't ours anymore).
-    expect(() =>
-      host.respond(captured!.id, { other: true }),
-    ).toThrowErrorMatchingInlineSnapshot(
-      `[Handshake.UnknownRequestError: no pending request with id \`1\`]`,
+    expect(() => host.respond(captured!.id, { other: true })).toThrowErrorMatchingInlineSnapshot(
+      `[Wata.UnknownRequestError: no pending request with id \`1\`]`,
     )
   })
 
@@ -344,7 +342,7 @@ describe('close', () => {
     await consumer.close()
     // `send()` after a soft close lazy-calls `start()` again. The loopback
     // transport happens to be terminal-on-close, so the underlying
-    // `transport.start()` rejects — the handshake itself doesn't.
+    // `transport.start()` rejects — the wata itself doesn't.
     await expect(
       consumer.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
@@ -391,7 +389,7 @@ describe('on', () => {
 describe('mode discipline', () => {
   test('host rejects a pre-key encrypted frame with -32600 and tears down', async () => {
     const { consumer: cTransport, host: hTransport } = loopback()
-    const host = HostHandshake.create({ transport: hTransport })
+    const host = HostWata.create({ transport: hTransport })
     await cTransport.start()
     await host.start()
 
@@ -441,7 +439,7 @@ describe('mode discipline', () => {
 
   test('consumer rejects a pre-key encrypted frame with -32600 and tears down', async () => {
     const { consumer: cTransport, host: hTransport } = loopback()
-    const consumer = Handshake.create({ transport: cTransport })
+    const consumer = Wata.create({ transport: cTransport })
     await consumer.start()
     await hTransport.start()
 
