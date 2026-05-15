@@ -1,4 +1,4 @@
-import { Errors } from 'handshakes'
+import { Errors } from 'wata'
 import { describe, expect, test } from 'vp/test'
 
 describe('BaseError', () => {

@@ -201,7 +201,7 @@ export declare namespace encrypted {
  *
  * @example
  * ```ts
- * import { Envelope } from 'handshakes'
+ * import { Envelope } from 'wata'
  *
  * const envelope = Envelope.parse(JSON.parse(text))
  * ```
@@ -223,7 +223,7 @@ export function parse(value: unknown): Envelope {
  *
  * @example
  * ```ts
- * import { Aead, Envelope } from 'handshakes'
+ * import { Aead, Envelope } from 'wata'
  *
  * const { nonce, ciphertext, from } = Envelope.toEncrypted(envelope)
  * const plaintext = Aead.open({ key, nonce, aad, ciphertext })

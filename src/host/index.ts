@@ -1,4 +1,4 @@
-// handshakes/host — host entrypoint
+// wata/host — host entrypoint
 //
 // Re-exports the host half of the public API. Per `tasks/PLAN.md`, this
 // surface grows incrementally:

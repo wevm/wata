@@ -1,5 +1,5 @@
-import { Envelope, Errors, Handshake, Rpc, Schema, loopback } from 'handshakes'
-import { Handshake as HostHandshake } from 'handshakes/host'
+import { Envelope, Errors, Handshake, Rpc, Schema, loopback } from 'wata'
+import { Handshake as HostHandshake } from 'wata/host'
 import { describe, expect, test } from 'vp/test'
 import { z } from 'zod'
 
@@ -24,7 +24,7 @@ function pair() {
 }
 
 describe('create', () => {
-  test('handshakes Handshake.create returns a consumer', () => {
+  test('wata Handshake.create returns a consumer', () => {
     const { consumer } = loopback()
     const handshake = Handshake.create({ transport: consumer })
     expect(handshake.role).toMatchInlineSnapshot(`"consumer"`)
@@ -32,7 +32,7 @@ describe('create', () => {
     expect(typeof handshake.send).toMatchInlineSnapshot(`"function"`)
   })
 
-  test('handshakes/host Handshake.create returns a host', () => {
+  test('wata/host Handshake.create returns a host', () => {
     const { host } = loopback()
     const handshake = HostHandshake.create({ transport: host })
     expect(handshake.role).toMatchInlineSnapshot(`"host"`)

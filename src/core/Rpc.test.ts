@@ -1,4 +1,4 @@
-import { Errors, Rpc } from 'handshakes'
+import { Errors, Rpc } from 'wata'
 import { describe, expect, test } from 'vp/test'
 
 describe('RpcError', () => {

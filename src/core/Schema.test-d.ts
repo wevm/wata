@@ -1,4 +1,4 @@
-import { Schema } from 'handshakes'
+import { Schema } from 'wata'
 import { describe, expectTypeOf, test } from 'vp/test'
 import { z } from 'zod'
 

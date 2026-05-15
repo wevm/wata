@@ -8,7 +8,7 @@
  * long-lived `Handshake` instance.
  */
 
-import { Handshake, PostMessage, postMessage } from 'handshakes'
+import { Handshake, PostMessage, postMessage } from 'wata'
 
 const hostOrigin = 'http://localhost:5182'
 
@@ -19,7 +19,7 @@ const handshake = Handshake.create({
   transport: postMessage({
     targetOrigin: hostOrigin,
     target: () => {
-      const popup = window.open(hostOrigin, 'handshakes-host', 'popup=1,width=400,height=300')
+      const popup = window.open(hostOrigin, 'wata-host', 'popup=1,width=400,height=300')
       if (!popup) throw new PostMessage.PopupBlockedError('popup was blocked')
       return popup
     },

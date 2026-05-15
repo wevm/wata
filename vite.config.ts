@@ -5,9 +5,9 @@ import { playwright } from 'vp/test/browser-playwright'
 export default defineConfig({
   resolve: {
     alias: {
-      'handshakes/host': path.resolve(import.meta.dirname, 'src/host/index.ts'),
-      'handshakes/server': path.resolve(import.meta.dirname, 'src/server/index.ts'),
-      handshakes: path.resolve(import.meta.dirname, 'src'),
+      'wata/host': path.resolve(import.meta.dirname, 'src/host/index.ts'),
+      'wata/server': path.resolve(import.meta.dirname, 'src/server/index.ts'),
+      wata: path.resolve(import.meta.dirname, 'src'),
     },
     dedupe: ['vp'],
   },

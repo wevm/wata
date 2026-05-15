@@ -36,7 +36,7 @@ export type Method<params extends z.ZodType = z.ZodType, result extends z.ZodTyp
  *
  * @example
  * ```ts
- * import { Schema } from 'handshakes'
+ * import { Schema } from 'wata'
  * import { z } from 'zod'
  *
  * const ping = Schema.method({
@@ -66,7 +66,7 @@ export type Schema<methods extends Record<string, Method> = Record<string, Metho
  *
  * @example
  * ```ts
- * import { Schema } from 'handshakes'
+ * import { Schema } from 'wata'
  * import { z } from 'zod'
  *
  * const schema = Schema.create({
@@ -139,7 +139,7 @@ export type ResultOf<schema extends Schema, name extends MethodName<schema>> = I
  *
  * @example
  * ```ts
- * import { Schema } from 'handshakes'
+ * import { Schema } from 'wata'
  *
  * const params = Schema.validate(method.params, value)
  * ```

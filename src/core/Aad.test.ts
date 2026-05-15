@@ -1,4 +1,4 @@
-import { Aad, Errors } from 'handshakes'
+import { Aad, Errors } from 'wata'
 import { describe, expect, test } from 'vp/test'
 
 const publicKey = '0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff' as const

@@ -13,7 +13,7 @@
  */
 
 import * as Clack from '@clack/prompts'
-import { Handshake, deviceCode } from 'handshakes'
+import { Handshake, deviceCode } from 'wata'
 
 const baseUrl = process.env['BASE_URL'] ?? 'http://localhost:4747'
 

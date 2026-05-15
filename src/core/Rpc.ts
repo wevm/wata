@@ -38,7 +38,7 @@ export type Params = readonly unknown[] | Record<string, unknown>
  *
  * @example
  * ```ts
- * import { Rpc } from 'handshakes'
+ * import { Rpc } from 'wata'
  *
  * const message = Rpc.request({ id: 1, method: 'eth_blockNumber', params: [] })
  * ```
@@ -244,7 +244,7 @@ export namespace schema {
  *
  * @example
  * ```ts
- * import { Rpc } from 'handshakes'
+ * import { Rpc } from 'wata'
  *
  * const message = Rpc.parse(JSON.parse(text))
  * if ('result' in message) console.log(message.result)

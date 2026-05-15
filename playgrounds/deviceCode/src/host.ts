@@ -17,7 +17,7 @@
  */
 
 import { serve } from '@hono/node-server'
-import { Handshake, Kv, deviceCode } from 'handshakes/host'
+import { Handshake, Kv, deviceCode } from 'wata/host'
 import { Hono } from 'hono'
 
 const port = Number(process.env['PORT'] ?? 4747)

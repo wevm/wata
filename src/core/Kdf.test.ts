@@ -1,4 +1,4 @@
-import { Kdf } from 'handshakes'
+import { Kdf } from 'wata'
 import { describe, expect, test } from 'vp/test'
 
 // RFC 5869 Appendix A test vectors for HKDF-SHA256.

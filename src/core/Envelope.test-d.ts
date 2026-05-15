@@ -1,4 +1,4 @@
-import { Envelope, Rpc } from 'handshakes'
+import { Envelope, Rpc } from 'wata'
 import { describe, expectTypeOf, test } from 'vp/test'
 
 describe('rpcRequests', () => {

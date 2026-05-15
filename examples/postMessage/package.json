@@ -11,7 +11,7 @@
     "build:host": "vp build host"
   },
   "dependencies": {
-    "handshakes": "latest"
+    "wata": "latest"
   },
   "devDependencies": {
     "typescript": "catalog:",

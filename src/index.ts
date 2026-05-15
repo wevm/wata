@@ -1,4 +1,4 @@
-// handshakes — consumer entrypoint
+// wata — consumer entrypoint
 //
 // Re-exports the consumer half of the public API. Per `tasks/plan.md`, this
 // surface grows incrementally:

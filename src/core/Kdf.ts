@@ -21,7 +21,7 @@ import { Bytes, Hex } from 'ox'
  *
  * @example
  * ```ts
- * import { Kdf } from 'handshakes'
+ * import { Kdf } from 'wata'
  *
  * const prk = Kdf.extract({ ikm: '0x0b0b0b...', salt: '0x000102...' })
  * ```
@@ -52,7 +52,7 @@ export declare namespace extract {
  *
  * @example
  * ```ts
- * import { Kdf } from 'handshakes'
+ * import { Kdf } from 'wata'
  *
  * const okm = Kdf.expand({ prk: '0x...', info: '0xf0f1f2...', length: 42 })
  * ```
@@ -86,7 +86,7 @@ export declare namespace expand {
  *
  * @example
  * ```ts
- * import { Kdf } from 'handshakes'
+ * import { Kdf } from 'wata'
  *
  * const sessionKey = Kdf.derive({
  *   ikm: shared,

@@ -1,4 +1,4 @@
-import { Errors, Schema } from 'handshakes'
+import { Errors, Schema } from 'wata'
 import { describe, expect, test } from 'vp/test'
 import { z } from 'zod'
 

@@ -1,5 +1,5 @@
-import { Handshake, Rpc, Schema, loopback } from 'handshakes'
-import { Handshake as HostHandshake } from 'handshakes/host'
+import { Handshake, Rpc, Schema, loopback } from 'wata'
+import { Handshake as HostHandshake } from 'wata/host'
 import { describe, expectTypeOf, test } from 'vp/test'
 import { z } from 'zod'
 

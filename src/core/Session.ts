@@ -64,7 +64,7 @@ const encoder = new TextEncoder()
  *
  * @example
  * ```ts
- * import { Session } from 'handshakes'
+ * import { Session } from 'wata'
  *
  * const secret = Session.shared({ privateKey, publicKey: peerPublicKey })
  * ```
@@ -99,7 +99,7 @@ export declare namespace shared {
  *
  * @example
  * ```ts
- * import { Crypto, Session } from 'handshakes'
+ * import { Crypto, Session } from 'wata'
  *
  * const self = Crypto.randomKeypair()
  * const { c2h, h2c } = Session.derive({

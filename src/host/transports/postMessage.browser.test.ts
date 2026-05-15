@@ -3,11 +3,11 @@ import {
   Handshake,
   Rpc,
   postMessage as postMessage_consumer,
-} from 'handshakes'
+} from 'wata'
 import {
   Handshake as HostHandshake,
   postMessage,
-} from 'handshakes/host'
+} from 'wata/host'
 import { describe, expect, test } from 'vp/test'
 
 import * as protocol from '../../consumer/transports/internal/protocol.js'

@@ -9,7 +9,7 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: [
-      'handshakes > ox > eventemitter3',
+      'wata > ox > eventemitter3',
       'use-sync-external-store/shim',
       'use-sync-external-store/shim/with-selector',
     ],
