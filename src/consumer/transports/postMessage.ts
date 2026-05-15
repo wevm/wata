@@ -10,7 +10,7 @@
  *
  * @example popup
  * ```ts
- * import { Handshake, postMessage } from 'handshakes'
+ * import { Handshake, postMessage } from 'wata'
  *
  * const handshake = Handshake.create({
  *   transport: postMessage({
@@ -118,7 +118,7 @@ export type WindowLike = {
  *
  * @example
  * ```ts
- * import { postMessage } from 'handshakes'
+ * import { postMessage } from 'wata'
  *
  * const transport = postMessage({
   *   target: () => window.open('https://wallet.example', '_blank', 'popup=1'),
@@ -140,7 +140,7 @@ export function postMessage<const target extends Target>(
  * Internal helper — both consumer and host sides share the wire mechanics
  * (ready handshake, origin pinning, listener cleanup, closed detection),
  * so the actual transport object is built here. The host re-exports the
- * same routine via `handshakes/host`.
+ * same routine via `wata/host`.
  */
 export function createSide<role extends 'consumer' | 'host', target extends Target>(
   parameters: createSide.Options<role, target>,

@@ -1,4 +1,4 @@
-import { Errors, Transport } from 'handshakes'
+import { Errors, Transport } from 'wata'
 import { describe, expect, test } from 'vp/test'
 
 describe('TransportError', () => {

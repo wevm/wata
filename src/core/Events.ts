@@ -4,7 +4,7 @@
  * `import * as Events from '../core/Events.js'` and never reaches into
  * `rettime` directly.
  *
- * Every public/internal event emitter in `handshakes` is a rettime
+ * Every public/internal event emitter in `wata` is a rettime
  * `Emitter` under the hood, but exposed through a payload-style
  * surface: `.on(eventName, listener)` (listener receives the payload
  * directly) and `.emit(eventName, payload)` (no `TypedEvent`

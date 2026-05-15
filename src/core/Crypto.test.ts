@@ -1,4 +1,4 @@
-import { Crypto } from 'handshakes'
+import { Crypto } from 'wata'
 import { Ed25519, Hex, X25519 } from 'ox'
 import { describe, expect, test } from 'vp/test'
 

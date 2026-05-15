@@ -11,7 +11,7 @@
  *
  * @example in-memory (tests, single-process playgrounds)
  * ```ts
- * import { Kv } from 'handshakes'
+ * import { Kv } from 'wata'
  *
  * const store = Kv.memory()
  * await store.set('abc', { status: 'pending' }, { ttl: 60 })
@@ -20,7 +20,7 @@
  *
  * @example Cloudflare Workers KV (multi-region, eventually consistent)
  * ```ts
- * import { Kv } from 'handshakes'
+ * import { Kv } from 'wata'
  *
  * export default {
  *   fetch(request: Request, env: Env) {
@@ -32,9 +32,9 @@
  *
  * @example Cloudflare Durable Object (linearizable, supports `take`)
  * ```ts
- * import { Kv } from 'handshakes'
+ * import { Kv } from 'wata'
  *
- * export { Storage } from 'handshakes'
+ * export { Storage } from 'wata'
  *
  * export default {
  *   fetch(request: Request, env: Env) {
@@ -98,7 +98,7 @@ export function from<kv extends Kv>(kv: kv): kv {
  *
  * @example
  * ```ts
- * import { Kv } from 'handshakes'
+ * import { Kv } from 'wata'
  *
  * const store = Kv.cloudflare(env.MY_KV)
  * ```
@@ -153,9 +153,9 @@ export declare namespace cloudflare {
  * // }
  *
  * // worker.ts
- * import { Kv } from 'handshakes'
+ * import { Kv } from 'wata'
  *
- * export { Storage } from 'handshakes'
+ * export { Storage } from 'wata'
  *
  * export default {
  *   fetch(request: Request, env: Env) {
@@ -301,7 +301,7 @@ export declare namespace Storage {
  *
  * @example
  * ```ts
- * import { Kv } from 'handshakes'
+ * import { Kv } from 'wata'
  *
  * const store = Kv.memory()
  * ```

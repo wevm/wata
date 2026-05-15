@@ -35,7 +35,7 @@ export const tagSize = 16
  *
  * @example
  * ```ts
- * import { Aead } from 'handshakes'
+ * import { Aead } from 'wata'
  *
  * const ciphertext = Aead.seal({
  *   key: '0x...32-byte-key...',
@@ -79,7 +79,7 @@ export declare namespace seal {
  *
  * @example
  * ```ts
- * import { Aead } from 'handshakes'
+ * import { Aead } from 'wata'
  *
  * const plaintext = Aead.open({
  *   key: '0x...',

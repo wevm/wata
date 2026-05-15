@@ -1,4 +1,4 @@
-import { Aead, Errors } from 'handshakes'
+import { Aead, Errors } from 'wata'
 import { Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
 

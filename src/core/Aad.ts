@@ -61,7 +61,7 @@ const prefixBytes = new TextEncoder().encode(prefix)
  *
  * @example
  * ```ts
- * import { Aad } from 'handshakes'
+ * import { Aad } from 'wata'
  *
  * Aad.encode({
  *   publicKey: '0x...32-byte-X25519-public-key...',
@@ -103,7 +103,7 @@ export declare namespace encode {
  *
  * @example
  * ```ts
- * import { Aad } from 'handshakes'
+ * import { Aad } from 'wata'
  *
  * const fields = Aad.decode(aad)
  * ```

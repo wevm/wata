@@ -5,11 +5,11 @@ import {
   Rpc,
   Schema,
   postMessage as postMessage_consumer,
-} from 'handshakes'
+} from 'wata'
 import {
   Handshake as HostHandshake,
   postMessage as postMessage_host,
-} from 'handshakes/host'
+} from 'wata/host'
 import { describe, expect, test } from 'vp/test'
 import { z } from 'zod'
 

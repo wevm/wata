@@ -7,9 +7,9 @@
     "moduleResolution": "nodenext",
     "target": "esnext",
     "paths": {
-      "handshakes": ["./src/index.ts"],
-      "handshakes/host": ["./src/host/index.ts"],
-      "handshakes/server": ["./src/server/index.ts"]
+      "wata": ["./src/index.ts"],
+      "wata/host": ["./src/host/index.ts"],
+      "wata/server": ["./src/server/index.ts"]
     },
     "types": ["node"],
 

@@ -10,12 +10,12 @@
  * path.
  */
 
-import { Envelope, Handshake, Kv, deviceCode } from 'handshakes'
+import { Envelope, Handshake, Kv, deviceCode } from 'wata'
 import {
   DeviceCode as HostDeviceCode,
   Handshake as HostHandshake,
   deviceCode as hostDeviceCode,
-} from 'handshakes/host'
+} from 'wata/host'
 import { describe, expect, test } from 'vp/test'
 
 const grantType = 'urn:ietf:params:oauth:grant-type:device_code'

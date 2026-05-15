@@ -62,7 +62,7 @@ export type Keypair = {
  *
  * @example
  * ```ts
- * import { Crypto } from 'handshakes'
+ * import { Crypto } from 'wata'
  *
  * const keypair = Crypto.randomKeypair()
  * keypair.publicKey       // Ed25519 public key
@@ -86,7 +86,7 @@ export function randomKeypair(): Keypair {
  *
  * @example
  * ```ts
- * import { Crypto } from 'handshakes'
+ * import { Crypto } from 'wata'
  *
  * // peer key, public-only
  * const peer = Crypto.toX25519({ publicKey: '0x...' })

@@ -22,7 +22,7 @@
   },
   "packageManager": "pnpm@11.1.0",
   "[!start-pkg]": "",
-  "name": "handshakes",
+  "name": "wata",
   "type": "module",
   "version": "0.0.0",
   "main": "./dist/index.js",

@@ -21,7 +21,7 @@
  *
  * @example
  * ```ts
- * import { Handshake, deviceCode } from 'handshakes'
+ * import { Handshake, deviceCode } from 'wata'
  *
  * const transport = deviceCode({
  *   url: 'https://wallet.example/auth/device',
@@ -99,7 +99,7 @@ export type Options = {
  *
  * @example
  * ```ts
- * import { deviceCode } from 'handshakes'
+ * import { deviceCode } from 'wata'
  *
  * const transport = deviceCode({
  *   url: 'https://wallet.example/auth/device',

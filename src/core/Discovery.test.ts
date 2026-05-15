@@ -1,4 +1,4 @@
-import { Discovery, Errors } from 'handshakes'
+import { Discovery, Errors } from 'wata'
 import { describe, expect, test, vi } from 'vp/test'
 
 const validHostJson = {

@@ -36,7 +36,7 @@ export const max = 2n ** 96n - 1n
  *
  * @example
  * ```ts
- * import { Nonce } from 'handshakes'
+ * import { Nonce } from 'wata'
  *
  * Nonce.fromCounter(1n)
  * // '0x000000000000000000000001'
@@ -53,7 +53,7 @@ export function fromCounter(counter: bigint): Hex.Hex {
  *
  * @example
  * ```ts
- * import { Nonce } from 'handshakes'
+ * import { Nonce } from 'wata'
  *
  * Nonce.toCounter('0x000000000000000000000001')
  * // 1n
@@ -76,7 +76,7 @@ export function toCounter(nonce: Hex.Hex | Bytes.Bytes): bigint {
  *
  * @example
  * ```ts
- * import { Nonce, Aead } from 'handshakes'
+ * import { Nonce, Aead } from 'wata'
  *
  * const out = Nonce.encoder()
  * Aead.seal({ key, nonce: out.next(), plaintext })  // first nonce: 0x00…01
@@ -127,7 +127,7 @@ export declare namespace encoder {
  *
  * @example
  * ```ts
- * import { Nonce, Aead } from 'handshakes'
+ * import { Nonce, Aead } from 'wata'
  *
  * const inbound = Nonce.decoder()
  * inbound.accept(nonce)

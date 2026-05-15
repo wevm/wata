@@ -1,4 +1,4 @@
-import { Transport, postMessage } from 'handshakes'
+import { Transport, postMessage } from 'wata'
 import { describe, expectTypeOf, test } from 'vp/test'
 
 declare const popupHandle: Window

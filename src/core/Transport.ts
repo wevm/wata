@@ -6,7 +6,7 @@
  * exposes:
  *
  * - `role` / `exchange` — protocol-level metadata. `role` is pinned by the
- *   import path (`handshakes` for consumer, `handshakes/host` for host) so
+ *   import path (`wata` for consumer, `wata/host` for host) so
  *   `Handshake.create` can shape its return type from a literal. `exchange`
  *   discriminates ongoing transports (`window`, `mobileLink`, `relay`) from
  *   single-exchange transports (`deviceCode`, `webhookCallback`,

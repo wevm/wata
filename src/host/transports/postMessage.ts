@@ -12,7 +12,7 @@
  *
  * @example default target (popup or iframe)
  * ```ts
- * import { Handshake, postMessage } from 'handshakes/host'
+ * import { Handshake, postMessage } from 'wata/host'
  *
  * const handshake = Handshake.create({
  *   transport: postMessage({ targetOrigin: 'https://app.example' }),
@@ -65,7 +65,7 @@ export type Options<target extends ConsumerPostMessage.Target = Window> =
  *
  * @example
  * ```ts
- * import { Handshake, postMessage } from 'handshakes/host'
+ * import { Handshake, postMessage } from 'wata/host'
  *
  * const handshake = Handshake.create({
  *   transport: postMessage({ targetOrigin: 'https://app.example' }),

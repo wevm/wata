@@ -28,7 +28,7 @@
  * @example minimal Node host
  * ```ts
  * import { createServer } from 'node:http'
- * import { Handshake, Kv, deviceCode } from 'handshakes/host'
+ * import { Handshake, Kv, deviceCode } from 'wata/host'
  *
  * const transport = deviceCode({
  *   store: Kv.memory(),
@@ -200,7 +200,7 @@ export type DeviceCodeTransport = Transport.Transport<'host'> & HttpServer.HttpS
  *
  * @example
  * ```ts
- * import { Handshake, Kv, deviceCode } from 'handshakes/host'
+ * import { Handshake, Kv, deviceCode } from 'wata/host'
  *
  * const transport = deviceCode({
  *   store: Kv.memory(),

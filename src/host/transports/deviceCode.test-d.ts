@@ -1,4 +1,4 @@
-import { DeviceCode, Handshake, Kv, Transport, deviceCode } from 'handshakes/host'
+import { DeviceCode, Handshake, Kv, Transport, deviceCode } from 'wata/host'
 import { describe, expectTypeOf, test } from 'vp/test'
 
 describe('deviceCode (host)', () => {
