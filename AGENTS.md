@@ -85,6 +85,10 @@
 
 - **Conventional commits** — use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:` prefixes. Scope is optional (e.g. `feat(parser): add array coercion`).
 
+## Examples Conventions
+
+- **No `catalog:` deps in examples** — `examples/*/package.json` must not use `catalog:` for any dependency or devDependency. Use `"latest"` instead. Examples are standalone reference snippets that consumers may copy out of the repo, so they must resolve without the workspace's catalog. The `catalog:` protocol stays for `playgrounds/*` and the root package.
+
 ## Learned User Preferences
 
 - **Inline transports into `Handshake.create`** — pass the transport factory call directly as the `transport:` field of `Handshake.create({ ... })` instead of binding it to a `const transport = ...` first. The transport's only consumer is the handshake, so the intermediate name adds noise without adding meaning. Apply the same rule to JSDoc examples and any other `Handshake.create` callsite. The standalone `const transport = postMessage(...)` form is only kept in JSDoc that's documenting the transport factory itself in isolation (i.e. the example sits next to `export function postMessage(...)` and doesn't construct a handshake).
