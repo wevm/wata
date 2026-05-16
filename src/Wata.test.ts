@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'vp/test'
-import { Envelope, Errors, Wata, Rpc, Schema, loopback } from 'wata'
-import { Wata as HostWata } from 'wata/host'
-import { z } from 'zod'
+import { Envelope, Errors, Kv, Wata, Rpc, Schema, deviceCode, loopback } from 'wata'
+import { Wata as HostWata, deviceCode as hostDeviceCode } from 'wata/host'
+import { z } from 'zod/mini'
+
+// 43-char unpadded base64url Ed25519 pubkey per uRPC discovery.md §2.2.
+const identity_pubkey = 'A'.repeat(43)
 
 const schema = Schema.create({
   methods: {
@@ -199,7 +202,7 @@ describe('send', () => {
     const { host } = pair()
     await host.start()
 
-    expect(() => host.respond(999, 'nope')).toThrowErrorMatchingInlineSnapshot(
+    await expect(host.respond(999, 'nope')).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Wata.UnknownRequestError: no pending request with id \`999\`]`,
     )
   })
@@ -222,9 +225,11 @@ describe('send', () => {
       }
     `)
 
-    // The pending entry is gone after the synchronous respond, so a late
-    // top-level respond throws (the request isn't ours anymore).
-    expect(() => host.respond(captured!.id, { other: true })).toThrowErrorMatchingInlineSnapshot(
+    // The pending entry is gone after `event.respond` settled the request,
+    // so a late top-level respond rejects (the request isn't ours anymore).
+    await expect(
+      host.respond(captured!.id, { other: true }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Wata.UnknownRequestError: no pending request with id \`1\`]`,
     )
   })
@@ -286,8 +291,8 @@ describe('send', () => {
       consumer.send({ method: 'add', params: ['nope', 1] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `
-      [ProtocolError: schema validation failed
-      Details: 0: Invalid input: expected number, received string]
+    	[ProtocolError: schema validation failed
+    	Details: 0: Invalid input]
     `,
     )
   })
@@ -434,7 +439,7 @@ describe('mode discipline', () => {
     expect(errors[0]?.message).toMatchInlineSnapshot(
       `"encrypted envelope received before key derivation"`,
     )
-    expect(closes.length).toBe(1)
+    expect(closes.length).toMatchInlineSnapshot(`1`)
   })
 
   test('consumer rejects a pre-key encrypted frame with -32600 and tears down', async () => {
@@ -480,6 +485,258 @@ describe('mode discipline', () => {
       ]
     `)
     expect(errors[0]).toBeInstanceOf(Errors.ProtocolError)
-    expect(closes.length).toBe(1)
+    expect(closes.length).toMatchInlineSnapshot(`1`)
+  })
+})
+
+describe('baseUrl + meta auto-publishing', () => {
+  test('host `Wata.create({ baseUrl, meta })` serves /.well-known/urpc/host.json off the transport `.fetch`', async () => {
+    const host = HostWata.create({
+      baseUrl: 'https://wallet.example',
+      identity_pubkey,
+      meta: { name: 'Example Wallet', icon: 'https://wallet.example/icon.png' },
+      transport: hostDeviceCode({
+        store: Kv.memory(),
+        path: '/auth/device',
+        html: {
+          render: () => new Response('ok'),
+          authenticate: async () => new Response('ok'),
+        },
+      }),
+    })
+
+    const response = await host.fetch!(
+      new Request('https://wallet.example/.well-known/urpc/host.json'),
+    )
+    expect({
+      status: response.status,
+      contentType: response.headers.get('content-type'),
+    }).toMatchInlineSnapshot(`
+    	{
+    	  "contentType": "application/json",
+    	  "status": 200,
+    	}
+    `)
+    expect(await response.json()).toMatchInlineSnapshot(`
+    	{
+    	  "icon": "https://wallet.example/icon.png",
+    	  "id": "wallet.example",
+    	  "identity_pubkey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    	  "name": "Example Wallet",
+    	  "origin": "https://wallet.example",
+    	  "transports": {
+    	    "device-code": {
+    	      "register_url": "https://wallet.example/auth/device/register",
+    	      "token_url": "https://wallet.example/auth/device/token",
+    	    },
+    	  },
+    	  "version": "1.0",
+    	}
+    `)
+  })
+
+  test('host `Wata.create({ baseUrl, meta })` still routes transport requests for non-well-known paths', async () => {
+    const host = HostWata.create({
+      baseUrl: 'https://wallet.example',
+      identity_pubkey,
+      meta: { name: 'Example Wallet' },
+      transport: hostDeviceCode({
+        store: Kv.memory(),
+        path: '/auth/device',
+        html: {
+          render: ({ userCode }) =>
+            new Response(`<form>code=${userCode ?? ''}</form>`, {
+              headers: { 'content-type': 'text/html' },
+            }),
+          authenticate: async () => new Response('ok'),
+        },
+      }),
+    })
+
+    const response = await host.fetch!(
+      new Request('https://wallet.example/auth/device/verify?user_code=AAAA-BBBB', {
+        method: 'GET',
+      }),
+    )
+    expect({
+      status: response.status,
+      contentType: response.headers.get('content-type'),
+    }).toMatchInlineSnapshot(`
+      {
+        "contentType": "text/html",
+        "status": 200,
+      }
+    `)
+  })
+
+  test('host `Wata.create({ meta })` without `baseUrl` throws', () => {
+    expect(() =>
+      HostWata.create({
+        meta: { name: 'X' },
+        transport: hostDeviceCode({
+          store: Kv.memory(),
+          html: {
+            render: () => new Response('ok'),
+            authenticate: async () => new Response('ok'),
+          },
+        }),
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `
+    	[BaseError: \`baseUrl\` is required when \`meta\` is set
+    	Details: host_id and transport bindings need a fully-qualified origin]
+    `,
+    )
+  })
+
+  test('host `Wata.create({ baseUrl, meta })` without `identity_pubkey` throws (required per spec §2.2)', () => {
+    expect(() =>
+      HostWata.create({
+        baseUrl: 'https://wallet.example',
+        meta: { name: 'X' },
+        transport: hostDeviceCode({
+          store: Kv.memory(),
+          html: {
+            render: () => new Response('ok'),
+            authenticate: async () => new Response('ok'),
+          },
+        }),
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `
+    	[BaseError: \`identity_pubkey\` is required when \`meta\` is set
+    	Details: host.json publishes the long-term Ed25519 identity pubkey (unpadded base64url, 43 chars)]
+    `,
+    )
+  })
+
+  test('host `Wata.create({})` without meta behaves identically to today (no well-known served)', async () => {
+    const host = HostWata.create({
+      transport: hostDeviceCode({
+        baseUrl: 'https://wallet.example',
+        store: Kv.memory(),
+        path: '/auth/device',
+        html: {
+          render: () => new Response('ok'),
+          authenticate: async () => new Response('ok'),
+        },
+      }),
+    })
+    // No well-known route mounted by the wrapper — falls through to the
+    // device-code Hono app, which returns 404 for unrecognized routes.
+    const response = await host.fetch!(
+      new Request('https://wallet.example/.well-known/urpc/host.json'),
+    )
+    expect(response.status).toMatchInlineSnapshot(`404`)
+  })
+
+  test('consumer `Wata.create({ baseUrl, meta })` lazy-injects meta into deviceCode for /register payload', async () => {
+    let registerBody: unknown
+    const consumer = deviceCode({
+      url: 'https://example/auth/device',
+      pollingInterval: 5,
+      fetch: async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input)
+        if (url.endsWith('/register')) {
+          registerBody = JSON.parse(String(init?.body ?? '{}'))
+          return new Response(
+            JSON.stringify({
+              device_code: 'dc',
+              expires_in: 600,
+              interval: 1,
+              user_code: 'AAAA-BBBB',
+              verification_uri: 'https://example/verify',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response(JSON.stringify({ error: 'authorization_pending' }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+    })
+    const wata = Wata.create({
+      baseUrl: 'https://acme.dev',
+      meta: { name: 'Acme CLI', icon: 'https://acme.dev/icon.png' },
+      transport: consumer,
+    })
+
+    const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
+    // Give the register POST a chance to settle.
+    const start = Date.now()
+    while (!registerBody) {
+      if (Date.now() - start > 2000) throw new Error('timed out waiting for /register')
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    await wata.close()
+    await sendPromise
+
+    // Drop PKCE / message fields (PKCE challenges are random, message is
+    // wire-shape detail covered elsewhere).
+    const {
+      code_challenge: _c,
+      code_challenge_method: _m,
+      message: _msg,
+      ...rest
+    } = registerBody as Record<string, unknown>
+    expect(rest).toMatchInlineSnapshot(`
+      {
+        "consumer_url": "https://acme.dev/.well-known/urpc/consumer.json",
+        "meta": {
+          "icon": "https://acme.dev/icon.png",
+          "name": "Acme CLI",
+        },
+      }
+    `)
+  })
+
+  test('consumer-side inline `meta` on the transport wins over `Wata.create({ meta })`', async () => {
+    let registerBody: unknown
+    const consumer = deviceCode({
+      url: 'https://example/auth/device',
+      pollingInterval: 5,
+      meta: { name: 'Inline Override' },
+      fetch: async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input)
+        if (url.endsWith('/register')) {
+          registerBody = JSON.parse(String(init?.body ?? '{}'))
+          return new Response(
+            JSON.stringify({
+              device_code: 'dc',
+              expires_in: 600,
+              interval: 1,
+              user_code: 'AAAA-BBBB',
+              verification_uri: 'https://example/verify',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response(JSON.stringify({ error: 'authorization_pending' }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+    })
+    const wata = Wata.create({
+      baseUrl: 'https://acme.dev',
+      meta: { name: 'Wata Parent' },
+      transport: consumer,
+    })
+
+    const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
+    const start = Date.now()
+    while (!registerBody) {
+      if (Date.now() - start > 2000) throw new Error('timed out waiting for /register')
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    await wata.close()
+    await sendPromise
+
+    expect((registerBody as { meta: { name: string } }).meta).toMatchInlineSnapshot(`
+      {
+        "name": "Inline Override",
+      }
+    `)
   })
 })

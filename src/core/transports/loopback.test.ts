@@ -2,7 +2,7 @@ import type { Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
 import { Aad, Aead, Envelope, Wata, Nonce, Rpc, Schema, Transport } from 'wata'
 import { Wata as HostWata } from 'wata/host'
-import { z } from 'zod'
+import { z } from 'zod/mini'
 
 import * as Loopback from './loopback.js'
 
@@ -131,8 +131,8 @@ describe('loopback', () => {
 
     await consumer.close()
 
-    expect(consumerCloses.length).toBe(1)
-    expect(hostCloses.length).toBe(1)
+    expect(consumerCloses.length).toMatchInlineSnapshot(`1`)
+    expect(hostCloses.length).toMatchInlineSnapshot(`1`)
   })
 
   test('send after close throws ClosedError', async () => {
@@ -155,10 +155,19 @@ describe('loopback', () => {
 
   test('exposes role and exchange', () => {
     const { consumer, host } = Loopback.loopback()
-    expect(consumer.role).toBe('consumer')
-    expect(host.role).toBe('host')
-    expect(consumer.exchange).toBe('ongoing')
-    expect(host.exchange).toBe('ongoing')
+    expect({
+      consumerRole: consumer.role,
+      hostRole: host.role,
+      consumerExchange: consumer.exchange,
+      hostExchange: host.exchange,
+    }).toMatchInlineSnapshot(`
+      {
+        "consumerExchange": "ongoing",
+        "consumerRole": "consumer",
+        "hostExchange": "ongoing",
+        "hostRole": "host",
+      }
+    `)
   })
 
   test('unsubscribe removes the listener', async () => {
@@ -297,7 +306,11 @@ describe('wata + loopback integration', () => {
 
     await consumer.close()
     await expect(inflight).rejects.toBeInstanceOf(Error)
-    expect(consumerClosed).toBe(true)
-    expect(hostClosed).toBe(true)
+    expect({ consumerClosed, hostClosed }).toMatchInlineSnapshot(`
+      {
+        "consumerClosed": true,
+        "hostClosed": true,
+      }
+    `)
   })
 })

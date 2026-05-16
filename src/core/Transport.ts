@@ -49,12 +49,58 @@ export type EventMap = {
 }
 
 /**
+ * Discovery contribution surfaced by an HTTP-server-shaped transport.
+ * Read by `Wata.create({ baseUrl, meta })` to auto-build the
+ * `transports` map of `/.well-known/urpc/{host,consumer}.json` —
+ * each transport contributes its own entry under {@link id} via
+ * {@link binding}, called with the parent `baseUrl`.
+ *
+ * Non-HTTP transports (e.g. `loopback`, `postMessage`) leave this
+ * `undefined`; they don't appear in the published discovery doc.
+ */
+export type DiscoveryBinding = {
+  /**
+   * Transport identifier in the published `transports` map (e.g.
+   * `'device-code'`, `'webhook-callback'`, `'relay'`).
+   */
+  id: string
+  /**
+   * Build the per-transport binding object (`register_url`,
+   * `token_url`, etc.) given the parent `baseUrl`.
+   */
+  binding: (baseUrl: string) => unknown
+}
+
+/**
  * The normalized transport contract. Every adapter — consumer-side,
  * host-side, role-agnostic loopback — implements this shape.
  */
 export type Transport<role extends Role = Role> = {
+  /**
+   * Apply a parent app's `baseUrl` to this transport. Lazy-bound by
+   * `Wata.create({ baseUrl })` so transports that need an origin
+   * (e.g. host `deviceCode` building `verification_uri`) can
+   * inherit it from the wrapping `Wata` instance. Idempotent — a
+   * transport's own constructor-level `baseUrl` (if any) wins.
+   */
+  bindBaseUrl?: ((baseUrl: string) => void) | undefined
+  /**
+   * Apply parent {@link Discovery.Meta} to this transport. Lazy-bound
+   * by `Wata.create({ meta })` so transports that need to surface
+   * metadata to the peer (e.g. consumer `deviceCode` serializing
+   * `meta` into `/register` payloads) can inherit it from the
+   * wrapping `Wata` instance. A transport's own constructor-level
+   * `meta` (if any) wins.
+   */
+  bindMeta?: ((meta: unknown) => void) | undefined
   /** Close the transport. Idempotent. */
   close: (cause?: Error) => Promise<void>
+  /**
+   * Optional discovery contribution. HTTP-server-shaped host
+   * transports populate this so {@link "../Wata".create} can auto-build
+   * the `transports` map of the published well-known document.
+   */
+  discovery?: DiscoveryBinding | undefined
   /** Lifetime model — see {@link Exchange}. */
   exchange: Exchange
   /**

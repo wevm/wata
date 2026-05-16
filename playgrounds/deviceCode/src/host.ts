@@ -24,13 +24,19 @@ const port = Number(process.env['PORT'] ?? 4747)
 const baseUrl = process.env['BASE_URL'] ?? `http://localhost:${port}`
 
 const wata = Wata.create({
+  baseUrl,
+  meta: {
+    name: 'Example Wallet',
+    description: 'Device-code playground host',
+    url: baseUrl,
+  },
   transport: deviceCode({
     store: Kv.memory(),
     baseUrl,
     path: '/auth/device',
     pollingInterval: 1000,
     html: {
-      render({ userCode, record }) {
+      render({ userCode, record, meta }) {
         if (!userCode || !record)
           return html(`
           <h1>Enter your device code</h1>
@@ -49,8 +55,15 @@ const wata = Wata.create({
                 })
                 .join('')
             : '<li>(unknown payload)</li>'
+        const consumer = meta
+          ? `<p>
+              ${meta.icon ? `<img src="${escape(meta.icon)}" alt="${escape(meta.name)} icon" width="32" height="32" /> ` : ''}
+              App: <strong>${escape(meta.name)}</strong>${meta.description ? ` — ${escape(meta.description)}` : ''}
+            </p>`
+          : ''
         return html(`
         <h1>Approve request?</h1>
+        ${consumer}
         <p>Code: <code>${userCode}</code></p>
         <p>Pending JSON-RPC requests:</p>
         <ul>${requests}</ul>

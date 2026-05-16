@@ -12,12 +12,15 @@
  * pollute the consumer namespace.
  */
 
+import * as Discovery from '../core/Discovery.js'
 import * as Envelope from '../core/Envelope.js'
 import * as Errors from '../core/Errors.js'
 import * as Events from '../core/Events.js'
+import * as Http from '../core/Http.js'
 import * as Rpc from '../core/Rpc.js'
 import * as Schema from '../core/Schema.js'
 import * as Transport from '../core/Transport.js'
+import * as Wellknown from '../core/Wellknown.js'
 import * as Wata from '../Wata.js'
 
 /**
@@ -41,16 +44,22 @@ export type RequestEvent<
   method: method
   /** Method params. */
   params: params
-  /** Sugar for `wata.reject(event.id, error)`. Idempotent. */
-  reject: (error: { code: number; data?: unknown; message: string }) => void
+  /**
+   * Sugar for `wata.reject(event.id, error)`. Resolves once the error
+   * response has flushed to the transport (so popup hosts can `await`
+   * delivery before calling `window.close()`). Idempotent.
+   */
+  reject: (error: { code: number; data?: unknown; message: string }) => Promise<void>
   /** The full JSON-RPC request envelope as parsed off the wire. */
   request: Rpc.Request<method, params>
   /**
-   * Sugar for `wata.respond(event.id, result)`. Settles the request
-   * synchronously from inside the listener; idempotent across
-   * `event.respond` / `event.reject` / `wata.respond` / `wata.reject`.
+   * Sugar for `wata.respond(event.id, result)`. Resolves once the
+   * success response has flushed to the transport (so popup hosts can
+   * `await` delivery before calling `window.close()`). Idempotent
+   * across `event.respond` / `event.reject` / `wata.respond` /
+   * `wata.reject`.
    */
-  respond: (result: result) => void
+  respond: (result: result) => Promise<void>
 }
 
 /** Event payload delivered to host `'notification'` listeners. */
@@ -119,20 +128,16 @@ export type Host<
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
   /**
-   * Web-standard fetch handler forwarded from the transport when
-   * present. HTTP-shaped transports (`deviceCode`, `webhookCallback`,
-   * …) expose a `(request: Request) => Promise<Response>` that drops
-   * onto Cloudflare Workers, Bun, Deno, Vercel Edge, etc. Non-HTTP
-   * transports (`postMessage`, `loopback`, …) leave this `undefined`.
+   * Web-standard fetch handler + Node `http.RequestListener` pair
+   * forwarded from the transport when present. HTTP-shaped transports
+   * (`deviceCode`, `webhookCallback`, …) expose the standard
+   * {@link Http.Server} signatures that drop onto Cloudflare Workers,
+   * Bun, Deno, Vercel Edge, `node:http`, etc. Non-HTTP transports
+   * (`postMessage`, `loopback`, …) leave both `undefined`.
    */
-  fetch: transport extends { fetch: infer fn } ? fn : undefined
-  /**
-   * Node `http.RequestListener` forwarded from the transport when
-   * present. HTTP-shaped transports expose a listener compatible with
-   * `node:http`'s `createServer`. Non-HTTP transports leave this
-   * `undefined`.
-   */
-  listener: transport extends { listener: infer fn } ? fn : undefined
+  fetch: Http.Handlers<transport>['fetch']
+  /** See {@link fetch}. */
+  listener: Http.Handlers<transport>['listener']
   /** Remove a previously subscribed listener. */
   off: <type extends keyof HostEventMap<schema>>(
     type: type,
@@ -151,14 +156,17 @@ export type Host<
   ) => AbortController
   /**
    * Settle a still-pending inbound request by id with a JSON-RPC error.
-   * Mirror of {@link Host.respond}.
+   * Mirror of {@link Host.respond} — resolves once the error response
+   * has flushed to the transport.
    *
    * @param id - Id of the pending request to settle.
    * @param error - JSON-RPC error envelope (`code` + `message`, optional `data`).
    */
-  reject: (id: Rpc.Id, error: reject.Error) => void
+  reject: (id: Rpc.Id, error: reject.Error) => Promise<void>
   /**
    * Settle a still-pending inbound request by id with a JSON-RPC `result`.
+   * Resolves once the success response has flushed to the transport, so
+   * popup hosts can `await` delivery before calling `window.close()`.
    *
    * Pair with `wata.on('request', (event) => setPending((p) => [...p, event]))`
    * for UI flows where the response is gathered asynchronously (approval
@@ -172,7 +180,7 @@ export type Host<
    * @param id - Id of the pending request to settle.
    * @param result - Success `result` payload to send.
    */
-  respond: <result = unknown>(id: Rpc.Id, result: result) => void
+  respond: <result = unknown>(id: Rpc.Id, result: result) => Promise<void>
   /** Side of the protocol this wata speaks for. */
   role: 'host'
   /** Optional method-registry schema flowed through `'request'` / `'notification'` events. */
@@ -238,6 +246,22 @@ export function create<
 >(options: create.Options<schema, transport>): Host<schema, transport> {
   const transport = options.transport as transport
   const schema = options.schema as schema
+  const { baseUrl, meta, identity_pubkey } = options
+
+  if (meta && !baseUrl)
+    throw new Errors.BaseError('`baseUrl` is required when `meta` is set', {
+      details: 'host_id and transport bindings need a fully-qualified origin',
+    })
+  if (meta && !identity_pubkey)
+    throw new Errors.BaseError('`identity_pubkey` is required when `meta` is set', {
+      details:
+        'host.json publishes the long-term Ed25519 identity pubkey (unpadded base64url, 43 chars)',
+    })
+  // Lazy-inject the parent baseUrl / meta into the transport so
+  // HTTP-server-shaped adapters (e.g. host `deviceCode`) can
+  // populate `verification_uri` from a single app-wide value.
+  if (baseUrl) transport.bindBaseUrl?.(baseUrl)
+  if (meta) transport.bindMeta?.(meta)
 
   const emitter = Events.create<HostEventMap<schema>>()
   // User-supplied `request` listeners, in registration order. The
@@ -265,22 +289,27 @@ export function create<
   }
   const pending = new Map<Rpc.Id, PendingRequest>()
 
-  function settle(id: Rpc.Id, response: Rpc.Response): boolean {
+  /**
+   * Returns the in-flight send Promise so callers that need to know
+   * the response actually flushed (popup hosts closing the window,
+   * worker hosts terminating, etc.) can `await` it. Resolves with
+   * `false` when no pending request matched `id`.
+   */
+  function settle(id: Rpc.Id, response: Rpc.Response): Promise<boolean> {
     const entry = pending.get(id)
-    if (!entry) return false
+    if (!entry) return Promise.resolve(false)
     pending.delete(id)
-    void safeSend(transport, [response])
-    return true
+    return safeSend(transport, [response]).then(() => true)
   }
 
-  function respond(id: Rpc.Id, result: unknown): void {
-    const ok = settle(id, Rpc.success({ id, result }))
+  async function respond(id: Rpc.Id, result: unknown): Promise<void> {
+    const ok = await settle(id, Rpc.success({ id, result }))
     if (!ok) throw new UnknownRequestError(id)
   }
 
-  function reject(id: Rpc.Id, error: reject.Error): void {
+  async function reject(id: Rpc.Id, error: reject.Error): Promise<void> {
     const { code, message, data } = error
-    const ok = settle(id, Rpc.error({ id, code, message, data }))
+    const ok = await settle(id, Rpc.error({ id, code, message, data }))
     if (!ok) throw new UnknownRequestError(id)
   }
 
@@ -348,7 +377,7 @@ export function create<
       id: request.id,
       method: request.method,
       params: request.params,
-      reject: (rpcError: { code: number; data?: unknown; message: string }) => {
+      reject: (rpcError: { code: number; data?: unknown; message: string }) =>
         settle(
           request.id,
           Rpc.error({
@@ -357,12 +386,10 @@ export function create<
             id: request.id,
             message: rpcError.message,
           }),
-        )
-      },
+        ).then(() => undefined),
       request,
-      respond: (result: unknown) => {
-        settle(request.id, Rpc.success({ id: request.id, result }))
-      },
+      respond: (result: unknown) =>
+        settle(request.id, Rpc.success({ id: request.id, result })).then(() => undefined),
     } as HostEventMap<schema>['request']
 
     // Iterate the user-registered listeners directly so we can capture
@@ -382,7 +409,7 @@ export function create<
       try {
         const resolved = await Promise.resolve(value)
         if (resolved !== undefined) {
-          settle(request.id, Rpc.success({ id: request.id, result: resolved }))
+          await settle(request.id, Rpc.success({ id: request.id, result: resolved }))
           break
         }
       } catch (cause) {
@@ -392,7 +419,7 @@ export function create<
 
     if (pending.has(request.id) && firstError) {
       if (firstError instanceof Rpc.RpcError)
-        settle(
+        await settle(
           request.id,
           Rpc.error({
             code: firstError.code,
@@ -402,7 +429,7 @@ export function create<
           }),
         )
       else
-        settle(
+        await settle(
           request.id,
           Rpc.error({
             code: -32603,
@@ -506,6 +533,32 @@ export function create<
   }
   const http = transport as HttpHandlers
 
+  // When `meta` + `baseUrl` are both set, wrap `transport.fetch` /
+  // `transport.listener` so GET `/.well-known/urpc/host.json`
+  // serves the auto-built document and every other request falls
+  // through to the underlying transport routes. Transports without
+  // `.fetch` can still publish a well-known (the wrapper exposes
+  // its own `.fetch` / `.listener` even when nothing else is mounted).
+  let httpFetch = http.fetch
+  let httpListener = http.listener
+  if (meta && baseUrl && identity_pubkey) {
+    const document = Wellknown.buildHostDocument({
+      baseUrl,
+      identity_pubkey,
+      meta,
+      transports: collectTransports(transport, baseUrl),
+    })
+    const wrapped = Wellknown.wrapFetch({
+      base: http.fetch
+        ? { fetch: http.fetch.bind(http) as (request: Request) => Promise<Response> }
+        : undefined,
+      document,
+      wellknownPath: Wellknown.hostPath,
+    })
+    httpFetch = wrapped.fetch
+    httpListener = wrapped.listener
+  }
+
   return {
     async close(cause) {
       if (!state.started) return
@@ -514,8 +567,8 @@ export function create<
       await transport.close(cause)
       emitter.emit('close', cause)
     },
-    fetch: http.fetch as Host<schema, transport>['fetch'],
-    listener: http.listener as Host<schema, transport>['listener'],
+    fetch: httpFetch as Host<schema, transport>['fetch'],
+    listener: httpListener as Host<schema, transport>['listener'],
     off(type, listener) {
       if (type === 'request') {
         requestListeners.delete(listener as Wata.Listener<HostEventMap<schema>['request']>)
@@ -555,6 +608,37 @@ export declare namespace create {
     schema extends Schema.Schema | undefined,
     transport extends Transport.Transport<'host'> = Transport.Transport<'host'>,
   > = {
+    /**
+     * Public origin of the host (e.g. `https://wallet.example`).
+     * Lifted to the `Wata.create` root because it's an app-wide
+     * concept — every transport on this `Wata` shares the same origin.
+     * Lazy-injected into transports that need it via
+     * {@link Transport.Transport.bindBaseUrl}.
+     *
+     * REQUIRED when {@link meta} is supplied (we need it to build
+     * `host_id` and the transport bindings in the published
+     * `host.json`). Optional otherwise.
+     */
+    baseUrl?: string | undefined
+    /**
+     * Host's long-term Ed25519 identity public key, **unpadded base64url**
+     * (32 raw bytes → 43 characters). REQUIRED per [uRPC `discovery.md`
+     * §2.2](https://github.com/tempoxyz/urpc/blob/main/specs/discovery.md)
+     * whenever {@link meta} + {@link baseUrl} are set (i.e. whenever
+     * `Wata` auto-publishes `/.well-known/urpc/host.json`).
+     */
+    identity_pubkey?: string | undefined
+    /**
+     * Optional human-facing app metadata. When set together with
+     * {@link baseUrl} and {@link identity_pubkey}, `Wata` auto-publishes
+     * a `/.well-known/urpc/host.json` off the transport's existing
+     * `.fetch` / `.listener` — no separate mount required. The
+     * published doc's `transports` map is auto-built from the
+     * transport's {@link Transport.Transport.discovery} binding.
+     * Lazy-injected into transports that opt into
+     * {@link Transport.Transport.bindMeta}.
+     */
+    meta?: Discovery.Meta | undefined
     /** Optional method-registry schema (typed `'request'` / `'notification'` payloads). */
     schema?: schema | undefined
     /** Host-role transport this wata wraps. */
@@ -564,6 +648,25 @@ export declare namespace create {
 
 type PendingRequest = {
   request: Rpc.Request
+}
+
+/**
+ * Collect the per-transport `transports` map entries the wrapping
+ * `Wata.create({ baseUrl, meta })` publishes in `host.json`. Walks
+ * the single bound transport (and any nested HTTP-shaped sub-transports
+ * a future composite adapter might expose) and asks each one to
+ * contribute its discovery binding for `baseUrl`.
+ *
+ * @internal
+ */
+export function collectTransports(
+  transport: Transport.Transport,
+  baseUrl: string,
+): Record<string, unknown> {
+  const transports: Record<string, unknown> = {}
+  const discovery = transport.discovery
+  if (discovery) transports[discovery.id] = discovery.binding(baseUrl)
+  return transports
 }
 
 async function safeSend(

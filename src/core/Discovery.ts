@@ -29,7 +29,7 @@
  * skip the fetch and pass a {@link HostDocument} directly.
  */
 
-import { z } from 'zod'
+import { z } from 'zod/mini'
 
 import * as Errors from './Errors.js'
 
@@ -40,31 +40,53 @@ export const version = '1.0'
 
 /** Zod schemas for the published discovery documents. */
 export namespace schema {
-  /** 32-byte `0x`-prefixed hex public key. */
-  export const hexPubkey = z.templateLiteral(
-    ['0x', z.string().regex(/^[0-9a-fA-F]{64}$/)],
-    'expected 32-byte 0x-prefixed hex pubkey',
+  /**
+   * Long-term Ed25519 public key, encoded per
+   * [uRPC `discovery.md` §2.2](https://github.com/tempoxyz/urpc/blob/main/specs/discovery.md):
+   * **unpadded base64url**, 32 raw bytes → exactly 43 characters from
+   * the URL-safe alphabet `[A-Za-z0-9_-]`.
+   */
+  export const identityPubkey = z.string().check(
+    z.regex(/^[A-Za-z0-9_-]{43}$/, {
+      error: 'expected 32-byte unpadded base64url Ed25519 pubkey (43 chars)',
+    }),
   )
 
-  /** Plain `https://`-only URL. */
-  export const httpsUrl = z.url({
-    protocol: /^https$/,
-    error: 'expected an https:// URL',
-  })
+  /**
+   * `https://` URL, with the standard loopback exception for local
+   * development (matches OAuth 2.0 RFC 8252 §7.3, WebAuthn, Service
+   * Workers, etc.): `http://` is accepted iff the host is `localhost`,
+   * `127.0.0.1`, or `[::1]`. Everything else MUST be `https://`.
+   */
+  export const httpsUrl = z.url({ error: 'expected an https:// URL' }).check(
+    z.refine(
+      (value) => {
+        const url = new URL(value)
+        if (url.protocol === 'https:') return true
+        if (url.protocol !== 'http:') return false
+        return (
+          url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]'
+        )
+      },
+      { error: 'expected an https:// URL (http:// allowed only for loopback)' },
+    ),
+  )
 
   /**
    * `https://`-only URL that additionally rejects wildcard glob tokens
    * (`*`) anywhere in the URL string. Used for `callback_urls`, where
    * the spec mandates fully-qualified, exact-match entries.
    */
-  export const callbackUrl = httpsUrl.refine((value) => !value.includes('*'), {
-    message: 'callback_urls must not contain wildcard tokens',
-  })
+  export const callbackUrl = httpsUrl.check(
+    z.refine((value) => !value.includes('*'), {
+      error: 'callback_urls must not contain wildcard tokens',
+    }),
+  )
 
   /** `mobile-link` transport binding. */
   export const mobileLinkTransport = z.object({
     /** Custom URL scheme registered by the host app (e.g. `examplewallet`). */
-    scheme: z.string().min(1),
+    scheme: z.string().check(z.minLength(1)),
     /** HTTPS universal/app-link prefix the host responds to. */
     universal_link: httpsUrl,
   })
@@ -104,19 +126,42 @@ export namespace schema {
   })
 
   /**
+   * Human-facing app metadata. Carried symmetrically on both
+   * `host.json` and `consumer.json` so the opposite side can render
+   * "App XYZ is requesting …" in approval / connection chrome without
+   * having to invent its own channel.
+   */
+  export const meta = z.object({
+    /** Display name shown in approval / connection UIs. */
+    name: z.string().check(z.minLength(1)),
+    /** Absolute URL to a square icon (PNG / SVG / WebP). */
+    icon: z.optional(httpsUrl),
+    /** Short human-facing description shown alongside `name`. */
+    description: z.optional(z.string()),
+    /**
+     * Canonical homepage / marketing URL for the app. MAY differ from
+     * the document's `origin` (e.g. doc published at
+     * `https://wallet.example` but marketing site at
+     * `https://walletapp.com`). Named `website_url` to disambiguate
+     * from the protocol-level `origin` field.
+     */
+    website_url: z.optional(httpsUrl),
+  })
+
+  /**
    * `transports` map. Known keys are validated against their per-transport
    * binding shape; unknown keys are preserved verbatim. Per the spec,
    * known keys whose value fails to validate are silently dropped (the
-   * host is treated as not advertising that transport) — `.catch(undefined)`
+   * host is treated as not advertising that transport) — `z.catch(..., undefined)`
    * absorbs the parse failure without aborting the document.
    */
   export const transports = z.looseObject({
-    'mobile-link': mobileLinkTransport.optional().catch(undefined),
-    'mobile-web-auth': mobileWebAuthTransport.optional().catch(undefined),
-    relay: relayTransport.optional().catch(undefined),
-    'device-code': deviceCodeTransport.optional().catch(undefined),
-    window: windowTransport.optional().catch(undefined),
-    'webhook-callback': webhookCallbackTransport.optional().catch(undefined),
+    'mobile-link': z.catch(z.optional(mobileLinkTransport), undefined),
+    'mobile-web-auth': z.catch(z.optional(mobileWebAuthTransport), undefined),
+    relay: z.catch(z.optional(relayTransport), undefined),
+    'device-code': z.catch(z.optional(deviceCodeTransport), undefined),
+    window: z.catch(z.optional(windowTransport), undefined),
+    'webhook-callback': z.catch(z.optional(webhookCallbackTransport), undefined),
   })
 
   /**
@@ -132,40 +177,68 @@ export namespace schema {
     /** Self-asserted origin (`scheme + host + port`); checked against the fetch URL. */
     origin: httpsUrl,
     /** Stable identifier (RECOMMENDED to be the bare hostname). */
-    id: z.string().min(1),
+    id: z.string().check(z.minLength(1)),
   } as const
 
   /** Host-side discovery manifest published at `host.json`. */
   export const hostDocument = z.object({
     ...sharedHeader,
     /** Human-readable display name. */
-    name: z.string().min(1),
+    name: z.string().check(z.minLength(1)),
     /** Optional URL of a square icon. */
-    icon: httpsUrl.optional(),
+    icon: z.optional(httpsUrl),
+    /** Short human-facing description shown alongside `name`. */
+    description: z.optional(z.string()),
+    /**
+     * Canonical homepage / marketing URL for this host app. MAY differ
+     * from `origin`. Named `website_url` to disambiguate from the
+     * protocol-level `origin` field.
+     */
+    website_url: z.optional(httpsUrl),
     /** Optional capability tags for coarse-grained directory filtering. */
-    capabilities: z.array(z.string()).optional(),
-    /** Host's long-term Ed25519 identity public key, 32 bytes hex. */
-    identity_pubkey: hexPubkey,
+    capabilities: z.optional(z.array(z.string())),
+    /**
+     * Host's long-term Ed25519 identity public key, **unpadded base64url**
+     * (32 raw bytes → 43 characters). REQUIRED per [uRPC `discovery.md`
+     * §2.2](https://github.com/tempoxyz/urpc/blob/main/specs/discovery.md);
+     * consumers use it to pin and verify the host's signature on session
+     * key shares. MUST be stable across sessions — rotation requires a
+     * new well-known publication.
+     */
+    identity_pubkey: identityPubkey,
     /**
      * Per-transport binding map. MUST contain at least one usable entry —
      * known transports with malformed bindings are silently dropped, so
      * the refine counts only entries whose value is defined.
      */
-    transports: transports.refine(
-      (value) => Object.values(value).some((binding) => binding !== undefined),
-      { message: 'transports must contain at least one valid entry' },
+    transports: transports.check(
+      z.refine((value) => Object.values(value).some((binding) => binding !== undefined), {
+        error: 'transports must contain at least one valid entry',
+      }),
     ),
   })
 
   /** Consumer-side discovery manifest published at `consumer.json`. */
   export const consumerDocument = z.object({
     ...sharedHeader,
+    /** Human-readable display name shown in host approval chrome. */
+    name: z.optional(z.string().check(z.minLength(1))),
+    /** Optional URL of a square icon. */
+    icon: z.optional(httpsUrl),
+    /** Short human-facing description shown alongside `name`. */
+    description: z.optional(z.string()),
+    /**
+     * Canonical homepage / marketing URL for this consumer app. MAY
+     * differ from `origin`. Named `website_url` to disambiguate from
+     * the protocol-level `origin` field.
+     */
+    website_url: z.optional(httpsUrl),
     /**
      * Allowlist of fully-qualified callback URLs the consumer accepts.
      * Hosts MUST verify the consumer's `webhook_url` exact-matches one
      * of these. Wildcard segments are rejected.
      */
-    callback_urls: z.array(callbackUrl).optional(),
+    callback_urls: z.optional(z.array(callbackUrl)),
   })
 }
 
@@ -177,6 +250,13 @@ export type ConsumerDocument = z.output<typeof schema.consumerDocument>
 
 /** Parsed `host.json` `transports` map. */
 export type Transports = HostDocument['transports']
+
+/**
+ * Human-facing app metadata carried symmetrically on both `host.json`
+ * and `consumer.json`. Used by host approval chrome to label the
+ * consumer and by consumer connection chrome to label the host.
+ */
+export type Meta = z.output<typeof schema.meta>
 
 /**
  * Compose the full discovery URL for a host's `host.json`.
@@ -264,15 +344,42 @@ export declare namespace fetchConsumer {
   type Options = fetchHost.Options
 }
 
+/**
+ * Per-URL in-process cache used for `ETag` / `If-None-Match`
+ * revalidation per [uRPC `discovery.md` §2.5](https://github.com/tempoxyz/urpc/blob/main/specs/discovery.md):
+ * servers SHOULD emit a strong validator and consumers SHOULD revalidate
+ * with `If-None-Match`. On a `304 Not Modified` response, the cached
+ * body is returned without re-parsing.
+ */
+const etagCache = new Map<string, { etag: string; body: unknown }>()
+
+/**
+ * Maximum response body size for well-known fetches.
+ *
+ * Per [uRPC `discovery.md` §2.5](https://github.com/tempoxyz/urpc/blob/main/specs/discovery.md):
+ * consumers MUST enforce a limit; RECOMMENDED 64 KiB. Defends against
+ * a host returning an oversized payload that exhausts memory before
+ * Zod parsing has a chance to bail.
+ */
+const maxResponseBytes = 64 * 1024
+
 async function fetchJson(
   url: string,
   options: { fetch?: typeof fetch | undefined; signal?: AbortSignal | undefined },
 ): Promise<unknown> {
   const fetchFn = options.fetch ?? fetch
+  const cached = etagCache.get(url)
   let response: Response
   try {
     response = await fetchFn(url, {
-      headers: { accept: 'application/json' },
+      headers: {
+        accept: 'application/json',
+        ...(cached ? { 'if-none-match': cached.etag } : {}),
+      },
+      // Spec §2.5: servers MUST NOT redirect across origins; we surface
+      // a `ProtocolError` for any cross-origin 3xx and follow same-origin
+      // redirects manually below.
+      redirect: 'manual',
       ...(options.signal ? { signal: options.signal } : {}),
     })
   } catch (cause) {
@@ -281,18 +388,99 @@ async function fetchJson(
       cause: cause as Error,
     })
   }
+  // RFC 9110 §15.4.5 — 304 means the cached representation is still
+  // current. Spec §2.5 says consumers SHOULD revalidate with
+  // `If-None-Match`; the server's 304 means our cached body is good.
+  if (response.status === 304 && cached) return cached.body
+  // `redirect: 'manual'` surfaces 3xx as `response.type === 'opaqueredirect'`
+  // in browsers (status 0, no headers) and as a real 3xx in Node. Either
+  // way the spec rule is the same: reject. We can't safely follow
+  // because we can't compare origins on the opaque case.
+  if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400))
+    throw new Errors.ProtocolError('discovery fetch redirected', {
+      details: `${url}: ${response.status} (cross-origin redirects forbidden per spec §2.5)`,
+    })
   if (!response.ok)
     throw new Errors.ProtocolError('discovery fetch returned non-2xx', {
       details: `${url}: ${response.status} ${response.statusText}`,
     })
+  // Enforce the spec §2.5 RECOMMENDED 64 KiB response-size cap. Prefer
+  // the advertised `content-length` so we can refuse before reading;
+  // fall back to a byte-counting stream reader to defend against
+  // missing / lying headers (e.g. chunked transfer with no length).
+  const advertisedLength = Number(response.headers.get('content-length'))
+  if (Number.isFinite(advertisedLength) && advertisedLength > maxResponseBytes)
+    throw new Errors.ProtocolError('discovery response exceeds size limit', {
+      details: `${url}: content-length ${advertisedLength} > ${maxResponseBytes}`,
+    })
+  let raw: string
   try {
-    return await response.json()
+    raw = await readBoundedText(response, maxResponseBytes)
+  } catch (cause) {
+    if (cause instanceof Errors.ProtocolError) throw cause
+    throw new Errors.ProtocolError('discovery response read failed', {
+      details: `${url}: ${(cause as Error).message}`,
+      cause: cause as Error,
+    })
+  }
+  let body: unknown
+  try {
+    body = JSON.parse(raw)
   } catch (cause) {
     throw new Errors.ProtocolError('discovery response is not valid JSON', {
       details: `${url}: ${(cause as Error).message}`,
       cause: cause as Error,
     })
   }
+  // Cache the parsed body keyed by URL + the server's strong validator
+  // so the next call can revalidate via `If-None-Match` and short-
+  // circuit on 304.
+  const responseEtag = response.headers.get('etag')
+  if (responseEtag) etagCache.set(url, { etag: responseEtag, body })
+  return body
+}
+
+/**
+ * Read a `Response` body as UTF-8 text, aborting if it exceeds
+ * `maxBytes`. Defends against missing or lying `content-length`
+ * headers by counting bytes as they arrive (chunked transfer
+ * encoding, no advertised length, etc.).
+ *
+ * Falls back to `response.text()` when the body isn't streamable
+ * (e.g. mocked `Response` in older test harnesses); the byte cap
+ * is then enforced post-decode.
+ */
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) {
+    const text = await response.text()
+    if (new TextEncoder().encode(text).byteLength > maxBytes)
+      throw new Errors.ProtocolError('discovery response exceeds size limit', {
+        details: `decoded ${text.length} chars exceeds ${maxBytes}-byte cap`,
+      })
+    return text
+  }
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let received = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    received += value.byteLength
+    if (received > maxBytes) {
+      await reader.cancel()
+      throw new Errors.ProtocolError('discovery response exceeds size limit', {
+        details: `received ${received} bytes exceeds ${maxBytes}-byte cap`,
+      })
+    }
+    chunks.push(value)
+  }
+  const merged = new Uint8Array(received)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(merged)
 }
 
 function joinOrigin(origin: string, path: string): string {
@@ -315,7 +503,7 @@ function assertOrigin(declared: string, fetchUrl: string, label: string): void {
     })
 }
 
-function assertParse<schema extends z.ZodType>(
+function assertParse<schema extends z.ZodMiniType>(
   schema: schema,
   value: unknown,
   label: string,

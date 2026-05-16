@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vp/test'
 import { Errors, Schema } from 'wata'
-import { z } from 'zod'
+import { z } from 'zod/mini'
 
 const ping = Schema.method({
   params: z.tuple([]),
@@ -51,8 +51,8 @@ describe('validate', () => {
   test('throws ProtocolError on shape mismatch', () => {
     expect(() => Schema.validate(ping.result, { ok: false })).toThrowErrorMatchingInlineSnapshot(
       `
-      [ProtocolError: schema validation failed
-      Details: ok: Invalid input: expected true]
+    	[ProtocolError: schema validation failed
+    	Details: ok: Invalid input]
     `,
     )
   })

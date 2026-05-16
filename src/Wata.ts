@@ -18,12 +18,15 @@
  * and discovery-aware bootstrap land in later phases (see `tasks/PLAN.md`).
  */
 
+import * as Discovery from './core/Discovery.js'
 import * as Envelope from './core/Envelope.js'
 import * as Errors from './core/Errors.js'
 import * as Events from './core/Events.js'
+import * as Http from './core/Http.js'
 import * as Rpc from './core/Rpc.js'
 import * as Schema from './core/Schema.js'
 import * as Transport from './core/Transport.js'
+import * as Wellknown from './core/Wellknown.js'
 
 /**
  * Result of a single {@link Consumer.send} call. We return `{ id, result }`
@@ -58,9 +61,24 @@ export type LifecycleEventMap = {
 /**
  * Consumer-side `Wata`. Returned by {@link create}.
  */
-export type Consumer<schema extends Schema.Schema | undefined = undefined> = {
+export type Consumer<
+  schema extends Schema.Schema | undefined = undefined,
+  transport extends Transport.Transport<'consumer'> = Transport.Transport<'consumer'>,
+> = {
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
+  /**
+   * Web-standard fetch handler + Node `http.RequestListener` pair.
+   * Present (with the standard {@link Http.Server} signatures) when
+   * either the wrapped transport carries HTTP-server-shaped `.fetch`
+   * / `.listener` (e.g. the future `webhookCallback`) or when
+   * {@link create.Options.meta} + {@link create.Options.baseUrl} were
+   * supplied (so a `/.well-known/urpc/consumer.json` publisher is
+   * mounted). Otherwise both are `undefined`.
+   */
+  fetch: Http.Handlers<transport>['fetch']
+  /** See {@link fetch}. */
+  listener: Http.Handlers<transport>['listener']
   /**
    * Send a typed JSON-RPC notification (no response expected).
    * Auto-{@link Consumer.start}s on first use.
@@ -110,7 +128,7 @@ export type Consumer<schema extends Schema.Schema | undefined = undefined> = {
    */
   start: () => Promise<void>
   /** The wrapped transport. */
-  transport: Transport.Transport<'consumer'>
+  transport: transport
 }
 
 export declare namespace Consumer {
@@ -172,11 +190,23 @@ export declare namespace Consumer {
  * const { result } = await wata.send({ method: 'ping', params: [] })
  * ```
  */
-export function create<const schema extends Schema.Schema | undefined = undefined>(
-  options: create.Options<schema>,
-): Consumer<schema> {
-  const { transport } = options
+export function create<
+  const schema extends Schema.Schema | undefined = undefined,
+  const transport extends Transport.Transport<'consumer'> = Transport.Transport<'consumer'>,
+>(options: create.Options<schema, transport>): Consumer<schema, transport> {
+  const transport = options.transport as transport
   const schema = options.schema as schema
+  const { baseUrl, meta } = options
+
+  if (meta && !baseUrl)
+    throw new Errors.BaseError('`baseUrl` is required when `meta` is set', {
+      details: 'consumer_id needs a fully-qualified origin',
+    })
+  // Lazy-inject the parent baseUrl / meta into the transport so
+  // (e.g.) consumer `deviceCode` can derive `consumer_url` and
+  // forward `meta` to the host on `/register`.
+  if (baseUrl) transport.bindBaseUrl?.(baseUrl)
+  if (meta) transport.bindMeta?.(meta)
 
   const emitter = Events.create<LifecycleEventMap>()
 
@@ -314,6 +344,30 @@ export function create<const schema extends Schema.Schema | undefined = undefine
     return startPromise
   }
 
+  // HTTP-shaped consumer transports (future `webhookCallback` etc.)
+  // expose `.fetch` / `.listener`. When `meta` + `baseUrl` are set,
+  // wrap them so GET `/.well-known/urpc/consumer.json` serves the
+  // auto-built document and every other request falls through.
+  type HttpHandlers = {
+    fetch?: (request: Request) => Promise<Response>
+    listener?: (req: unknown, res: unknown) => void
+  }
+  const http = transport as HttpHandlers
+  let httpFetch = http.fetch
+  let httpListener = http.listener
+  if (meta && baseUrl) {
+    const document = Wellknown.buildConsumerDocument({ baseUrl, meta })
+    const wrapped = Wellknown.wrapFetch({
+      base: http.fetch
+        ? { fetch: http.fetch.bind(http) as (request: Request) => Promise<Response> }
+        : undefined,
+      document,
+      wellknownPath: Wellknown.consumerPath,
+    })
+    httpFetch = wrapped.fetch
+    httpListener = wrapped.listener
+  }
+
   return {
     async close(cause) {
       if (!state.started) return
@@ -322,6 +376,8 @@ export function create<const schema extends Schema.Schema | undefined = undefine
       await transport.close(cause)
       emitter.emit('close', cause)
     },
+    fetch: httpFetch as Consumer<schema, transport>['fetch'],
+    listener: httpListener as Consumer<schema, transport>['listener'],
     async notify(opts) {
       if (!state.started) await start()
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
@@ -367,11 +423,35 @@ export function create<const schema extends Schema.Schema | undefined = undefine
 
 export declare namespace create {
   /** Options for {@link create}. */
-  type Options<schema extends Schema.Schema | undefined> = {
+  type Options<
+    schema extends Schema.Schema | undefined,
+    transport extends Transport.Transport<'consumer'> = Transport.Transport<'consumer'>,
+  > = {
+    /**
+     * Public origin of the consumer app (e.g. `https://acme.dev`).
+     * Lifted to the `Wata.create` root because it's an app-wide
+     * concept. Lazy-injected into transports that need it via
+     * {@link Transport.Transport.bindBaseUrl} — e.g. consumer
+     * `deviceCode` derives `consumer_url =
+     * ${baseUrl}/.well-known/urpc/consumer.json` from it.
+     *
+     * REQUIRED when {@link meta} is supplied.
+     */
+    baseUrl?: string | undefined
+    /**
+     * Optional human-facing app metadata. When set together with
+     * {@link baseUrl}, `Wata` auto-publishes a
+     * `/.well-known/urpc/consumer.json` off the transport's
+     * `.fetch` / `.listener` (or as a standalone surface if the
+     * transport doesn't expose its own HTTP handlers).
+     * Lazy-injected into transports via
+     * {@link Transport.Transport.bindMeta}.
+     */
+    meta?: Discovery.Meta | undefined
     /** Optional method-registry schema (typed `send` / `notify` payloads). */
     schema?: schema | undefined
     /** Consumer-role transport this wata wraps. */
-    transport: Transport.Transport<'consumer'>
+    transport: transport
   }
 }
 

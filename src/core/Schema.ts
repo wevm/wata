@@ -16,7 +16,7 @@
  * `Wata` callsite.
  */
 
-import { z } from 'zod'
+import { z } from 'zod/mini'
 
 import * as Errors from './Errors.js'
 
@@ -26,7 +26,10 @@ import * as Errors from './Errors.js'
  *
  * Construct with {@link method} so the generics are pinned correctly.
  */
-export type Method<params extends z.ZodType = z.ZodType, result extends z.ZodType = z.ZodType> = {
+export type Method<
+  params extends z.ZodMiniType = z.ZodMiniType,
+  result extends z.ZodMiniType = z.ZodMiniType,
+> = {
   params: params
   result: result
 }
@@ -37,7 +40,7 @@ export type Method<params extends z.ZodType = z.ZodType, result extends z.ZodTyp
  * @example
  * ```ts
  * import { Schema } from 'wata'
- * import { z } from 'zod'
+ * import { z } from 'zod/mini'
  *
  * const ping = Schema.method({
  *   params: z.tuple([]),
@@ -45,7 +48,7 @@ export type Method<params extends z.ZodType = z.ZodType, result extends z.ZodTyp
  * })
  * ```
  */
-export function method<const params extends z.ZodType, const result extends z.ZodType>(
+export function method<const params extends z.ZodMiniType, const result extends z.ZodMiniType>(
   options: Method<params, result>,
 ): Method<params, result> {
   return options
@@ -67,7 +70,7 @@ export type Schema<methods extends Record<string, Method> = Record<string, Metho
  * @example
  * ```ts
  * import { Schema } from 'wata'
- * import { z } from 'zod'
+ * import { z } from 'zod/mini'
  *
  * const schema = Schema.create({
  *   methods: {
@@ -90,7 +93,7 @@ export function create<const methods extends Record<string, Method>>(
  * to Standard Schema (or another dialect) in one place when v1.x lifts the
  * Zod-only restriction.
  */
-export type Inferred<schema extends z.ZodType> = z.output<schema>
+export type Inferred<schema extends z.ZodMiniType> = z.output<schema>
 
 /**
  * Method names defined on a {@link Schema}.
@@ -144,7 +147,7 @@ export type ResultOf<schema extends Schema, name extends MethodName<schema>> = I
  * const params = Schema.validate(method.params, value)
  * ```
  */
-export function validate<const schema extends z.ZodType>(
+export function validate<const schema extends z.ZodMiniType>(
   schema: schema,
   value: unknown,
 ): Inferred<schema> {

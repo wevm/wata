@@ -38,7 +38,7 @@
  */
 
 import { Base64, Bytes, Hex } from 'ox'
-import { z } from 'zod'
+import { z } from 'zod/mini'
 
 import * as Errors from './Errors.js'
 import * as Rpc from './Rpc.js'
@@ -60,9 +60,9 @@ export type From = (typeof from)[keyof typeof from]
 /** Zod schemas for the on-the-wire envelope shapes. */
 export namespace schema {
   /** Base64url-encoded byte string (RFC 4648 §5; padding optional). */
-  export const base64url = z.string().regex(/^[A-Za-z0-9_-]*={0,2}$/, {
-    message: 'expected base64url-encoded string',
-  })
+  export const base64url = z
+    .string()
+    .check(z.regex(/^[A-Za-z0-9_-]*={0,2}$/, { error: 'expected base64url-encoded string' }))
 
   /** Sender-role discriminator on encrypted envelopes. */
   export const fromField = z.enum([from.consumer, from.host])

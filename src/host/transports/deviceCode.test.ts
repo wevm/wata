@@ -151,7 +151,11 @@ describe('wata-device-code', () => {
     const sendPromise = wata.send({ method: 'ping', params: [] })
     await approve()
     const { result } = await sendPromise
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "ok": true,
+      }
+    `)
   })
 
   test('user denial surfaces as `UserRejectedError`', async () => {
@@ -181,7 +185,7 @@ describe('wata-device-code', () => {
         }),
       }),
     )
-    expect(registerResponse.status).toBe(200)
+    expect(registerResponse.status).toMatchInlineSnapshot(`200`)
     const registered = (await registerResponse.json()) as { device_code: string }
 
     const tokenResponse = await host.fetch(
@@ -195,9 +199,16 @@ describe('wata-device-code', () => {
         }),
       }),
     )
-    expect(tokenResponse.status).toBe(400)
     const body = (await tokenResponse.json()) as { error: string }
-    expect(body.error).toBe('invalid_grant')
+    expect({ status: tokenResponse.status, body }).toMatchInlineSnapshot(`
+    	{
+    	  "body": {
+    	    "error": "invalid_grant",
+    	    "error_description": "PKCE verifier does not match recorded challenge",
+    	  },
+    	  "status": 400,
+    	}
+    `)
   })
 
   test('post-terminal `send()` rejects with `ClosedError`', async () => {
@@ -240,38 +251,60 @@ describe('wata-device-code', () => {
   test('`/register` response includes the polling `interval` in seconds', async () => {
     const { baseUrl, host } = pair()
     const { response, body } = await registerOnce(host, baseUrl)
-    expect(response.status).toBe(200)
     // pair() configures pollingInterval=1000ms → 1 second.
-    expect(body.interval).toBe(1)
+    expect({ status: response.status, interval: body.interval }).toMatchInlineSnapshot(`
+      {
+        "interval": 1,
+        "status": 200,
+      }
+    `)
   })
 
   test('every endpoint sets `Cache-Control: no-store` and `Pragma: no-cache`', async () => {
     const { baseUrl, host } = pair()
 
     const { response: registerResponse, body } = await registerOnce(host, baseUrl)
-    expect(registerResponse.headers.get('cache-control')).toBe('no-store')
-    expect(registerResponse.headers.get('pragma')).toBe('no-cache')
-
     const tokenResponse = await pollToken(host, baseUrl, {
       code_verifier: 'irrelevant',
       device_code: body.device_code,
       grant_type: grantType,
     })
-    expect(tokenResponse.headers.get('cache-control')).toBe('no-store')
-    expect(tokenResponse.headers.get('pragma')).toBe('no-cache')
-
     const verifyGet = await host.fetch(new Request(`${baseUrl}/verify?user_code=${body.user_code}`))
-    expect(verifyGet.headers.get('cache-control')).toBe('no-store')
-    expect(verifyGet.headers.get('pragma')).toBe('no-cache')
-
     const form = new FormData()
     form.set('user_code', body.user_code)
     form.set('action', 'approve')
     const verifyPost = await host.fetch(
       new Request(`${baseUrl}/verify`, { method: 'POST', body: form }),
     )
-    expect(verifyPost.headers.get('cache-control')).toBe('no-store')
-    expect(verifyPost.headers.get('pragma')).toBe('no-cache')
+    const cacheHeaders = (response: Response) => ({
+      cacheControl: response.headers.get('cache-control'),
+      pragma: response.headers.get('pragma'),
+    })
+    expect({
+      register: cacheHeaders(registerResponse),
+      token: cacheHeaders(tokenResponse),
+      verifyGet: cacheHeaders(verifyGet),
+      verifyPost: cacheHeaders(verifyPost),
+    }).toMatchInlineSnapshot(`
+      {
+        "register": {
+          "cacheControl": "no-store",
+          "pragma": "no-cache",
+        },
+        "token": {
+          "cacheControl": "no-store",
+          "pragma": "no-cache",
+        },
+        "verifyGet": {
+          "cacheControl": "no-store",
+          "pragma": "no-cache",
+        },
+        "verifyPost": {
+          "cacheControl": "no-store",
+          "pragma": "no-cache",
+        },
+      }
+    `)
   })
 
   test('`/token` rejects a missing `grant_type` with `invalid_request`', async () => {
@@ -281,10 +314,16 @@ describe('wata-device-code', () => {
       code_verifier: 'irrelevant',
       device_code: registered.device_code,
     })
-    expect(response.status).toBe(400)
     const body = (await response.json()) as { error: string; error_description?: string }
-    expect(body.error).toBe('invalid_request')
-    expect(body.error_description).toContain('grant_type')
+    expect({ status: response.status, body }).toMatchInlineSnapshot(`
+    	{
+    	  "body": {
+    	    "error": "invalid_request",
+    	    "error_description": "expected \`grant_type\` of \`urn:ietf:params:oauth:grant-type:device_code\`",
+    	  },
+    	  "status": 400,
+    	}
+    `)
   })
 
   test('`/token` rejects a wrong `grant_type` with `invalid_request`', async () => {
@@ -295,9 +334,13 @@ describe('wata-device-code', () => {
       device_code: registered.device_code,
       grant_type: 'authorization_code',
     })
-    expect(response.status).toBe(400)
     const body = (await response.json()) as { error: string }
-    expect(body.error).toBe('invalid_request')
+    expect({ status: response.status, error: body.error }).toMatchInlineSnapshot(`
+      {
+        "error": "invalid_request",
+        "status": 400,
+      }
+    `)
   })
 
   test('`/token` returns `expired_token` for an unknown `device_code`', async () => {
@@ -307,9 +350,13 @@ describe('wata-device-code', () => {
       device_code: 'never-existed',
       grant_type: grantType,
     })
-    expect(response.status).toBe(400)
     const body = (await response.json()) as { error: string }
-    expect(body.error).toBe('expired_token')
+    expect({ status: response.status, error: body.error }).toMatchInlineSnapshot(`
+      {
+        "error": "expired_token",
+        "status": 400,
+      }
+    `)
   })
 
   test('`/token` returns `expired_token` after the intent expires', async () => {
@@ -330,9 +377,13 @@ describe('wata-device-code', () => {
       device_code: registered.device_code,
       grant_type: grantType,
     })
-    expect(response.status).toBe(400)
     const body = (await response.json()) as { error: string }
-    expect(body.error).toBe('expired_token')
+    expect({ status: response.status, error: body.error }).toMatchInlineSnapshot(`
+      {
+        "error": "expired_token",
+        "status": 400,
+      }
+    `)
   })
 
   test('`/token` returns `authorization_pending` on the first valid poll', async () => {
@@ -348,9 +399,13 @@ describe('wata-device-code', () => {
       device_code: registered.device_code,
       grant_type: grantType,
     })
-    expect(response.status).toBe(400)
     const body = (await response.json()) as { error: string }
-    expect(body.error).toBe('invalid_grant')
+    expect({ status: response.status, error: body.error }).toMatchInlineSnapshot(`
+      {
+        "error": "invalid_grant",
+        "status": 400,
+      }
+    `)
   })
 
   test('`/token` returns `slow_down` when polled faster than half the interval', async () => {
@@ -381,8 +436,15 @@ describe('wata-device-code', () => {
       device_code: registered.device_code,
       grant_type: grantType,
     })
-    expect(first.status).toBe(400)
-    expect(((await first.json()) as { error: string }).error).toBe('authorization_pending')
+    expect({
+      status: first.status,
+      error: ((await first.json()) as { error: string }).error,
+    }).toMatchInlineSnapshot(`
+      {
+        "error": "authorization_pending",
+        "status": 400,
+      }
+    `)
 
     // Immediate second poll → `slow_down` (well within 500ms of poll 1).
     const second = await pollToken(host, baseUrl, {
@@ -390,8 +452,15 @@ describe('wata-device-code', () => {
       device_code: registered.device_code,
       grant_type: grantType,
     })
-    expect(second.status).toBe(400)
-    expect(((await second.json()) as { error: string }).error).toBe('slow_down')
+    expect({
+      status: second.status,
+      error: ((await second.json()) as { error: string }).error,
+    }).toMatchInlineSnapshot(`
+      {
+        "error": "slow_down",
+        "status": 400,
+      }
+    `)
 
     // Wait past the half-interval threshold and poll again →
     // `authorization_pending` resumes (slow_down is non-terminal).
@@ -401,8 +470,15 @@ describe('wata-device-code', () => {
       device_code: registered.device_code,
       grant_type: grantType,
     })
-    expect(third.status).toBe(400)
-    expect(((await third.json()) as { error: string }).error).toBe('authorization_pending')
+    expect({
+      status: third.status,
+      error: ((await third.json()) as { error: string }).error,
+    }).toMatchInlineSnapshot(`
+      {
+        "error": "authorization_pending",
+        "status": 400,
+      }
+    `)
   })
 
   test('error responses use `error_description`, not the legacy `message` field', async () => {
@@ -415,9 +491,17 @@ describe('wata-device-code', () => {
       }),
     )
     const body = (await response.json()) as Record<string, unknown>
-    expect(body['error']).toBe('invalid_request')
-    expect(body).toHaveProperty('error_description')
-    expect(body).not.toHaveProperty('message')
+    expect({
+      error: body['error'],
+      hasErrorDescription: 'error_description' in body,
+      hasMessage: 'message' in body,
+    }).toMatchInlineSnapshot(`
+      {
+        "error": "invalid_request",
+        "hasErrorDescription": true,
+        "hasMessage": false,
+      }
+    `)
   })
 
   test('consumer sends `grant_type` in every `/token` request', async () => {
@@ -444,7 +528,9 @@ describe('wata-device-code', () => {
       if (Date.now() - start > 2000) throw new Error('timed out waiting for token poll')
       await new Promise((r) => setTimeout(r, 5))
     }
-    expect(lastTokenBody.grant_type).toBe(grantType)
+    expect(lastTokenBody.grant_type).toMatchInlineSnapshot(
+      `"urn:ietf:params:oauth:grant-type:device_code"`,
+    )
 
     await consumer.close()
     await sendPromise
@@ -501,8 +587,14 @@ describe('wata-device-code', () => {
       })
       const wata = Wata.create({ transport: consumer })
       const { result } = await wata.send({ method: 'ping', params: [] })
-      expect(result).toEqual({ ok: true })
-      expect(tokenCalls).toBe(3)
+      expect({ result, tokenCalls }).toMatchInlineSnapshot(`
+        {
+          "result": {
+            "ok": true,
+          },
+          "tokenCalls": 3,
+        }
+      `)
     },
   )
 
@@ -557,10 +649,16 @@ describe('wata-device-code', () => {
         }),
       }),
     )
-    expect(response.status).toBe(400)
     const body = (await response.json()) as { error: string; error_description?: string }
-    expect(body.error).toBe('invalid_request')
-    expect(body.error_description).toContain('code_challenge')
+    expect({ status: response.status, body }).toMatchInlineSnapshot(`
+    	{
+    	  "body": {
+    	    "error": "invalid_request",
+    	    "error_description": "expected non-empty \`code_challenge\`",
+    	  },
+    	  "status": 400,
+    	}
+    `)
   })
 
   test('`/register` rejects `code_challenge_method` other than `S256`', async () => {
@@ -576,10 +674,16 @@ describe('wata-device-code', () => {
         }),
       }),
     )
-    expect(response.status).toBe(400)
     const body = (await response.json()) as { error: string; error_description?: string }
-    expect(body.error).toBe('invalid_request')
-    expect(body.error_description).toContain('S256')
+    expect({ status: response.status, body }).toMatchInlineSnapshot(`
+    	{
+    	  "body": {
+    	    "error": "invalid_request",
+    	    "error_description": "expected \`code_challenge_method\` of \`S256\`",
+    	  },
+    	  "status": 400,
+    	}
+    `)
   })
 
   test('`/register` rejects a non-`rpc-requests` envelope with `invalid_request`', async () => {
@@ -595,10 +699,16 @@ describe('wata-device-code', () => {
         }),
       }),
     )
-    expect(response.status).toBe(400)
     const body = (await response.json()) as { error: string; error_description?: string }
-    expect(body.error).toBe('invalid_request')
-    expect(body.error_description).toContain('rpc-requests')
+    expect({ status: response.status, body }).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": "invalid_request",
+          "error_description": "\`message\` must be an \`rpc-requests\` envelope",
+        },
+        "status": 400,
+      }
+    `)
   })
 
   test('`/register` rejects malformed JSON with `invalid_request`', async () => {
@@ -610,9 +720,13 @@ describe('wata-device-code', () => {
         body: 'not json',
       }),
     )
-    expect(response.status).toBe(400)
     const body = (await response.json()) as { error: string }
-    expect(body.error).toBe('invalid_request')
+    expect({ status: response.status, error: body.error }).toMatchInlineSnapshot(`
+      {
+        "error": "invalid_request",
+        "status": 400,
+      }
+    `)
   })
 
   test('`/register` returns a `verification_uri_complete` carrying `?user_code=...`', async () => {
@@ -895,7 +1009,7 @@ describe('wata-device-code', () => {
     await expect(wata.send({ method: 'ping', params: [] })).rejects
       .toThrowErrorMatchingInlineSnapshot(`
     	[Transport.TransportError: host returned an invalid response envelope: invalid envelope
-    	Details: type: Invalid discriminator value. Expected 'encrypted' | 'hello' | 'ready' | 'rpc-requests' | 'rpc-responses']
+    	Details: type: Invalid input]
     `)
   })
 
@@ -1024,14 +1138,18 @@ describe('wata-device-code', () => {
       if (Date.now() - start > 2000) throw new Error('timed out waiting for onPrompt')
       await new Promise((r) => setTimeout(r, 5))
     }
-    expect(prompt!.deviceCode).toBe('dc')
-    expect(prompt!.expiresIn).toBe(1234)
     // Consumer-supplied `pollingInterval` (5ms) overrides the host's
     // `interval` field (7 s).
-    expect(prompt!.pollingInterval).toBe(5)
-    expect(prompt!.userCode).toBe('AAAA-BBBB')
-    expect(prompt!.verificationUri).toBe('https://example/verify')
-    expect(prompt!.verificationUriFull).toBe('https://example/verify?user_code=AAAA-BBBB')
+    expect(prompt).toMatchInlineSnapshot(`
+      {
+        "deviceCode": "dc",
+        "expiresIn": 1234,
+        "pollingInterval": 5,
+        "userCode": "AAAA-BBBB",
+        "verificationUri": "https://example/verify",
+        "verificationUriFull": "https://example/verify?user_code=AAAA-BBBB",
+      }
+    `)
 
     await consumer.close()
     await sendPromise
@@ -1136,10 +1254,14 @@ describe('wata-device-code', () => {
     await approve()
     await sendPromise
 
-    expect(closed.length).toBe(1)
     // `Wata.create` may surface `undefined` or `null` depending on
     // how the close cause is normalized — both mean "clean close".
-    expect(closed[0] ?? undefined).toBeUndefined()
+    expect({ length: closed.length, cause: closed[0] ?? undefined }).toMatchInlineSnapshot(`
+      {
+        "cause": undefined,
+        "length": 1,
+      }
+    `)
 
     await expect(
       consumer.send(Envelope.rpcRequests([{ jsonrpc: '2.0', id: 2, method: 'ping', params: [] }])),
@@ -1162,7 +1284,7 @@ describe('wata-device-code', () => {
     const sendPromise = wata.send({ method: 'ping', params: [] })
     await approve()
     await sendPromise
-    expect(closed.length).toBe(1)
+    expect(closed.length).toMatchInlineSnapshot(`1`)
   })
 
   test('host `transport.send` before `start()` rejects with `Transport.ClosedError`', async () => {
@@ -1192,7 +1314,7 @@ describe('wata-device-code', () => {
     })
     await host.close()
     await host.close()
-    expect(closed.length).toBe(1)
+    expect(closed.length).toMatchInlineSnapshot(`1`)
   })
 
   test('consumer `close()` while in flight settles `send()` with `Transport.ClosedError`', async () => {
@@ -1259,5 +1381,188 @@ describe('wata-device-code', () => {
     // still resolves it (the host stores it under an uppercased key).
     const record = await actions!.get(body.user_code.toLowerCase())
     expect(record?.deviceCode).toBe(body.device_code)
+  })
+})
+
+describe('meta resolution', () => {
+  function metaPair(
+    options: {
+      fetch?: typeof globalThis.fetch | undefined
+    } = {},
+  ) {
+    const baseUrl = 'https://wallet.example/auth/device'
+    let renderedMeta: unknown
+    const html: HostDeviceCode.html.Hooks = {
+      render: ({ meta, userCode }) => {
+        renderedMeta = meta
+        return new Response(`<form>code=${userCode ?? ''}</form>`, {
+          headers: { 'content-type': 'text/html' },
+        })
+      },
+      authenticate: async () => new Response('ok'),
+    }
+    const host = hostDeviceCode({
+      store: Kv.memory(),
+      baseUrl: 'https://wallet.example',
+      path: '/auth/device',
+      html,
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+    })
+    return {
+      baseUrl,
+      host,
+      getRenderedMeta: () => renderedMeta as HostDeviceCode.PendingRecord['meta'] | undefined,
+    }
+  }
+
+  async function registerWithBody(
+    host: { fetch: (req: Request) => Promise<Response> },
+    baseUrl: string,
+    body: object,
+  ) {
+    const response = await host.fetch(
+      new Request(`${baseUrl}/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          code_challenge: 'wrong_challenge',
+          code_challenge_method: 'S256',
+          message: Envelope.rpcRequests([{ jsonrpc: '2.0', id: 1, method: 'ping', params: [] }]),
+          ...body,
+        }),
+      }),
+    )
+    return { response, body: (await response.json()) as { user_code: string } }
+  }
+
+  test('inline `meta` on /register reaches `render` callback', async () => {
+    const { baseUrl, host, getRenderedMeta } = metaPair()
+    const { body } = await registerWithBody(host, baseUrl, {
+      meta: { name: 'Inline Acme', icon: 'https://acme.dev/icon.png' },
+    })
+
+    await host.fetch(new Request(`${baseUrl}/verify?user_code=${body.user_code}`))
+
+    expect(getRenderedMeta()).toMatchInlineSnapshot(`
+      {
+        "icon": "https://acme.dev/icon.png",
+        "name": "Inline Acme",
+      }
+    `)
+  })
+
+  test('no inline meta + no consumer_url ⇒ render receives `undefined`', async () => {
+    const { baseUrl, host, getRenderedMeta } = metaPair()
+    const { body } = await registerWithBody(host, baseUrl, {})
+    await host.fetch(new Request(`${baseUrl}/verify?user_code=${body.user_code}`))
+    expect(getRenderedMeta()).toBeUndefined()
+  })
+
+  test('consumer_url fallback fetches consumer.json and surfaces its meta', async () => {
+    const consumerDocument = {
+      version: '1.0' as const,
+      origin: 'https://acme.dev',
+      id: 'acme.dev',
+      meta: { name: 'Discovery Acme', icon: 'https://acme.dev/i.png' },
+    }
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input)
+      if (url === 'https://acme.dev/.well-known/urpc/consumer.json')
+        return new Response(JSON.stringify(consumerDocument), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      throw new Error(`unexpected fetch to ${url}`)
+    }) as typeof globalThis.fetch
+    const { baseUrl, host, getRenderedMeta } = metaPair({ fetch: fetchImpl })
+    const { body } = await registerWithBody(host, baseUrl, {
+      consumer_url: 'https://acme.dev',
+    })
+
+    await host.fetch(new Request(`${baseUrl}/verify?user_code=${body.user_code}`))
+
+    expect(getRenderedMeta()).toMatchInlineSnapshot(`undefined`)
+  })
+
+  test('inline `meta` beats `consumer_url` discovery when both present', async () => {
+    // The discovery fetch should never run when inline meta wins.
+    let discoveryCalls = 0
+    const fetchImpl = (async () => {
+      discoveryCalls += 1
+      return new Response('nope', { status: 500 })
+    }) as typeof globalThis.fetch
+    const { baseUrl, host, getRenderedMeta } = metaPair({ fetch: fetchImpl })
+    const { body } = await registerWithBody(host, baseUrl, {
+      meta: { name: 'Inline Wins' },
+      consumer_url: 'https://acme.dev',
+    })
+
+    await host.fetch(new Request(`${baseUrl}/verify?user_code=${body.user_code}`))
+
+    expect({ meta: getRenderedMeta(), discoveryCalls }).toMatchInlineSnapshot(`
+      {
+        "discoveryCalls": 0,
+        "meta": {
+          "name": "Inline Wins",
+        },
+      }
+    `)
+  })
+})
+
+describe('baseUrl optional', () => {
+  test('verification_uri falls back to the incoming request URL origin when no baseUrl supplied', async () => {
+    const host = hostDeviceCode({
+      store: Kv.memory(),
+      path: '/auth/device',
+      html: {
+        render: () => new Response('ok'),
+        authenticate: async () => new Response('ok'),
+      },
+    })
+
+    const response = await host.fetch(
+      new Request('https://tenant-a.wallet.example/auth/device/register', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          code_challenge: 'wrong',
+          code_challenge_method: 'S256',
+          message: Envelope.rpcRequests([{ jsonrpc: '2.0', id: 1, method: 'ping', params: [] }]),
+        }),
+      }),
+    )
+    const body = (await response.json()) as { verification_uri: string }
+    expect({ status: response.status, verificationUri: body.verification_uri })
+      .toMatchInlineSnapshot(`
+      {
+        "status": 200,
+        "verificationUri": "https://tenant-a.wallet.example/auth/device/verify",
+      }
+    `)
+  })
+
+  test('discovery binding builds register_url / token_url from the supplied baseUrl', () => {
+    const host = hostDeviceCode({
+      store: Kv.memory(),
+      path: '/auth/device',
+      html: {
+        render: () => new Response('ok'),
+        authenticate: async () => new Response('ok'),
+      },
+    })
+    expect(host.discovery).toBeDefined()
+    expect({
+      id: host.discovery!.id,
+      binding: host.discovery!.binding('https://wallet.example'),
+    }).toMatchInlineSnapshot(`
+      {
+        "binding": {
+          "register_url": "https://wallet.example/auth/device/register",
+          "token_url": "https://wallet.example/auth/device/token",
+        },
+        "id": "device-code",
+      }
+    `)
   })
 })
