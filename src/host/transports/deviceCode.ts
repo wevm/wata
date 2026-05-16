@@ -55,12 +55,13 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { Hono } from 'hono'
 import { Base64, Bytes } from 'ox'
 
+import * as Discovery from '../../core/Discovery.js'
 import * as Envelope from '../../core/Envelope.js'
 import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
+import * as Http from '../../core/Http.js'
 import * as Kv from '../../core/Kv.js'
 import * as Transport from '../../core/Transport.js'
-import * as HttpServer from './internal/HttpServer.js'
 
 /** Persisted device-code lifecycle record. */
 export type PendingRecord = {
@@ -68,6 +69,14 @@ export type PendingRecord = {
   codeChallenge: string
   /** PKCE challenge method. v1 only allows `S256`. */
   codeChallengeMethod: 'S256'
+  /**
+   * Optional `consumer.json` URL supplied by the consumer at
+   * `/register` time. When set and no inline `meta` is present, the
+   * host fetches this once via {@link Discovery.fetchConsumer} to read
+   * the consumer's `meta` block. `undefined` when the consumer didn't
+   * advertise one.
+   */
+  consumerUrl?: string | undefined
   /** Epoch-ms creation. */
   createdAt: number
   /** Random opaque identifier the consumer holds and presents on `/token`. */
@@ -80,6 +89,13 @@ export type PendingRecord = {
    * before the first poll.
    */
   lastPolledAt?: number | undefined
+  /**
+   * Inline {@link Discovery.Meta} supplied by the consumer at
+   * `/register` time. Takes precedence over any `meta` resolved
+   * lazily from `consumerUrl`. `undefined` when the consumer didn't
+   * advertise inline meta.
+   */
+  meta?: Discovery.Meta | undefined
   /** Pending JSON-RPC `rpc-requests` envelope queued by the consumer. */
   message: Envelope.Envelope
   /** Host's `rpc-responses` envelope, populated once the user approves. */
@@ -96,14 +112,25 @@ export type Options = {
    * Public origin of the host (e.g. `https://wallet.example`). Combined
    * with {@link path} to derive the `verification_uri` returned to the
    * consumer in the `/register` response. Strips a trailing slash.
+   *
+   * Optional — when omitted, the transport falls back to the incoming
+   * request's URL origin. The parent `Wata.create({ baseUrl })` also
+   * lazy-injects its own value through {@link Transport.Transport.bindBaseUrl}.
+   * A constructor-level value wins over both fallbacks; reach for it
+   * in multi-tenant servers where each tenant has a fixed origin.
    */
-  baseUrl: string
+  baseUrl?: string | undefined
   /**
    * Authorization intent lifetime in seconds. Records past `expiresAt`
    * are GC'd lazily on next access and surface as `410 Gone` on
    * `/token`. Defaults to 600 (10 minutes).
    */
   expiresIn?: number | undefined
+  /**
+   * Override the `fetch` implementation used for the discovery-based
+   * `consumer.json` fallback. Defaults to `globalThis.fetch`.
+   */
+  fetch?: typeof globalThis.fetch | undefined
   /** Bring-your-own verification UI hooks. See {@link html}. */
   html: html.Hooks
   /**
@@ -149,6 +176,14 @@ export declare namespace html {
   namespace render {
     /** Argument passed to {@link html.Hooks.render}. */
     type Options = {
+      /**
+       * Resolved {@link Discovery.Meta} for the pending consumer, if
+       * any. Resolution order: inline `meta` on the queued register
+       * payload wins; otherwise fetched lazily from the consumer's
+       * `consumer_url` via {@link Discovery.fetchConsumer}. `undefined`
+       * when the consumer advertised neither.
+       */
+      meta: Discovery.Meta | undefined
       /** Pending {@link PendingRecord} for `userCode`, if found. */
       record: PendingRecord | undefined
       /** The original `Request` passed to `transport.fetch`. */
@@ -193,7 +228,7 @@ export declare namespace html {
 }
 
 /** `transport.fetch` / `transport.listener`-augmented {@link Transport.Transport}. */
-export type DeviceCodeTransport = Transport.Transport<'host'> & HttpServer.HttpServer
+export type DeviceCodeTransport = Transport.Transport<'host'> & Http.Server
 
 /**
  * Create a host-side `device-code` transport.
@@ -211,9 +246,31 @@ export type DeviceCodeTransport = Transport.Transport<'host'> & HttpServer.HttpS
  * ```
  */
 export function deviceCode(options: Options): DeviceCodeTransport {
-  const { baseUrl, expiresIn = 600, html, path, pollingInterval = 5000, store } = options
-  const origin = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
-  const verificationUri = `${origin}${path ?? ''}/verify`
+  const {
+    expiresIn = 600,
+    fetch: fetchImpl = globalThis.fetch.bind(globalThis),
+    html,
+    path,
+    pollingInterval = 5000,
+    store,
+  } = options
+
+  // Constructor-level `baseUrl` is sticky and wins over any later
+  // `bindBaseUrl()` call from a wrapping `Wata.create({ baseUrl })`.
+  // When neither is set, the request-handler falls back to the
+  // incoming request URL's origin.
+  const baseUrl_ctor = options.baseUrl ? trimTrailingSlash(options.baseUrl) : undefined
+  let baseUrl_bound: string | undefined
+
+  function resolveBaseUrl(requestUrl: string): string {
+    if (baseUrl_ctor) return baseUrl_ctor
+    if (baseUrl_bound) return baseUrl_bound
+    return new URL(requestUrl).origin
+  }
+
+  function verificationUriFor(requestUrl: string): string {
+    return `${resolveBaseUrl(requestUrl)}${path ?? ''}/verify`
+  }
 
   const emitter = Events.create<Transport.EventMap>()
 
@@ -282,7 +339,13 @@ export function deviceCode(options: Options): DeviceCodeTransport {
 
   app.post('/register', async (c) => {
     const body = (await c.req.json().catch(() => undefined)) as
-      | { code_challenge?: unknown; code_challenge_method?: unknown; message?: unknown }
+      | {
+          code_challenge?: unknown
+          code_challenge_method?: unknown
+          consumer_url?: unknown
+          message?: unknown
+          meta?: unknown
+        }
       | undefined
     if (!body || typeof body !== 'object')
       return c.json(
@@ -321,15 +384,49 @@ export function deviceCode(options: Options): DeviceCodeTransport {
         { status: 400 },
       )
 
+    // Validate inline `meta` against the discovery schema so a
+    // malformed metadata block fails fast (and isn't surfaced to the
+    // host's approval UI in a half-broken shape).
+    let meta: Discovery.Meta | undefined
+    if (body.meta !== undefined) {
+      try {
+        meta = Discovery.schema.meta.parse(body.meta)
+      } catch (cause) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: `invalid \`meta\`: ${(cause as Error).message}`,
+          },
+          { status: 400 },
+        )
+      }
+    }
+    // `consumer_url` is purely a discovery hint — validated as a
+    // string here, fetched/parsed lazily on the verification page.
+    let consumerUrl: string | undefined
+    if (body.consumer_url !== undefined) {
+      if (typeof body.consumer_url !== 'string')
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: '`consumer_url` must be a string',
+          },
+          { status: 400 },
+        )
+      consumerUrl = body.consumer_url
+    }
+
     const deviceCodeValue = generateDeviceCode()
     const userCodeValue = generateUserCode()
     const now = Date.now()
     const record: PendingRecord = {
       codeChallenge: body.code_challenge,
       codeChallengeMethod: 'S256',
+      ...(consumerUrl ? { consumerUrl } : {}),
       createdAt: now,
       deviceCode: deviceCodeValue,
       expiresAt: now + expiresIn * 1000,
+      ...(meta ? { meta } : {}),
       message: envelope,
       status: 'pending',
       userCode: userCodeValue,
@@ -338,6 +435,7 @@ export function deviceCode(options: Options): DeviceCodeTransport {
     await store.set(deviceCodeKey(deviceCodeValue), record, { ttl: expiresIn })
     await store.set(userCodeKey(userCodeValue), record, { ttl: expiresIn })
 
+    const verificationUri = verificationUriFor(c.req.url)
     return c.json({
       device_code: deviceCodeValue,
       expires_in: expiresIn,
@@ -456,8 +554,11 @@ export function deviceCode(options: Options): DeviceCodeTransport {
   app.get('/verify', async (c) => {
     const userCode = c.req.query('user_code') ?? undefined
     const record = userCode ? await store.get<PendingRecord>(userCodeKey(userCode)) : undefined
+    const pendingRecord = record && record.status === 'pending' ? record : undefined
+    const meta = await resolveMeta(pendingRecord)
     return await html.render({
-      record: record && record.status === 'pending' ? record : undefined,
+      meta,
+      record: pendingRecord,
       request: c.req.raw,
       userCode,
     })
@@ -465,17 +566,64 @@ export function deviceCode(options: Options): DeviceCodeTransport {
 
   app.post('/verify', (c) => html.authenticate({ actions, request: c.req.raw }))
 
+  // Cache consumer-discovery lookups per pending record so repeat
+  // renders of the same approval page don't refetch the consumer's
+  // `consumer.json` on every keystroke.
+  const consumerCache = new Map<string, Discovery.Meta | undefined>()
+  async function resolveMeta(
+    record: PendingRecord | undefined,
+  ): Promise<Discovery.Meta | undefined> {
+    if (!record) return undefined
+    if (record.meta) return record.meta
+    if (!record.consumerUrl) return undefined
+    if (consumerCache.has(record.consumerUrl)) return consumerCache.get(record.consumerUrl)
+    let resolved: Discovery.Meta | undefined
+    try {
+      const document = await Discovery.fetchConsumer(record.consumerUrl, { fetch: fetchImpl })
+      resolved = document.name
+        ? {
+            name: document.name,
+            ...(document.icon ? { icon: document.icon } : {}),
+            ...(document.description ? { description: document.description } : {}),
+            ...(document.website_url ? { website_url: document.website_url } : {}),
+          }
+        : undefined
+    } catch (cause) {
+      // Surface as a transport-level error but don't block the
+      // approval UI — the host can still render without `meta`.
+      emitter.emit('error', cause as Error)
+      resolved = undefined
+    }
+    consumerCache.set(record.consumerUrl, resolved)
+    return resolved
+  }
+
   // Bundle the Hono app into the standard `.fetch` + `.listener` pair
   // that every HTTP-server-shaped host transport exposes. The Node
   // `.listener` is lazy-loaded on first invocation; see
-  // {@link HttpServer.fromHono} for details.
-  const { fetch, listener } = HttpServer.fromHono(app)
+  // {@link Http.fromHono} for details.
+  const { fetch, listener } = Http.fromHono(app)
 
   return {
+    bindBaseUrl(baseUrl) {
+      // Constructor-level `baseUrl` wins; bound value is a one-time
+      // injection from `Wata.create({ baseUrl })` and a later call
+      // is a no-op so the first parent binding sticks.
+      if (baseUrl_ctor) return
+      if (baseUrl_bound) return
+      baseUrl_bound = trimTrailingSlash(baseUrl)
+    },
     async close(cause) {
       if (state.closed) return
       state.closed = true
       emitter.emit('close', cause)
+    },
+    discovery: {
+      id: 'device-code',
+      binding(baseUrl) {
+        const prefix = `${trimTrailingSlash(baseUrl)}${path ?? ''}`
+        return { register_url: `${prefix}/register`, token_url: `${prefix}/token` }
+      },
     },
     exchange: 'single_exchange',
     fetch,
@@ -509,6 +657,10 @@ export function deviceCode(options: Options): DeviceCodeTransport {
       state.started = true
     },
   }
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.endsWith('/') ? value.slice(0, -1) : value
 }
 
 function deviceCodeKey(deviceCode: string): string {

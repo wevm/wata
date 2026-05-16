@@ -38,6 +38,7 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { Base64, Bytes } from 'ox'
 
+import * as Discovery from '../../core/Discovery.js'
 import * as Envelope from '../../core/Envelope.js'
 import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
@@ -62,11 +63,31 @@ export type Prompt = {
 /** Options accepted by {@link deviceCode}. */
 export type Options = {
   /**
+   * Optional `consumer.json` URL surfaced to the host alongside
+   * `/register`. The host fetches this lazily on its approval page
+   * to render `meta` when no inline {@link Options.meta} was
+   * supplied. Set explicitly here OR inherit it from the wrapping
+   * `Wata.create({ baseUrl })` (which uses `${baseUrl}/.well-known/
+   * urpc/consumer.json`).
+   */
+  consumerUrl?: string | undefined
+  /**
    * Override the `fetch` implementation. Defaults to `globalThis.fetch`.
    * Useful for tests, server-side proxies, or runtimes without a
    * global `fetch`.
    */
   fetch?: typeof globalThis.fetch | undefined
+  /**
+   * Inline {@link Discovery.Meta} serialized into the `/register`
+   * payload. Takes precedence over any meta discovered via
+   * {@link consumerUrl}. Reach for it when you want to label the
+   * approval UI without publishing a `consumer.json` (or when the
+   * inline value should override the published one). When this
+   * transport is wrapped by `Wata.create({ meta })`, the parent
+   * `meta` is lazy-injected here unless a constructor-level value
+   * is already set.
+   */
+  meta?: Discovery.Meta | undefined
   /**
    * Called once the host accepts `/register` and returns user-facing
    * codes. Surface them to the user — CLI print, modal, deep-link, etc.
@@ -118,6 +139,21 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
   const baseUrl = url.endsWith('/') ? url.slice(0, -1) : url
   const registerUrl = `${baseUrl}/register`
   const tokenUrl = `${baseUrl}/token`
+
+  // Constructor-level `meta` / `consumerUrl` are sticky. `bindMeta`
+  // (from a wrapping `Wata.create({ meta })`) only fills in values
+  // that weren't set explicitly.
+  const meta_ctor = options.meta
+  let meta_bound: Discovery.Meta | undefined
+  const consumerUrl_ctor = options.consumerUrl
+  let consumerUrl_bound: string | undefined
+
+  function resolveMeta(): Discovery.Meta | undefined {
+    return meta_ctor ?? meta_bound
+  }
+  function resolveConsumerUrl(): string | undefined {
+    return consumerUrl_ctor ?? consumerUrl_bound
+  }
 
   const emitter = Events.create<Transport.EventMap>()
 
@@ -243,6 +279,9 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
     const codeVerifier = generateCodeVerifier()
     const codeChallenge = pkceChallenge(codeVerifier)
 
+    const meta = resolveMeta()
+    const consumerUrl = resolveConsumerUrl()
+
     let response: Response
     try {
       response = await fetchImpl(registerUrl, {
@@ -250,6 +289,8 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
           code_challenge: codeChallenge,
           code_challenge_method: 'S256',
           message: envelope,
+          ...(consumerUrl ? { consumer_url: consumerUrl } : {}),
+          ...(meta ? { meta } : {}),
         }),
         headers: { accept: 'application/json', 'content-type': 'application/json' },
         method: 'POST',
@@ -314,6 +355,22 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
   }
 
   return {
+    bindBaseUrl(baseUrl) {
+      // Used to derive `consumer_url` when the consumer transport was
+      // built without an explicit `consumerUrl` option. Constructor
+      // value still wins; the first bound value sticks.
+      if (consumerUrl_ctor) return
+      if (consumerUrl_bound) return
+      const trimmed = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
+      consumerUrl_bound = `${trimmed}/.well-known/urpc/consumer.json`
+    },
+    bindMeta(meta) {
+      // Parent `Wata.create({ meta })` lazy-injection. Constructor
+      // value still wins; the first bound value sticks.
+      if (meta_ctor) return
+      if (meta_bound) return
+      meta_bound = meta as Discovery.Meta
+    },
     async close(cause) {
       if (state.closed) return
       state.inFlight = false

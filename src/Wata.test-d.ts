@@ -1,7 +1,7 @@
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Wata, Rpc, Schema, loopback } from 'wata'
+import { Discovery, Wata, Rpc, Schema, loopback } from 'wata'
 import { Wata as HostWata } from 'wata/host'
-import { z } from 'zod'
+import { z } from 'zod/mini'
 
 const schema = Schema.create({
   methods: {
@@ -161,5 +161,19 @@ describe('on returns AbortController', () => {
     const wata = HostWata.create({ transport: host, schema })
     const controller = wata.on('open', () => {})
     expectTypeOf(controller).toEqualTypeOf<AbortController>()
+  })
+})
+
+describe('baseUrl + meta options', () => {
+  test('consumer accepts `baseUrl` and `meta` typed as Discovery.Meta', () => {
+    const { consumer } = loopback()
+    const meta: Discovery.Meta = { name: 'Acme CLI' }
+    Wata.create({ transport: consumer, baseUrl: 'https://acme.dev', meta })
+  })
+
+  test('host accepts `baseUrl` and `meta` typed as Discovery.Meta', () => {
+    const { host } = loopback()
+    const meta: Discovery.Meta = { name: 'Wallet' }
+    HostWata.create({ transport: host, baseUrl: 'https://wallet.example', meta })
   })
 })

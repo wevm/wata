@@ -14,7 +14,6 @@
     "wata": "latest"
   },
   "devDependencies": {
-    "typescript": "latest",
-    "vp": "latest"
+    "typescript": "latest"
   }
 }

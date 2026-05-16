@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, test } from 'vp/test'
 import { Schema } from 'wata'
-import { z } from 'zod'
+import { z } from 'zod/mini'
 
 const schema = Schema.create({
   methods: {

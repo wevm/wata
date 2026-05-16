@@ -1,4 +1,5 @@
 import { describe, expectTypeOf, test } from 'vp/test'
+import { Discovery } from 'wata'
 import { DeviceCode, Wata, Kv, Transport, deviceCode } from 'wata/host'
 
 describe('deviceCode (host)', () => {
@@ -35,7 +36,7 @@ describe('deviceCode (host)', () => {
     expectTypeOf(wata.role).toEqualTypeOf<'host'>()
   })
 
-  test('html.render receives `userCode`, `record`, and `request`', () => {
+  test('html.render receives `userCode`, `record`, `request`, and `meta`', () => {
     deviceCode({
       store: Kv.memory(),
       baseUrl: 'https://wallet.example',
@@ -45,11 +46,34 @@ describe('deviceCode (host)', () => {
           expectTypeOf(options.userCode).toEqualTypeOf<string | undefined>()
           expectTypeOf(options.record).toEqualTypeOf<DeviceCode.PendingRecord | undefined>()
           expectTypeOf(options.request).toEqualTypeOf<Request>()
+          expectTypeOf(options.meta).toEqualTypeOf<Discovery.Meta | undefined>()
           return new Response('ok')
         },
         authenticate: () => new Response('ok'),
       },
     })
+  })
+
+  test('`baseUrl` is optional (falls back to request origin / parent baseUrl)', () => {
+    deviceCode({
+      store: Kv.memory(),
+      html: {
+        render: () => new Response('ok'),
+        authenticate: () => new Response('ok'),
+      },
+    })
+  })
+
+  test('`discovery` contributes a device-code binding', () => {
+    const transport = deviceCode({
+      store: Kv.memory(),
+      path: '/auth/device',
+      html: {
+        render: () => new Response('ok'),
+        authenticate: () => new Response('ok'),
+      },
+    })
+    expectTypeOf(transport.discovery).toEqualTypeOf<Transport.DiscoveryBinding | undefined>()
   })
 
   test('html.authenticate receives `request` and an `actions` bag', () => {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vp/test'
 import { Envelope, Wata, PostMessage, Rpc, Schema, postMessage as postMessage_consumer } from 'wata'
 import { Wata as HostWata, postMessage as postMessage_host } from 'wata/host'
-import { z } from 'zod'
+import { z } from 'zod/mini'
 
 import * as protocol from './internal/protocol.js'
 
@@ -181,7 +181,7 @@ describe('postMessage (consumer)', () => {
 
     expect(errors[0]?.message).toMatchInlineSnapshot(`
     	"invalid envelope
-    	Details: type: Invalid discriminator value. Expected 'encrypted' | 'hello' | 'ready' | 'rpc-requests' | 'rpc-responses'"
+    	Details: type: Invalid input"
     `)
 
     await transport.close()
@@ -285,7 +285,7 @@ describe('postMessage (consumer)', () => {
     })
     await transport.start()
     await transport.close()
-    expect(closed).toBe(1)
+    expect(closed).toMatchInlineSnapshot(`1`)
   })
 
   test('unsubscribe removes the message listener', async () => {
@@ -348,10 +348,18 @@ describe('postMessage (consumer)', () => {
     await transport.start()
     await new Promise((resolve) => setTimeout(resolve, 10))
 
-    expect(seen).toHaveLength(1)
     const hello = seen[0] as { type: string; id: string }
-    expect(hello.type).toBe('urpc.hello')
-    expect(protocol.isUuidV4(hello.id)).toBe(true)
+    expect({
+      count: seen.length,
+      type: hello.type,
+      idIsUuidV4: protocol.isUuidV4(hello.id),
+    }).toMatchInlineSnapshot(`
+      {
+        "count": 1,
+        "idIsUuidV4": true,
+        "type": "urpc.hello",
+      }
+    `)
 
     await transport.close()
   })
