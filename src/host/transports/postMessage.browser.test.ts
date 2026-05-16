@@ -23,10 +23,18 @@ describe('postMessage (host)', () => {
     await transport.start()
     await new Promise((resolve) => setTimeout(resolve, 10))
 
-    expect(peerSeen).toHaveLength(1)
     const ready = peerSeen[0] as { type: string; id: string }
-    expect(ready.type).toBe('urpc.ready')
-    expect(protocol.isUuidV4(ready.id)).toBe(true)
+    expect({
+      count: peerSeen.length,
+      type: ready.type,
+      idIsUuidV4: protocol.isUuidV4(ready.id),
+    }).toMatchInlineSnapshot(`
+      {
+        "count": 1,
+        "idIsUuidV4": true,
+        "type": "urpc.ready",
+      }
+    `)
 
     await transport.close()
   })
@@ -89,8 +97,12 @@ describe('postMessage (host)', () => {
   test('reports role: "host" and exchange: "ongoing"', () => {
     const { port1 } = new MessageChannel()
     const transport = postMessage({ target: () => port1 })
-    expect(transport.role).toBe('host')
-    expect(transport.exchange).toBe('ongoing')
+    expect({ role: transport.role, exchange: transport.exchange }).toMatchInlineSnapshot(`
+      {
+        "exchange": "ongoing",
+        "role": "host",
+      }
+    `)
   })
 })
 

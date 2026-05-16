@@ -29,10 +29,10 @@ wata.on('request', (event) => {
   pending.hidden = false
 })
 
-respondButton.addEventListener('click', () => {
+respondButton.addEventListener('click', async () => {
   if (!current) return
   const text = message.value || 'pong from host'
-  wata.respond(current.id, { message: text })
+  await wata.respond(current.id, { message: text })
   append(`respond: ${text}`)
   window.close()
 })

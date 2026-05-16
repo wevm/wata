@@ -33,6 +33,11 @@ if (Clack.isCancel(method)) {
 
 const wata = Wata.create({
   transport: deviceCode({
+    meta: {
+      name: 'Acme CLI',
+      description: 'uRPC device-code playground consumer',
+      icon: 'https://api.dicebear.com/9.x/identicon/svg?seed=acme-cli',
+    },
     onPrompt({ userCode, verificationUri, verificationUriFull }) {
       Clack.note(
         `${verificationUri}\nuser_code: ${userCode}` +

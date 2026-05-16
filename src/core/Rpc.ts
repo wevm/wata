@@ -12,7 +12,7 @@
  *   can flow inferred types through to `Wata.send` and friends.
  */
 
-import { z } from 'zod'
+import { z } from 'zod/mini'
 
 import * as Errors from './Errors.js'
 
@@ -215,7 +215,7 @@ export namespace schema {
 
   /** JSON-RPC 2.0 success response. */
   export const success = z.object({
-    id: id.nullable(),
+    id: z.nullable(id),
     jsonrpc,
     result: z.unknown(),
   })
@@ -224,10 +224,10 @@ export namespace schema {
   export const errorResponse = z.object({
     error: z.object({
       code: z.number(),
-      data: z.unknown().optional(),
+      data: z.optional(z.unknown()),
       message: z.string(),
     }),
-    id: id.nullable(),
+    id: z.nullable(id),
     jsonrpc,
   })
 }
@@ -260,7 +260,7 @@ export function parse(value: unknown): Envelope {
   return assertParse(schema.notification, value, 'notification') as Notification
 }
 
-function assertParse<schema extends z.ZodType>(
+function assertParse<schema extends z.ZodMiniType>(
   schema: schema,
   value: unknown,
   label: string,

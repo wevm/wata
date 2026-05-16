@@ -1,17 +1,20 @@
 /**
- * Internal helper for HTTP-server-shaped host transports.
+ * HTTP-server primitives shared by every HTTP-shaped surface in `wata`.
  *
- * Every host transport that exposes HTTP routes — `deviceCode`,
- * `webhookCallback`, the callback halves of `mobileWebAuth` /
- * `mobileLink` — needs the same pair of public handlers:
+ * Every adapter that needs to expose HTTP routes — the host transports
+ * (`deviceCode`, `webhookCallback`, the callback halves of
+ * `mobileWebAuth` / `mobileLink`), the standalone well-known publishers
+ * (`hostWellknown` / `consumerWellknown`), and the embedded
+ * `Wata.create({ baseUrl, meta })` wrappers — uses the same {@link Server}
+ * pair:
  *
- * - `.fetch: (request: Request) => Promise<Response>` — web-standard,
+ * - `fetch: (request: Request) => Promise<Response>` — web-standard,
  *   runs on Cloudflare Workers / Bun / Deno / Vercel Edge / browsers
  *   without any Node-specific dependencies loading.
- * - `.listener: (req, res) => void` — Node `http.RequestListener`-shaped
- *   adapter, backed by `@hono/node-server`'s `getRequestListener`.
+ * - `listener: (req, res) => void` — Node `http.RequestListener`-shaped
+ *   adapter, lazily backed by `@hono/node-server`'s `getRequestListener`.
  *
- * {@link fromHono} bundles a `Hono` app into both shapes in one call.
+ * {@link fromHono} bundles a Hono app into both shapes in one call.
  * The Node listener is **lazily** instantiated on first invocation: the
  * underlying `@hono/node-server` module has top-level value imports of
  * `node:http2` / `node:stream` / `node:process` that would crash a
@@ -20,23 +23,10 @@
  * keeps the load path completely free of node primitives for runtimes
  * that only use `.fetch`.
  *
- * @example
- * ```ts
- * import { Hono } from 'hono'
- * import * as HttpServer from './internal/HttpServer.js'
- *
- * const app = new Hono()
- * app.post('/register', (c) => c.json({ ok: true }))
- *
- * const { fetch, listener } = HttpServer.fromHono(app)
- *
- * // .fetch runs anywhere Request/Response do
- * const response = await fetch(new Request('https://x/register', { method: 'POST' }))
- *
- * // .listener works with Node's createServer
- * import { createServer } from 'node:http'
- * createServer(listener).listen(3000)
- * ```
+ * {@link Handlers} is the conditional helper `Wata` types use to
+ * forward `Server` onto the consumer / host surface when the wrapped
+ * transport carries HTTP routes (and collapse it to all-`undefined`
+ * when it doesn't).
  */
 
 import type { Hono } from 'hono'
@@ -47,16 +37,13 @@ import type { Hono } from 'hono'
  * Workers / browser load path completely free of node primitives.
  * Compatible with `node:http`'s real `RequestListener` at the call site.
  */
-export type NodeListener = (req: NodeIncomingMessage, res: NodeServerResponse) => void
+export type NodeListener = (req: unknown, res: unknown) => void
 
-/** Structural shape of `node:http`'s `IncomingMessage`. */
-export type NodeIncomingMessage = unknown
-
-/** Structural shape of `node:http`'s `ServerResponse`. */
-export type NodeServerResponse = unknown
-
-/** The `.fetch` + `.listener` pair returned by {@link fromHono}. */
-export type HttpServer = {
+/**
+ * Fetch + lazy Node listener pair returned by {@link fromHono} and
+ * exposed by every HTTP-shaped transport / well-known publisher.
+ */
+export type Server = {
   /** Web-standard fetch handler. Runs on every Request/Response runtime. */
   fetch: (request: Request) => Promise<Response>
   /**
@@ -68,17 +55,28 @@ export type HttpServer = {
 }
 
 /**
- * Wrap a Hono app in the standard `.fetch` + `.listener` pair used by
- * every HTTP-server-shaped host transport.
+ * Conditional that resolves to {@link Server} when `transport` carries
+ * HTTP handlers, or to the all-`undefined` counterpart otherwise. Lets
+ * `Consumer` / `Host` expose `fetch` + `listener` with a single composed
+ * shape instead of two parallel `transport extends { fetch: infer fn }
+ * ? fn : undefined` inferences that have to stay in lockstep.
+ */
+export type Handlers<transport> = transport extends Server
+  ? Server
+  : { fetch: undefined; listener: undefined }
+
+/**
+ * Wrap a Hono app in the standard {@link Server} pair used by every
+ * HTTP-server-shaped host transport and well-known publisher.
  *
  * @example
  * ```ts
  * const app = new Hono().basePath('/auth/device')
  * app.post('/register', registerHandler)
- * const { fetch, listener } = HttpServer.fromHono(app)
+ * const { fetch, listener } = Http.fromHono(app)
  * ```
  */
-export function fromHono(app: Hono): HttpServer {
+export function fromHono(app: Hono): Server {
   // `app.fetch` is the canonical web-standard handler — it accepts a
   // single `Request` (the `env` / `executionCtx` parameters expected by
   // CF Workers are positional and absent calls coerce to `undefined`).
