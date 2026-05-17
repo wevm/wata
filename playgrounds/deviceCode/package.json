@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "check:types": "tsc",
     "dev": "pnpm /^dev:/",
     "dev:consumer": "node --import tsx src/consumer.ts",
     "dev:host": "node --import tsx src/host.ts"

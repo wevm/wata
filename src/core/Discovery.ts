@@ -128,25 +128,38 @@ export namespace schema {
   /**
    * Human-facing app metadata. Carried symmetrically on both
    * `host.json` and `consumer.json` so the opposite side can render
-   * "App XYZ is requesting …" in approval / connection chrome without
-   * having to invent its own channel.
+   * "App XYZ is requesting …" in approval / connection chrome.
    */
-  export const meta = z.object({
-    /** Display name shown in approval / connection UIs. */
-    name: z.string().check(z.minLength(1)),
-    /** Absolute URL to a square icon (PNG / SVG / WebP). */
-    icon: z.optional(httpsUrl),
-    /** Short human-facing description shown alongside `name`. */
-    description: z.optional(z.string()),
-    /**
-     * Canonical homepage / marketing URL for the app. MAY differ from
-     * the document's `origin` (e.g. doc published at
-     * `https://wallet.example` but marketing site at
-     * `https://walletapp.com`). Named `website_url` to disambiguate
-     * from the protocol-level `origin` field.
-     */
-    website_url: z.optional(httpsUrl),
-  })
+  export const meta = z.pipe(
+    z.object({
+      /** Display name shown in approval / connection UIs. */
+      name: z.string().check(z.minLength(1)),
+      /** Absolute URL to a square icon (PNG / SVG / WebP). */
+      icon: z.optional(httpsUrl),
+      /** Short human-facing description shown alongside `name`. */
+      description: z.optional(z.string()),
+      /**
+       * Canonical homepage / marketing URL for the app. MAY differ
+       * from the document's `origin`.
+       */
+      website_url: z.optional(httpsUrl),
+    }),
+    z.transform(
+      (
+        wire,
+      ): {
+        name: string
+        icon?: string | undefined
+        description?: string | undefined
+        websiteUrl?: string | undefined
+      } => ({
+        name: wire.name,
+        ...(wire.icon !== undefined ? { icon: wire.icon } : {}),
+        ...(wire.description !== undefined ? { description: wire.description } : {}),
+        ...(wire.website_url !== undefined ? { websiteUrl: wire.website_url } : {}),
+      }),
+    ),
+  )
 
   /**
    * `transports` map. Known keys are validated against their per-transport

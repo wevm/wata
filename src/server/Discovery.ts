@@ -24,7 +24,7 @@
  *
  * const consumer = consumerWellknown({
  *   meta: { name: 'Acme CLI', icon: 'https://acme.dev/icon.png' },
- *   callback_urls: ['https://acme.dev/cb'],
+ *   callbackUrls: ['https://acme.dev/cb'],
  * })
  *
  * export default { fetch: consumer.fetch }
@@ -65,10 +65,10 @@ export type HostOptions = {
    * Long-term Ed25519 identity public key, **unpadded base64url** (32
    * raw bytes → 43 characters). REQUIRED per [uRPC `discovery.md`
    * §2.2](https://github.com/tempoxyz/urpc/blob/main/specs/discovery.md).
-   * Either `identity_pubkey` or a pre-built `document` carrying one
+   * Either `identityPubkey` or a pre-built `document` carrying one
    * MUST be supplied — `host.json` cannot be served without it.
    */
-  identity_pubkey?: string | undefined
+  identityPubkey?: string | undefined
   /**
    * Override the document's `id` field. Defaults to the request URL's
    * hostname so a single server can publish without hard-coding its
@@ -100,7 +100,7 @@ export type ConsumerOptions = {
    * Optional callback URL allowlist. Each entry must be an exact-match
    * `https://` URL with no wildcard segments.
    */
-  callback_urls?: readonly string[] | undefined
+  callbackUrls?: readonly string[] | undefined
   /**
    * Pre-built {@link Discovery.ConsumerDocument}. When provided, served
    * as-is (validated once at construction) and all other options are
@@ -131,7 +131,7 @@ export type ConsumerOptions = {
  *
  * const host = hostWellknown({
  *   meta: { name: 'Example Wallet', icon: 'https://wallet.example/logo.png' },
- *   identity_pubkey: 'MCowBQYDK2VwAyEA...', // unpadded base64url Ed25519
+ *   identityPubkey: 'MCowBQYDK2VwAyEA...', // unpadded base64url Ed25519
  *   transports: { 'device-code': { register_url: '...', token_url: '...' } },
  * })
  *
@@ -167,7 +167,7 @@ export function hostWellknown(options: HostOptions = {}): Http.Server {
  *
  * const consumer = consumerWellknown({
  *   meta: { name: 'Acme CLI', icon: 'https://acme.dev/icon.png' },
- *   callback_urls: ['https://acme.dev/cb'],
+ *   callbackUrls: ['https://acme.dev/cb'],
  * })
  * ```
  */
@@ -193,15 +193,15 @@ function buildHostDocument(options: HostOptions, requestUrl: string): Discovery.
   const name = options.name ?? options.meta?.name
   if (!name)
     throw new Errors.ProtocolError('`name` is required (pass `name` directly or via `meta.name`)')
-  if (!options.identity_pubkey)
+  if (!options.identityPubkey)
     throw new Errors.ProtocolError(
-      '`identity_pubkey` is required (unpadded base64url Ed25519 public key, 43 chars)',
+      '`identityPubkey` is required (unpadded base64url Ed25519 public key, 43 chars)',
     )
   if (!options.transports || Object.keys(options.transports).length === 0)
     throw new Errors.ProtocolError('`transports` map must contain at least one entry')
   const icon = options.icon ?? options.meta?.icon
   const description = options.meta?.description
-  const website_url = options.meta?.website_url
+  const websiteUrl = options.meta?.websiteUrl
   return Schema.validate(Discovery.schema.hostDocument, {
     version: Discovery.version,
     origin,
@@ -209,9 +209,9 @@ function buildHostDocument(options: HostOptions, requestUrl: string): Discovery.
     name,
     ...(icon ? { icon } : {}),
     ...(description ? { description } : {}),
-    ...(website_url ? { website_url } : {}),
+    ...(websiteUrl ? { website_url: websiteUrl } : {}),
     ...(options.capabilities ? { capabilities: options.capabilities } : {}),
-    ...(options.identity_pubkey ? { identity_pubkey: options.identity_pubkey } : {}),
+    identity_pubkey: options.identityPubkey,
     transports: options.transports,
   })
 }
@@ -229,8 +229,8 @@ function buildConsumerDocument(
     ...(meta?.name ? { name: meta.name } : {}),
     ...(meta?.icon ? { icon: meta.icon } : {}),
     ...(meta?.description ? { description: meta.description } : {}),
-    ...(meta?.website_url ? { website_url: meta.website_url } : {}),
-    ...(options.callback_urls ? { callback_urls: options.callback_urls } : {}),
+    ...(meta?.websiteUrl ? { website_url: meta.websiteUrl } : {}),
+    ...(options.callbackUrls ? { callback_urls: options.callbackUrls } : {}),
   })
 }
 

@@ -3,12 +3,12 @@ import { Discovery } from 'wata'
 import { hostWellknown, consumerWellknown } from 'wata/server'
 
 // 43-char unpadded base64url Ed25519 pubkey per uRPC discovery.md §2.2.
-const identity_pubkey = 'A'.repeat(43)
+const identityPubkey = 'A'.repeat(43)
 
 describe('hostWellknown', () => {
   test('serves the host.json document with content-type application/json', async () => {
     const server = hostWellknown({
-      identity_pubkey,
+      identityPubkey,
       meta: { name: 'Example Wallet', icon: 'https://wallet.example/logo.png' },
       transports: {
         'device-code': {
@@ -52,7 +52,7 @@ describe('hostWellknown', () => {
 
   test('host_id defaults to the request URL hostname when omitted', async () => {
     const server = hostWellknown({
-      identity_pubkey,
+      identityPubkey,
       meta: { name: 'Tenant Wallet' },
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
@@ -71,7 +71,7 @@ describe('hostWellknown', () => {
 
   test('explicit `origin` / `id` overrides take precedence over the request URL', async () => {
     const server = hostWellknown({
-      identity_pubkey,
+      identityPubkey,
       origin: 'https://canonical.wallet.example',
       id: 'canonical-id',
       meta: { name: 'Canonical Wallet' },
@@ -91,7 +91,7 @@ describe('hostWellknown', () => {
 
   test('returns 400 when neither `name` nor `meta.name` is supplied', async () => {
     const server = hostWellknown({
-      identity_pubkey,
+      identityPubkey,
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
     const response = await server.fetch(
@@ -107,7 +107,7 @@ describe('hostWellknown', () => {
     `)
   })
 
-  test('returns 400 when `identity_pubkey` is missing (required per spec §2.2)', async () => {
+  test('returns 400 when `identityPubkey` is missing (required per spec §2.2)', async () => {
     const server = hostWellknown({
       meta: { name: 'No Pubkey Wallet' },
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
@@ -120,14 +120,14 @@ describe('hostWellknown', () => {
     expect(body).toMatchInlineSnapshot(`
     	{
     	  "error": "invalid_request",
-    	  "error_description": "\`identity_pubkey\` is required (unpadded base64url Ed25519 public key, 43 chars)",
+    	  "error_description": "\`identityPubkey\` is required (unpadded base64url Ed25519 public key, 43 chars)",
     	}
     `)
   })
 
   test('returns 400 when `transports` map is empty', async () => {
     const server = hostWellknown({
-      identity_pubkey,
+      identityPubkey,
       meta: { name: 'Empty Wallet' },
       transports: {},
     })
@@ -143,7 +143,7 @@ describe('hostWellknown', () => {
       origin: 'https://wallet.example',
       id: 'wallet.example',
       name: 'Prebuilt',
-      identity_pubkey,
+      identity_pubkey: identityPubkey,
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     }
     const server = hostWellknown({ document })
@@ -164,7 +164,7 @@ describe('consumerWellknown', () => {
   test('serves the consumer.json document with content-type application/json', async () => {
     const server = consumerWellknown({
       meta: { name: 'Acme CLI', icon: 'https://acme.dev/icon.png' },
-      callback_urls: ['https://acme.dev/cb'],
+      callbackUrls: ['https://acme.dev/cb'],
     })
 
     const response = await server.fetch(
@@ -211,7 +211,7 @@ describe('consumerWellknown', () => {
   })
 
   test('returns 400 on invalid callback_urls (wildcard rejected)', async () => {
-    const server = consumerWellknown({ callback_urls: ['https://*.app.example/cb'] })
+    const server = consumerWellknown({ callbackUrls: ['https://*.app.example/cb'] })
     const response = await server.fetch(
       new Request('https://app.example/.well-known/urpc/consumer.json'),
     )
@@ -222,7 +222,7 @@ describe('consumerWellknown', () => {
 describe('etag', () => {
   test('hostWellknown emits a strong ETag on the 200 response', async () => {
     const server = hostWellknown({
-      identity_pubkey,
+      identityPubkey,
       meta: { name: 'Etag Wallet' },
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
@@ -235,7 +235,7 @@ describe('etag', () => {
 
   test('hostWellknown returns 304 when If-None-Match matches the current ETag', async () => {
     const server = hostWellknown({
-      identity_pubkey,
+      identityPubkey,
       meta: { name: 'Etag Wallet' },
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
@@ -260,7 +260,7 @@ describe('etag', () => {
 
   test('hostWellknown returns 200 when If-None-Match does not match', async () => {
     const server = hostWellknown({
-      identity_pubkey,
+      identityPubkey,
       meta: { name: 'Etag Wallet' },
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
@@ -275,7 +275,7 @@ describe('etag', () => {
   test('consumerWellknown emits an ETag and honors If-None-Match', async () => {
     const server = consumerWellknown({
       meta: { name: 'Etag CLI' },
-      callback_urls: ['https://acme.dev/cb'],
+      callbackUrls: ['https://acme.dev/cb'],
     })
     const first = await server.fetch(new Request('https://acme.dev/.well-known/urpc/consumer.json'))
     const tag = first.headers.get('etag')!
@@ -292,7 +292,7 @@ describe('etag', () => {
 describe('listener', () => {
   test('host and consumer factories expose a Node-shaped listener', () => {
     const host = hostWellknown({
-      identity_pubkey,
+      identityPubkey,
       meta: { name: 'X' },
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })

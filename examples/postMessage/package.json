@@ -3,12 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm /^dev:/",
-    "dev:consumer": "vp dev consumer",
-    "dev:host": "vp dev host",
     "build": "pnpm /^build:/",
     "build:consumer": "vp build consumer",
-    "build:host": "vp build host"
+    "build:host": "vp build host",
+    "check:types": "tsc",
+    "dev": "pnpm /^dev:/",
+    "dev:consumer": "vp dev consumer",
+    "dev:host": "vp dev host"
   },
   "dependencies": {
     "wata": "latest"

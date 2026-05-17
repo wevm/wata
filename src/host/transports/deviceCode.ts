@@ -585,7 +585,7 @@ export function deviceCode(options: Options): DeviceCodeTransport {
             name: document.name,
             ...(document.icon ? { icon: document.icon } : {}),
             ...(document.description ? { description: document.description } : {}),
-            ...(document.website_url ? { website_url: document.website_url } : {}),
+            ...(document.website_url ? { websiteUrl: document.website_url } : {}),
           }
         : undefined
     } catch (cause) {
