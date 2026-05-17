@@ -4,13 +4,13 @@ import { z } from 'zod/mini'
 
 const schema = Schema.create({
   methods: {
-    ping: Schema.method({
-      params: z.tuple([]),
-      result: z.object({ ok: z.literal(true) }),
-    }),
     eth_sign: Schema.method({
       params: z.tuple([z.string(), z.string()]),
       result: z.string(),
+    }),
+    ping: Schema.method({
+      params: z.tuple([]),
+      result: z.object({ ok: z.literal(true) }),
     }),
   },
 })

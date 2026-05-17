@@ -62,7 +62,7 @@ export function etag(serialized: string): string {
 export function notModified(request: Request, currentEtag: string): Response | undefined {
   const ifNoneMatch = request.headers.get('if-none-match')
   if (ifNoneMatch && ifNoneMatch === currentEtag)
-    return new Response(null, { status: 304, headers: { etag: currentEtag } })
+    return new Response(null, { headers: { etag: currentEtag }, status: 304 })
   return undefined
 }
 
@@ -73,22 +73,22 @@ export function notModified(request: Request, currentEtag: string): Response | u
  */
 export function buildHostDocument(options: {
   baseUrl: string
-  identityPubkey: string
   meta: Discovery.Meta
+  publicKey: string
   transports: Record<string, unknown>
 }): Discovery.HostDocument {
-  const { baseUrl, identityPubkey, meta, transports } = options
+  const { baseUrl, meta, publicKey, transports } = options
   const origin = new URL(baseUrl).origin
   return Schema.validate(Discovery.schema.hostDocument, {
-    version: Discovery.version,
-    origin,
     id: new URL(origin).hostname,
+    identity_pubkey: publicKey,
     name: meta.name,
-    ...(meta.icon ? { icon: meta.icon } : {}),
-    ...(meta.description ? { description: meta.description } : {}),
-    ...(meta.websiteUrl ? { website_url: meta.websiteUrl } : {}),
-    identity_pubkey: identityPubkey,
+    origin,
     transports,
+    version: Discovery.version,
+    ...(meta.description ? { description: meta.description } : {}),
+    ...(meta.icon ? { icon: meta.icon } : {}),
+    ...(meta.websiteUrl ? { website_url: meta.websiteUrl } : {}),
   })
 }
 
@@ -99,17 +99,21 @@ export function buildHostDocument(options: {
  */
 export function buildConsumerDocument(options: {
   baseUrl: string
+  callbackUrls?: readonly string[] | undefined
   meta: Discovery.Meta
+  publicKey?: string | undefined
 }): Discovery.ConsumerDocument {
-  const { baseUrl, meta } = options
+  const { baseUrl, callbackUrls, meta, publicKey } = options
   const origin = new URL(baseUrl).origin
   return Schema.validate(Discovery.schema.consumerDocument, {
-    version: Discovery.version,
-    origin,
     id: new URL(origin).hostname,
     name: meta.name,
-    ...(meta.icon ? { icon: meta.icon } : {}),
+    origin,
+    version: Discovery.version,
+    ...(callbackUrls && callbackUrls.length > 0 ? { callback_urls: callbackUrls } : {}),
     ...(meta.description ? { description: meta.description } : {}),
+    ...(meta.icon ? { icon: meta.icon } : {}),
+    ...(publicKey ? { identity_pubkey: publicKey } : {}),
     ...(meta.websiteUrl ? { website_url: meta.websiteUrl } : {}),
   })
 }
@@ -138,12 +142,12 @@ export function wrapFetch(options: {
       const notModifiedResponse = notModified(request, documentEtag)
       if (notModifiedResponse) return notModifiedResponse
       return new Response(serialized, {
-        status: 200,
         headers: {
           'cache-control': `public, max-age=${maxAge}`,
           'content-type': 'application/json',
           etag: documentEtag,
         },
+        status: 200,
       })
     }
     if (baseFetch) return baseFetch(request)

@@ -87,7 +87,7 @@ describe('success', () => {
 
 describe('error', () => {
   test('builds an error response without data', () => {
-    expect(Rpc.error({ id: 1, code: -32601, message: 'method not found' })).toMatchInlineSnapshot(
+    expect(Rpc.error({ code: -32601, id: 1, message: 'method not found' })).toMatchInlineSnapshot(
       `
       {
         "error": {
@@ -102,7 +102,7 @@ describe('error', () => {
   })
 
   test('includes data when provided', () => {
-    expect(Rpc.error({ id: 1, code: -32602, message: 'invalid params', data: { method: 'foo' } }))
+    expect(Rpc.error({ code: -32602, data: { method: 'foo' }, id: 1, message: 'invalid params' }))
       .toMatchInlineSnapshot(`
       {
         "error": {
@@ -121,7 +121,7 @@ describe('error', () => {
 
 describe('parse', () => {
   test('discriminates a request', () => {
-    expect(Rpc.parse({ jsonrpc: '2.0', id: 1, method: 'ping', params: [] })).toMatchInlineSnapshot(`
+    expect(Rpc.parse({ id: 1, jsonrpc: '2.0', method: 'ping', params: [] })).toMatchInlineSnapshot(`
       {
         "id": 1,
         "jsonrpc": "2.0",
@@ -146,7 +146,7 @@ describe('parse', () => {
   })
 
   test('discriminates a success response', () => {
-    expect(Rpc.parse({ jsonrpc: '2.0', id: 1, result: 42 })).toMatchInlineSnapshot(`
+    expect(Rpc.parse({ id: 1, jsonrpc: '2.0', result: 42 })).toMatchInlineSnapshot(`
       {
         "id": 1,
         "jsonrpc": "2.0",
@@ -156,7 +156,7 @@ describe('parse', () => {
   })
 
   test('discriminates an error response', () => {
-    expect(Rpc.parse({ jsonrpc: '2.0', id: 1, error: { code: -1, message: 'nope' } }))
+    expect(Rpc.parse({ error: { code: -1, message: 'nope' }, id: 1, jsonrpc: '2.0' }))
       .toMatchInlineSnapshot(`
       {
         "error": {
@@ -176,13 +176,13 @@ describe('parse', () => {
   })
 
   test('rejects a request with wrong jsonrpc version', () => {
-    expect(() => Rpc.parse({ jsonrpc: '1.0', id: 1, method: 'a', params: [] })).toThrowError(
+    expect(() => Rpc.parse({ id: 1, jsonrpc: '1.0', method: 'a', params: [] })).toThrowError(
       Errors.ProtocolError,
     )
   })
 
   test('rejects a request with missing method', () => {
-    expect(() => Rpc.parse({ jsonrpc: '2.0', id: 1, params: [] })).toThrowError(
+    expect(() => Rpc.parse({ id: 1, jsonrpc: '2.0', params: [] })).toThrowError(
       Errors.ProtocolError,
     )
   })

@@ -18,24 +18,38 @@
 
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { Wata, Kv, deviceCode } from 'wata/host'
+import { Ed25519 } from 'ox'
+import { Kv, Wata, deviceCode } from 'wata/host'
 
-const port = Number(process.env['PORT'] ?? 4747)
-const baseUrl = process.env['BASE_URL'] ?? `http://localhost:${port}`
+const port = Number(process.env.PORT ?? 4747)
+const baseUrl = process.env.BASE_URL ?? `http://localhost:${port}`
+const privateKey = process.env.PRIVATE_KEY ?? Ed25519.createKeyPair().privateKey
 
 const wata = Wata.create({
   baseUrl,
   meta: {
-    name: 'Example Wallet',
     description: 'Device-code playground host',
+    name: 'Example Wallet',
     websiteUrl: baseUrl,
   },
+  privateKey,
   transport: deviceCode({
-    store: Kv.memory(),
     baseUrl,
-    path: '/auth/device',
-    pollingInterval: 1000,
     html: {
+      async authenticate({ request, actions }) {
+        const form = await request.formData()
+        const userCode = String(form.get('user_code') ?? '')
+        const decision = String(form.get('decision') ?? '')
+        if (!userCode) return html('<p>missing <code>user_code</code></p>', 400)
+        const record = await actions.get(userCode)
+        if (!record) return html('<p>unknown <code>user_code</code></p>', 404)
+        if (decision === 'approve') {
+          await actions.approve(userCode)
+          return html('<h1>Approved ✅</h1><p>You may close this tab.</p>')
+        }
+        await actions.deny(userCode)
+        return html('<h1>Denied ❌</h1><p>You may close this tab.</p>')
+      },
       render({ userCode, record, meta }) {
         if (!userCode || !record)
           return html(`
@@ -74,27 +88,16 @@ const wata = Wata.create({
         </form>
       `)
       },
-      async authenticate({ request, actions }) {
-        const form = await request.formData()
-        const userCode = String(form.get('user_code') ?? '')
-        const decision = String(form.get('decision') ?? '')
-        if (!userCode) return html('<p>missing <code>user_code</code></p>', 400)
-        const record = await actions.get(userCode)
-        if (!record) return html('<p>unknown <code>user_code</code></p>', 404)
-        if (decision === 'approve') {
-          await actions.approve(userCode)
-          return html('<h1>Approved ✅</h1><p>You may close this tab.</p>')
-        }
-        await actions.deny(userCode)
-        return html('<h1>Denied ❌</h1><p>You may close this tab.</p>')
-      },
     },
+    path: '/auth/device',
+    pollingInterval: 1000,
+    store: Kv.memory(),
   }),
 })
 
 wata.on('request', (event) => {
   console.log(`[host] request: ${event.method}`, event.params)
-  if (event.method === 'ping') event.respond({ ok: true, at: new Date().toISOString() })
+  if (event.method === 'ping') event.respond({ at: new Date().toISOString(), ok: true })
   else if (event.method === 'echo') event.respond(event.params)
   else event.reject({ code: -32601, message: 'method not found' })
 })
@@ -114,8 +117,8 @@ serve({ fetch: app.fetch, port }, (info) => {
 
 function html(body: string, status = 200): Response {
   return new Response(`<!doctype html><meta charset="utf-8"><title>device-code</title>${body}`, {
-    status,
     headers: { 'content-type': 'text/html; charset=utf-8' },
+    status,
   })
 }
 

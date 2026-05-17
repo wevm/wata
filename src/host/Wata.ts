@@ -12,6 +12,8 @@
  * pollute the consumer namespace.
  */
 
+import { Base64, Bytes, Ed25519, type Hex } from 'ox'
+
 import * as Discovery from '../core/Discovery.js'
 import * as Envelope from '../core/Envelope.js'
 import * as Errors from '../core/Errors.js'
@@ -246,22 +248,22 @@ export function create<
 >(options: create.Options<schema, transport>): Host<schema, transport> {
   const transport = options.transport as transport
   const schema = options.schema as schema
-  const { baseUrl, meta, identityPubkey } = options
+  const { baseUrl, meta, privateKey } = options
+  const identity = privateKey ? identityFromPrivateKey(privateKey) : undefined
 
   if (meta && !baseUrl)
     throw new Errors.BaseError('`baseUrl` is required when `meta` is set', {
       details: 'host_id and transport bindings need a fully-qualified origin',
     })
-  if (meta && !identityPubkey)
-    throw new Errors.BaseError('`identityPubkey` is required when `meta` is set', {
+  if (meta && !privateKey)
+    throw new Errors.BaseError('`privateKey` is required when `meta` is set', {
       details:
-        'host.json publishes the long-term Ed25519 identity pubkey (unpadded base64url, 43 chars)',
+        'host.json publishes the long-term Ed25519 identity pubkey derived from the private seed',
     })
-  // Lazy-inject the parent baseUrl / meta into the transport so
-  // HTTP-server-shaped adapters (e.g. host `deviceCode`) can
-  // populate `verification_uri` from a single app-wide value.
-  if (baseUrl) transport.bindBaseUrl?.(baseUrl)
-  if (meta) transport.bindMeta?.(meta)
+  // Lazy-inject parent app context into the transport so HTTP-server-
+  // shaped adapters can populate verification URIs and sign responses
+  // from one app-wide config.
+  transport.bind?.({ baseUrl, identity, meta })
 
   const emitter = Events.create<HostEventMap<schema>>()
   // User-supplied `request` listeners, in registration order. The
@@ -308,8 +310,8 @@ export function create<
   }
 
   async function reject(id: Rpc.Id, error: reject.Error): Promise<void> {
-    const { code, message, data } = error
-    const ok = await settle(id, Rpc.error({ id, code, message, data }))
+    const { code, data, message } = error
+    const ok = await settle(id, Rpc.error({ code, data, id, message }))
     if (!ok) throw new UnknownRequestError(id)
   }
 
@@ -343,10 +345,10 @@ export function create<
       } catch (cause) {
         await safeSend(transport, [
           Rpc.error({
-            id: request.id,
             code: -32602,
-            message: 'invalid params',
             data: (cause as Error).message,
+            id: request.id,
+            message: 'invalid params',
           }),
         ])
         return
@@ -541,11 +543,11 @@ export function create<
   // its own `.fetch` / `.listener` even when nothing else is mounted).
   let httpFetch = http.fetch
   let httpListener = http.listener
-  if (meta && baseUrl && identityPubkey) {
+  if (meta && baseUrl && identity) {
     const document = Wellknown.buildHostDocument({
       baseUrl,
-      identityPubkey,
       meta,
+      publicKey: identity.publicKey,
       transports: collectTransports(transport, baseUrl),
     })
     const wrapped = Wellknown.wrapFetch({
@@ -613,7 +615,7 @@ export declare namespace create {
      * Lifted to the `Wata.create` root because it's an app-wide
      * concept — every transport on this `Wata` shares the same origin.
      * Lazy-injected into transports that need it via
-     * {@link Transport.Transport.bindBaseUrl}.
+     * {@link Transport.Transport.bind}.
      *
      * REQUIRED when {@link meta} is supplied (we need it to build
      * `host_id` and the transport bindings in the published
@@ -621,24 +623,22 @@ export declare namespace create {
      */
     baseUrl?: string | undefined
     /**
-     * Host's long-term Ed25519 identity public key, **unpadded base64url**
-     * (32 raw bytes → 43 characters). REQUIRED per [uRPC `discovery.md`
-     * §2.2](https://github.com/tempoxyz/urpc/blob/main/specs/discovery.md)
-     * whenever {@link meta} + {@link baseUrl} are set (i.e. whenever
-     * `Wata` auto-publishes `/.well-known/urpc/host.json`).
-     */
-    identityPubkey?: string | undefined
-    /**
      * Optional human-facing app metadata. When set together with
-     * {@link baseUrl} and {@link identityPubkey}, `Wata` auto-publishes
+     * {@link baseUrl} and {@link privateKey}, `Wata` auto-publishes
      * a `/.well-known/urpc/host.json` off the transport's existing
      * `.fetch` / `.listener` — no separate mount required. The
      * published doc's `transports` map is auto-built from the
      * transport's {@link Transport.Transport.discovery} binding.
      * Lazy-injected into transports that opt into
-     * {@link Transport.Transport.bindMeta}.
+     * {@link Transport.Transport.bind}.
      */
     meta?: Discovery.Meta | undefined
+    /**
+     * Host's long-term Ed25519 identity private seed. `Wata` derives
+     * the unpadded base64url public key required by host discovery and
+     * lazy-injects both values into transports that sign as the host.
+     */
+    privateKey?: Hex.Hex | undefined
     /** Optional method-registry schema (typed `'request'` / `'notification'` payloads). */
     schema?: schema | undefined
     /** Host-role transport this wata wraps. */
@@ -648,6 +648,14 @@ export declare namespace create {
 
 type PendingRequest = {
   request: Rpc.Request
+}
+
+function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {
+  const publicKey = Base64.fromBytes(Bytes.from(Ed25519.getPublicKey({ privateKey })), {
+    pad: false,
+    url: true,
+  })
+  return { privateKey, publicKey }
 }
 
 /**

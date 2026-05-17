@@ -36,18 +36,6 @@ export type Options = {
  */
 export type Emitter<map extends Record<string, unknown>> = {
   /**
-   * Subscribe to an event. The listener receives the typed payload
-   * directly. Pass `{ signal }` to scope the subscription to an
-   * `AbortController`.
-   */
-  on: <type extends keyof map & string>(
-    type: type,
-    listener: Listener<map[type]>,
-    options?: Options,
-  ) => void
-  /** Remove a previously-subscribed listener (matched by reference). */
-  off: <type extends keyof map & string>(type: type, listener: Listener<map[type]>) => void
-  /**
    * Emit an event with its payload. Returns `true` if any listeners
    * were invoked, `false` otherwise.
    */
@@ -57,6 +45,18 @@ export type Emitter<map extends Record<string, unknown>> = {
    * called with no argument).
    */
   listenerCount: <type extends keyof map & string>(type?: type) => number
+  /** Remove a previously-subscribed listener (matched by reference). */
+  off: <type extends keyof map & string>(type: type, listener: Listener<map[type]>) => void
+  /**
+   * Subscribe to an event. The listener receives the typed payload
+   * directly. Pass `{ signal }` to scope the subscription to an
+   * `AbortController`.
+   */
+  on: <type extends keyof map & string>(
+    type: type,
+    listener: Listener<map[type]>,
+    options?: Options,
+  ) => void
 }
 
 /**
@@ -84,6 +84,18 @@ export function create<map extends Record<string, unknown>>(): Emitter<map> {
   }>()
   const wrappers = new WeakMap<Listener<unknown>, (event: RettimeTypedEvent<unknown>) => unknown>()
   return {
+    emit(type, payload) {
+      return inner.emit(new RettimeTypedEvent<unknown>(type, { data: payload }) as never)
+    },
+    listenerCount(type) {
+      return inner.listenerCount(type as never)
+    },
+    off(type, listener) {
+      const wrapped = wrappers.get(listener as Listener<unknown>)
+      if (!wrapped) return
+      inner.removeListener(type as never, wrapped as never)
+      wrappers.delete(listener as Listener<unknown>)
+    },
     on(type, listener, options) {
       const wrapped = (event: RettimeTypedEvent<unknown>) => {
         try {
@@ -96,18 +108,6 @@ export function create<map extends Record<string, unknown>>(): Emitter<map> {
       }
       wrappers.set(listener as Listener<unknown>, wrapped)
       inner.on(type as never, wrapped as never, options as never)
-    },
-    off(type, listener) {
-      const wrapped = wrappers.get(listener as Listener<unknown>)
-      if (!wrapped) return
-      inner.removeListener(type as never, wrapped as never)
-      wrappers.delete(listener as Listener<unknown>)
-    },
-    emit(type, payload) {
-      return inner.emit(new RettimeTypedEvent<unknown>(type, { data: payload }) as never)
-    },
-    listenerCount(type) {
-      return inner.listenerCount(type as never)
     },
   }
 }

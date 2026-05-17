@@ -124,9 +124,9 @@ describe('encrypted', () => {
   test('builds the spec wire shape with base64url nonce + ct', () => {
     expect(
       Envelope.encrypted({
+        ciphertext: '0xdeadbeef',
         from: Envelope.from.consumer,
         nonce: '0x000000000000000000000001',
-        ciphertext: '0xdeadbeef',
       }),
     ).toMatchInlineSnapshot(`
       {
@@ -143,9 +143,9 @@ describe('encrypted', () => {
 
   test('round-trips through `toEncrypted`', () => {
     const env = Envelope.encrypted({
+      ciphertext: '0xff00ff00',
       from: Envelope.from.host,
       nonce: '0x000000000000000000000002',
-      ciphertext: '0xff00ff00',
     })
     expect(Envelope.toEncrypted(env)).toMatchInlineSnapshot(`
       {
@@ -177,9 +177,9 @@ describe('parse', () => {
 
   test('parses a JSON-encoded `encrypted` envelope', () => {
     const env = Envelope.encrypted({
+      ciphertext: '0xdeadbeef',
       from: Envelope.from.consumer,
       nonce: '0x000000000000000000000001',
-      ciphertext: '0xdeadbeef',
     })
     expect(Envelope.parse(JSON.parse(JSON.stringify(env)))).toMatchInlineSnapshot(`
       {
@@ -195,7 +195,7 @@ describe('parse', () => {
   })
 
   test('rejects an unknown envelope type', () => {
-    expect(() => Envelope.parse({ type: 'plain', payload: 1 })).toThrowErrorMatchingInlineSnapshot(
+    expect(() => Envelope.parse({ payload: 1, type: 'plain' })).toThrowErrorMatchingInlineSnapshot(
       `
     	[ProtocolError: invalid envelope
     	Details: type: Invalid input]
@@ -206,8 +206,8 @@ describe('parse', () => {
   test('rejects an encrypted envelope with invalid base64url ciphertext', () => {
     expect(() =>
       Envelope.parse({
+        payload: { ct: '!!!!', from: 'consumer', nonce: 'AAAA', v: 1 },
         type: 'encrypted',
-        payload: { v: 1, from: 'consumer', nonce: 'AAAA', ct: '!!!!' },
       }),
     ).toThrowError('invalid envelope')
   })
@@ -215,8 +215,8 @@ describe('parse', () => {
   test('rejects an encrypted envelope with the wrong protocol version', () => {
     expect(() =>
       Envelope.parse({
+        payload: { ct: 'AAAA', from: 'consumer', nonce: 'AAAA', v: 2 },
         type: 'encrypted',
-        payload: { v: 2, from: 'consumer', nonce: 'AAAA', ct: 'AAAA' },
       }),
     ).toThrowError('invalid envelope')
   })

@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Discovery, Wata, Transport, deviceCode } from 'wata'
+import { Discovery, Transport, Wata, deviceCode } from 'wata'
 
 describe('deviceCode (consumer)', () => {
   test('returns a single-exchange consumer-role transport', () => {
@@ -20,17 +20,17 @@ describe('deviceCode (consumer)', () => {
   })
 
   test('accepts `meta` typed as Discovery.Meta', () => {
-    const meta: Discovery.Meta = { name: 'Acme CLI', icon: 'https://acme.dev/i.png' }
+    const meta: Discovery.Meta = { icon: 'https://acme.dev/i.png', name: 'Acme CLI' }
     deviceCode({
-      url: 'https://wallet.example/auth/device',
       meta,
+      url: 'https://wallet.example/auth/device',
     })
   })
 
   test('accepts `consumerUrl` typed as string', () => {
     deviceCode({
-      url: 'https://wallet.example/auth/device',
       consumerUrl: 'https://acme.dev',
+      url: 'https://wallet.example/auth/device',
     })
   })
 })

@@ -119,10 +119,10 @@ export namespace schema {
 
   /** `webhook-callback` transport binding. */
   export const webhookCallbackTransport = z.object({
-    /** HTTPS URL the consumer POSTs to for webhook-callback authorization intent registration. */
-    register_url: httpsUrl,
     /** Origin under which the host's `/auth` route lives. */
     auth_url_origin: httpsUrl,
+    /** HTTPS URL the consumer POSTs to for webhook-callback authorization intent registration. */
+    register_url: httpsUrl,
   })
 
   /**
@@ -132,12 +132,12 @@ export namespace schema {
    */
   export const meta = z.pipe(
     z.object({
-      /** Display name shown in approval / connection UIs. */
-      name: z.string().check(z.minLength(1)),
-      /** Absolute URL to a square icon (PNG / SVG / WebP). */
-      icon: z.optional(httpsUrl),
       /** Short human-facing description shown alongside `name`. */
       description: z.optional(z.string()),
+      /** Absolute URL to a square icon (PNG / SVG / WebP). */
+      icon: z.optional(httpsUrl),
+      /** Display name shown in approval / connection UIs. */
+      name: z.string().check(z.minLength(1)),
       /**
        * Canonical homepage / marketing URL for the app. MAY differ
        * from the document's `origin`.
@@ -148,14 +148,14 @@ export namespace schema {
       (
         wire,
       ): {
-        name: string
-        icon?: string | undefined
         description?: string | undefined
+        icon?: string | undefined
+        name: string
         websiteUrl?: string | undefined
       } => ({
         name: wire.name,
-        ...(wire.icon !== undefined ? { icon: wire.icon } : {}),
         ...(wire.description !== undefined ? { description: wire.description } : {}),
+        ...(wire.icon !== undefined ? { icon: wire.icon } : {}),
         ...(wire.website_url !== undefined ? { websiteUrl: wire.website_url } : {}),
       }),
     ),
@@ -169,12 +169,12 @@ export namespace schema {
    * absorbs the parse failure without aborting the document.
    */
   export const transports = z.looseObject({
+    'device-code': z.catch(z.optional(deviceCodeTransport), undefined),
     'mobile-link': z.catch(z.optional(mobileLinkTransport), undefined),
     'mobile-web-auth': z.catch(z.optional(mobileWebAuthTransport), undefined),
     relay: z.catch(z.optional(relayTransport), undefined),
-    'device-code': z.catch(z.optional(deviceCodeTransport), undefined),
-    window: z.catch(z.optional(windowTransport), undefined),
     'webhook-callback': z.catch(z.optional(webhookCallbackTransport), undefined),
+    window: z.catch(z.optional(windowTransport), undefined),
   })
 
   /**
@@ -185,31 +185,23 @@ export namespace schema {
    * {@link fetchConsumer} enforce this.
    */
   const sharedHeader = {
-    /** Spec version of the document (currently `'1.0'`). */
-    version: z.literal(version),
-    /** Self-asserted origin (`scheme + host + port`); checked against the fetch URL. */
-    origin: httpsUrl,
     /** Stable identifier (RECOMMENDED to be the bare hostname). */
     id: z.string().check(z.minLength(1)),
+    /** Self-asserted origin (`scheme + host + port`); checked against the fetch URL. */
+    origin: httpsUrl,
+    /** Spec version of the document (currently `'1.0'`). */
+    version: z.literal(version),
   } as const
 
   /** Host-side discovery manifest published at `host.json`. */
   export const hostDocument = z.object({
     ...sharedHeader,
-    /** Human-readable display name. */
-    name: z.string().check(z.minLength(1)),
-    /** Optional URL of a square icon. */
-    icon: z.optional(httpsUrl),
-    /** Short human-facing description shown alongside `name`. */
-    description: z.optional(z.string()),
-    /**
-     * Canonical homepage / marketing URL for this host app. MAY differ
-     * from `origin`. Named `website_url` to disambiguate from the
-     * protocol-level `origin` field.
-     */
-    website_url: z.optional(httpsUrl),
     /** Optional capability tags for coarse-grained directory filtering. */
     capabilities: z.optional(z.array(z.string())),
+    /** Short human-facing description shown alongside `name`. */
+    description: z.optional(z.string()),
+    /** Optional URL of a square icon. */
+    icon: z.optional(httpsUrl),
     /**
      * Host's long-term Ed25519 identity public key, **unpadded base64url**
      * (32 raw bytes → 43 characters). REQUIRED per [uRPC `discovery.md`
@@ -219,6 +211,8 @@ export namespace schema {
      * new well-known publication.
      */
     identity_pubkey: identityPubkey,
+    /** Human-readable display name. */
+    name: z.string().check(z.minLength(1)),
     /**
      * Per-transport binding map. MUST contain at least one usable entry —
      * known transports with malformed bindings are silently dropped, so
@@ -229,29 +223,48 @@ export namespace schema {
         error: 'transports must contain at least one valid entry',
       }),
     ),
+    /**
+     * Canonical homepage / marketing URL for this host app. MAY differ
+     * from `origin`. Named `website_url` to disambiguate from the
+     * protocol-level `origin` field.
+     */
+    website_url: z.optional(httpsUrl),
   })
 
   /** Consumer-side discovery manifest published at `consumer.json`. */
   export const consumerDocument = z.object({
     ...sharedHeader,
-    /** Human-readable display name shown in host approval chrome. */
-    name: z.optional(z.string().check(z.minLength(1))),
-    /** Optional URL of a square icon. */
-    icon: z.optional(httpsUrl),
-    /** Short human-facing description shown alongside `name`. */
-    description: z.optional(z.string()),
-    /**
-     * Canonical homepage / marketing URL for this consumer app. MAY
-     * differ from `origin`. Named `website_url` to disambiguate from
-     * the protocol-level `origin` field.
-     */
-    website_url: z.optional(httpsUrl),
     /**
      * Allowlist of fully-qualified callback URLs the consumer accepts.
      * Hosts MUST verify the consumer's `webhook_url` exact-matches one
      * of these. Wildcard segments are rejected.
      */
     callback_urls: z.optional(z.array(callbackUrl)),
+    /** Short human-facing description shown alongside `name`. */
+    description: z.optional(z.string()),
+    /** Optional URL of a square icon. */
+    icon: z.optional(httpsUrl),
+    /**
+     * Consumer's long-term Ed25519 identity public key, **unpadded
+     * base64url** (32 raw bytes → 43 characters). REQUIRED for the
+     * `webhook-callback` transport — per [`transport-webhook-callback.md`
+     * §5.8](https://github.com/tempoxyz/urpc/blob/main/specs/transport-webhook-callback.md):
+     * "A consumer without a `consumer.json` carrying an
+     * `identity_pubkey` cannot use Webhook Callback." Hosts pin this
+     * value at registration time and use it to verify every signed
+     * `POST <register_url>` / `DELETE <register_url>/<auth_req_id>`.
+     * Optional for consumers that only use transports without
+     * RFC 9421 signing (e.g. `device-code`, `window`).
+     */
+    identity_pubkey: z.optional(identityPubkey),
+    /** Human-readable display name shown in host approval chrome. */
+    name: z.optional(z.string().check(z.minLength(1))),
+    /**
+     * Canonical homepage / marketing URL for this consumer app. MAY
+     * differ from `origin`. Named `website_url` to disambiguate from
+     * the protocol-level `origin` field.
+     */
+    website_url: z.optional(httpsUrl),
   })
 }
 
@@ -364,7 +377,7 @@ export declare namespace fetchConsumer {
  * with `If-None-Match`. On a `304 Not Modified` response, the cached
  * body is returned without re-parsing.
  */
-const etagCache = new Map<string, { etag: string; body: unknown }>()
+const etagCache = new Map<string, { body: unknown; etag: string }>()
 
 /**
  * Maximum response body size for well-known fetches.
@@ -397,8 +410,8 @@ async function fetchJson(
     })
   } catch (cause) {
     throw new Errors.ProtocolError('discovery fetch failed', {
-      details: `${url}: ${(cause as Error).message}`,
       cause: cause as Error,
+      details: `${url}: ${(cause as Error).message}`,
     })
   }
   // RFC 9110 §15.4.5 — 304 means the cached representation is still
@@ -432,8 +445,8 @@ async function fetchJson(
   } catch (cause) {
     if (cause instanceof Errors.ProtocolError) throw cause
     throw new Errors.ProtocolError('discovery response read failed', {
-      details: `${url}: ${(cause as Error).message}`,
       cause: cause as Error,
+      details: `${url}: ${(cause as Error).message}`,
     })
   }
   let body: unknown
@@ -441,15 +454,15 @@ async function fetchJson(
     body = JSON.parse(raw)
   } catch (cause) {
     throw new Errors.ProtocolError('discovery response is not valid JSON', {
-      details: `${url}: ${(cause as Error).message}`,
       cause: cause as Error,
+      details: `${url}: ${(cause as Error).message}`,
     })
   }
   // Cache the parsed body keyed by URL + the server's strong validator
   // so the next call can revalidate via `If-None-Match` and short-
   // circuit on 304.
   const responseEtag = response.headers.get('etag')
-  if (responseEtag) etagCache.set(url, { etag: responseEtag, body })
+  if (responseEtag) etagCache.set(url, { body, etag: responseEtag })
   return body
 }
 

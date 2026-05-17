@@ -5,22 +5,22 @@ import { Discovery, Errors } from 'wata'
 const validIdentityPubkey = 'A'.repeat(43)
 
 const validHostJson = {
-  version: '1.0' as const,
-  origin: 'https://wallet.example',
   id: 'wallet.example',
-  name: 'Example Wallet',
   identity_pubkey: validIdentityPubkey,
+  name: 'Example Wallet',
+  origin: 'https://wallet.example',
   transports: {
     relay: { url: 'https://relay.example/v1' },
     window: { url: 'https://wallet.example/urpc/embed' },
   },
+  version: '1.0' as const,
 }
 
 const validConsumerJson = {
-  version: '1.0' as const,
-  origin: 'https://app.example',
-  id: 'app.example',
   callback_urls: ['https://app.example/cb'],
+  id: 'app.example',
+  origin: 'https://app.example',
+  version: '1.0' as const,
 }
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
@@ -189,13 +189,21 @@ describe('parseConsumer', () => {
     ).toThrowError(Errors.ProtocolError)
   })
 
-  test('strips identity_pubkey on consumer.json (host-only field per spec §2.3)', () => {
-    expect(
+  test('preserves identity_pubkey on consumer.json (required for webhook-callback per §5.8)', () => {
+    const parsed = Discovery.parseConsumer({
+      ...validConsumerJson,
+      identity_pubkey: 'A'.repeat(43),
+    })
+    expect(parsed.identity_pubkey).toBe('A'.repeat(43))
+  })
+
+  test('rejects malformed identity_pubkey on consumer.json', () => {
+    expect(() =>
       Discovery.parseConsumer({
         ...validConsumerJson,
-        identity_pubkey: 'A'.repeat(43),
+        identity_pubkey: 'too-short',
       }),
-    ).not.toHaveProperty('identity_pubkey')
+    ).toThrowError(Errors.ProtocolError)
   })
 })
 
@@ -231,8 +239,8 @@ describe('fetchHost', () => {
   test('throws ProtocolError on invalid JSON', async () => {
     const fetchFn = (async () =>
       new Response('not json', {
-        status: 200,
         headers: { 'content-type': 'application/json' },
+        status: 200,
       })) as typeof fetch
     await expect(
       Discovery.fetchHost('https://wallet.example', { fetch: fetchFn }),
@@ -272,11 +280,11 @@ describe('response-size limit', () => {
   test('rejects when content-length exceeds 64 KiB', async () => {
     const fetchFn = (async () =>
       new Response(JSON.stringify(validHostJson), {
-        status: 200,
         headers: {
-          'content-type': 'application/json',
           'content-length': String(64 * 1024 + 1),
+          'content-type': 'application/json',
         },
+        status: 200,
       })) as typeof fetch
     await expect(
       Discovery.fetchHost('https://wallet.example', { fetch: fetchFn }),
@@ -295,8 +303,8 @@ describe('response-size limit', () => {
         },
       })
       return new Response(stream, {
-        status: 200,
         headers: { 'content-type': 'application/json' },
+        status: 200,
       })
     }) as typeof fetch
     await expect(
@@ -309,8 +317,8 @@ describe('redirect handling', () => {
   test('rejects any 3xx redirect (cross-origin forbidden per spec §2.5)', async () => {
     const fetchFn = (async () =>
       new Response(null, {
-        status: 302,
         headers: { location: 'https://attacker.example/host.json' },
+        status: 302,
       })) as typeof fetch
     await expect(
       Discovery.fetchHost('https://wallet.example', { fetch: fetchFn }),
@@ -322,16 +330,16 @@ describe('etag revalidation', () => {
   test('sends If-None-Match on the second fetch and returns the cached body on 304', async () => {
     // Use a unique origin so other tests' cache entries don't bleed in.
     const origin = 'https://etag-host.example'
-    const document = { ...validHostJson, origin, id: 'etag-host.example' }
+    const document = { ...validHostJson, id: 'etag-host.example', origin }
     const tag = '"etag-host-v1"'
 
     const fetchFn = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers as HeadersInit | undefined)
       if (headers.get('if-none-match') === tag)
-        return new Response(null, { status: 304, headers: { etag: tag } })
+        return new Response(null, { headers: { etag: tag }, status: 304 })
       return new Response(JSON.stringify(document), {
-        status: 200,
         headers: { 'content-type': 'application/json', etag: tag },
+        status: 200,
       })
     }) as unknown as typeof fetch
 

@@ -8,7 +8,7 @@
 
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { Wata, Kv, deviceCode } from 'wata/host'
+import { Kv, Wata, deviceCode } from 'wata/host'
 
 const port = 4747
 const baseUrl = `http://localhost:${port}`
@@ -17,6 +17,17 @@ const wata = Wata.create({
   transport: deviceCode({
     baseUrl,
     html: {
+      async authenticate({ request, actions }) {
+        const form = await request.formData()
+        const userCode = String(form.get('user_code') ?? '')
+        const decision = String(form.get('decision') ?? '')
+        if (decision === 'approve') {
+          await actions.approve(userCode)
+          return html('<h1>Approved ✅</h1>')
+        }
+        await actions.deny(userCode)
+        return html('<h1>Denied ❌</h1>')
+      },
       render({ userCode, record }) {
         if (!userCode || !record)
           return html(`
@@ -36,17 +47,6 @@ const wata = Wata.create({
             <button type="submit" name="decision" value="deny">Deny</button>
           </form>
         `)
-      },
-      async authenticate({ request, actions }) {
-        const form = await request.formData()
-        const userCode = String(form.get('user_code') ?? '')
-        const decision = String(form.get('decision') ?? '')
-        if (decision === 'approve') {
-          await actions.approve(userCode)
-          return html('<h1>Approved ✅</h1>')
-        }
-        await actions.deny(userCode)
-        return html('<h1>Denied ❌</h1>')
       },
     },
     path: '/auth/device',
@@ -68,7 +68,7 @@ serve({ fetch: app.fetch, port }, (info) => {
 
 function html(body: string, status = 200): Response {
   return new Response(`<!doctype html><meta charset="utf-8">${body}`, {
-    status,
     headers: { 'content-type': 'text/html; charset=utf-8' },
+    status,
   })
 }

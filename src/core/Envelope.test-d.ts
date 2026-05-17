@@ -27,9 +27,9 @@ describe('ready / hello', () => {
 describe('encrypted', () => {
   test('payload carries `v`, `from`, `nonce`, `ct`', () => {
     const env = Envelope.encrypted({
+      ciphertext: '0xdeadbeef',
       from: Envelope.from.consumer,
       nonce: '0x000000000000000000000001',
-      ciphertext: '0xdeadbeef',
     })
     expectTypeOf(env.type).toEqualTypeOf<'encrypted'>()
     expectTypeOf(env.payload.v).toEqualTypeOf<1>()
@@ -42,8 +42,8 @@ describe('encrypted', () => {
 describe('parse', () => {
   test('returns the discriminated `Envelope` union', () => {
     const env = Envelope.parse({
-      type: 'ready',
       payload: {},
+      type: 'ready',
     })
     expectTypeOf(env).toEqualTypeOf<Envelope.Envelope>()
   })

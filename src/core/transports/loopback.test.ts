@@ -1,6 +1,6 @@
 import type { Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
-import { Aad, Aead, Envelope, Wata, Nonce, Rpc, Schema, Transport } from 'wata'
+import { Aad, Aead, Envelope, Nonce, Rpc, Schema, Transport, Wata } from 'wata'
 import { Wata as HostWata } from 'wata/host'
 import { z } from 'zod/mini'
 
@@ -72,9 +72,9 @@ describe('loopback', () => {
     const aad = Aad.encode({ publicKey, role: Aad.role.consumer })
     const nonce = Nonce.fromCounter(counter)
     const ciphertext = Aead.seal({
+      aad,
       key: sessionKey,
       nonce,
-      aad,
       plaintext: '0xdeadbeef',
     })
 
@@ -82,17 +82,17 @@ describe('loopback', () => {
       host.on('message', (envelope) => resolve(envelope))
     })
 
-    await consumer.send(Envelope.encrypted({ from: Envelope.from.consumer, nonce, ciphertext }))
+    await consumer.send(Envelope.encrypted({ ciphertext, from: Envelope.from.consumer, nonce }))
 
     const envelope = await inbound
     if (envelope.type !== 'encrypted') throw new Error('expected encrypted envelope')
 
     const decoded = Envelope.toEncrypted(envelope)
     const plaintext = Aead.open({
-      key: sessionKey,
-      nonce: decoded.nonce,
       aad,
       ciphertext: decoded.ciphertext,
+      key: sessionKey,
+      nonce: decoded.nonce,
     })
 
     expect(plaintext).toMatchInlineSnapshot('"0xdeadbeef"')
@@ -156,10 +156,10 @@ describe('loopback', () => {
   test('exposes role and exchange', () => {
     const { consumer, host } = Loopback.loopback()
     expect({
-      consumerRole: consumer.role,
-      hostRole: host.role,
       consumerExchange: consumer.exchange,
+      consumerRole: consumer.role,
       hostExchange: host.exchange,
+      hostRole: host.role,
     }).toMatchInlineSnapshot(`
       {
         "consumerExchange": "ongoing",

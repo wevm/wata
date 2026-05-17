@@ -18,6 +18,8 @@
  * and discovery-aware bootstrap land in later phases (see `tasks/PLAN.md`).
  */
 
+import { Base64, Bytes, Ed25519, type Hex } from 'ox'
+
 import * as Discovery from './core/Discovery.js'
 import * as Envelope from './core/Envelope.js'
 import * as Errors from './core/Errors.js'
@@ -196,17 +198,17 @@ export function create<
 >(options: create.Options<schema, transport>): Consumer<schema, transport> {
   const transport = options.transport as transport
   const schema = options.schema as schema
-  const { baseUrl, meta } = options
+  const { baseUrl, meta, privateKey } = options
+  const identity = privateKey ? identityFromPrivateKey(privateKey) : undefined
 
   if (meta && !baseUrl)
     throw new Errors.BaseError('`baseUrl` is required when `meta` is set', {
       details: 'consumer_id needs a fully-qualified origin',
     })
-  // Lazy-inject the parent baseUrl / meta into the transport so
-  // (e.g.) consumer `deviceCode` can derive `consumer_url` and
-  // forward `meta` to the host on `/register`.
-  if (baseUrl) transport.bindBaseUrl?.(baseUrl)
-  if (meta) transport.bindMeta?.(meta)
+  // Lazy-inject parent app context into the transport so adapters can
+  // derive discovery URLs, signing keys, and peer-facing metadata from
+  // one app-level `Wata.create` call.
+  transport.bind?.({ baseUrl, identity, meta })
 
   const emitter = Events.create<LifecycleEventMap>()
 
@@ -245,7 +247,7 @@ export function create<
       if (!deferred) return
       pending.delete(id)
       methodById.delete(id)
-      const { code, message: text, data } = message.error
+      const { code, data, message: text } = message.error
       deferred.reject(new Rpc.RpcError(text, { code, data }))
       return
     }
@@ -356,7 +358,13 @@ export function create<
   let httpFetch = http.fetch
   let httpListener = http.listener
   if (meta && baseUrl) {
-    const document = Wellknown.buildConsumerDocument({ baseUrl, meta })
+    const publicKey = identity?.publicKey ?? transport.publicKey
+    const document = Wellknown.buildConsumerDocument({
+      baseUrl,
+      meta,
+      ...(transport.callbackUrls ? { callbackUrls: transport.callbackUrls } : {}),
+      ...(publicKey ? { publicKey } : {}),
+    })
     const wrapped = Wellknown.wrapFetch({
       base: http.fetch
         ? { fetch: http.fetch.bind(http) as (request: Request) => Promise<Response> }
@@ -431,7 +439,7 @@ export declare namespace create {
      * Public origin of the consumer app (e.g. `https://acme.dev`).
      * Lifted to the `Wata.create` root because it's an app-wide
      * concept. Lazy-injected into transports that need it via
-     * {@link Transport.Transport.bindBaseUrl} — e.g. consumer
+     * {@link Transport.Transport.bind} -- e.g. consumer
      * `deviceCode` derives `consumer_url =
      * ${baseUrl}/.well-known/urpc/consumer.json` from it.
      *
@@ -445,9 +453,16 @@ export declare namespace create {
      * `.fetch` / `.listener` (or as a standalone surface if the
      * transport doesn't expose its own HTTP handlers).
      * Lazy-injected into transports via
-     * {@link Transport.Transport.bindMeta}.
+     * {@link Transport.Transport.bind}.
      */
     meta?: Discovery.Meta | undefined
+    /**
+     * Consumer's long-term Ed25519 identity private seed. `Wata`
+     * derives the unpadded base64url public key for discovery and
+     * lazy-injects both values into transports that need identity
+     * signing.
+     */
+    privateKey?: Hex.Hex | undefined
     /** Optional method-registry schema (typed `send` / `notify` payloads). */
     schema?: schema | undefined
     /** Consumer-role transport this wata wraps. */
@@ -458,6 +473,14 @@ export declare namespace create {
 type Pending = {
   reject: (error: Error) => void
   resolve: (result: SendResult<unknown>) => void
+}
+
+function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {
+  const publicKey = Base64.fromBytes(Bytes.from(Ed25519.getPublicKey({ privateKey })), {
+    pad: false,
+    url: true,
+  })
+  return { privateKey, publicKey }
 }
 
 /**

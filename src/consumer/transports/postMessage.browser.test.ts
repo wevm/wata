@@ -8,7 +8,7 @@ import * as protocol from './internal/protocol.js'
 /**
  * Browser unit tests for the consumer-side `postMessage` transport.
  *
- * These exercise the wire mechanics — ready wata, origin pinning,
+ * These exercise the wire mechanics — readiness handshake, origin pinning,
  * buffering, listener cleanup, error mapping — directly against real
  * `MessageChannel` / `postMessage` semantics in Chromium. The end-to-end
  * `Wata` flow is covered separately in `test/wata-postMessage.browser.test.ts`.

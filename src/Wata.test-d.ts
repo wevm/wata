@@ -1,17 +1,20 @@
+import type { Hex } from 'ox'
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Discovery, Wata, Rpc, Schema, loopback } from 'wata'
+import { Discovery, Rpc, Schema, Wata, loopback } from 'wata'
 import { Wata as HostWata } from 'wata/host'
 import { z } from 'zod/mini'
 
+const privateKey = '0x' as Hex.Hex
+
 const schema = Schema.create({
   methods: {
-    ping: Schema.method({
-      params: z.tuple([]),
-      result: z.object({ ok: z.literal(true) }),
-    }),
     eth_sign: Schema.method({
       params: z.tuple([z.string(), z.string()]),
       result: z.string(),
+    }),
+    ping: Schema.method({
+      params: z.tuple([]),
+      result: z.object({ ok: z.literal(true) }),
     }),
   },
 })
@@ -168,12 +171,22 @@ describe('baseUrl + meta options', () => {
   test('consumer accepts `baseUrl` and `meta` typed as Discovery.Meta', () => {
     const { consumer } = loopback()
     const meta: Discovery.Meta = { name: 'Acme CLI' }
-    Wata.create({ transport: consumer, baseUrl: 'https://acme.dev', meta })
+    Wata.create({ baseUrl: 'https://acme.dev', meta, transport: consumer })
+  })
+
+  test('consumer accepts `privateKey` as an Ed25519 private seed', () => {
+    const { consumer } = loopback()
+    Wata.create({ privateKey, transport: consumer })
   })
 
   test('host accepts `baseUrl` and `meta` typed as Discovery.Meta', () => {
     const { host } = loopback()
     const meta: Discovery.Meta = { name: 'Wallet' }
-    HostWata.create({ transport: host, baseUrl: 'https://wallet.example', meta })
+    HostWata.create({ baseUrl: 'https://wallet.example', meta, privateKey, transport: host })
+  })
+
+  test('host accepts `privateKey` as an Ed25519 private seed', () => {
+    const { host } = loopback()
+    HostWata.create({ privateKey, transport: host })
   })
 })

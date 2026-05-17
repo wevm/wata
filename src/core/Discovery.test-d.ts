@@ -44,7 +44,7 @@ describe('HostDocument', () => {
 })
 
 describe('ConsumerDocument', () => {
-  test('shared header + callback_urls; no identity_pubkey', () => {
+  test('shared header + callback_urls + optional identity_pubkey', () => {
     expectTypeOf<Discovery.ConsumerDocument['version']>().toEqualTypeOf<'1.0'>()
     expectTypeOf<Discovery.ConsumerDocument['origin']>().toEqualTypeOf<string>()
     expectTypeOf<Discovery.ConsumerDocument['id']>().toEqualTypeOf<string>()
@@ -55,8 +55,10 @@ describe('ConsumerDocument', () => {
     expectTypeOf<Discovery.ConsumerDocument['icon']>().toEqualTypeOf<string | undefined>()
     expectTypeOf<Discovery.ConsumerDocument['description']>().toEqualTypeOf<string | undefined>()
     expectTypeOf<Discovery.ConsumerDocument['website_url']>().toEqualTypeOf<string | undefined>()
+    expectTypeOf<Discovery.ConsumerDocument['identity_pubkey']>().toEqualTypeOf<
+      string | undefined
+    >()
     expectTypeOf<Discovery.ConsumerDocument>().not.toHaveProperty('meta')
-    expectTypeOf<Discovery.ConsumerDocument>().not.toHaveProperty('identity_pubkey')
   })
 })
 

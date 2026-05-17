@@ -10,7 +10,7 @@ const ethSign = Schema.method({
   params: z.tuple([z.string(), z.string()]),
   result: z.string(),
 })
-const schema = Schema.create({ methods: { ping, eth_sign: ethSign } })
+const schema = Schema.create({ methods: { eth_sign: ethSign, ping } })
 
 describe('method', () => {
   test('returns the params/result pair as-is', () => {
@@ -23,8 +23,8 @@ describe('create', () => {
   test('returns the methods registry as a typed schema', () => {
     expect(Object.keys(schema.methods)).toMatchInlineSnapshot(`
       [
-        "ping",
         "eth_sign",
+        "ping",
       ]
     `)
   })

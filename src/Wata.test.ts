@@ -1,20 +1,32 @@
+import type { Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
-import { Envelope, Errors, Kv, Wata, Rpc, Schema, deviceCode, loopback } from 'wata'
+import {
+  Envelope,
+  Errors,
+  Kv,
+  Rpc,
+  Schema,
+  Wata,
+  deviceCode,
+  loopback,
+  webhookCallback,
+} from 'wata'
 import { Wata as HostWata, deviceCode as hostDeviceCode } from 'wata/host'
 import { z } from 'zod/mini'
 
+const privateKey = `0x${'11'.repeat(32)}` as Hex.Hex
 // 43-char unpadded base64url Ed25519 pubkey per uRPC discovery.md §2.2.
-const identityPubkey = 'A'.repeat(43)
+const publicKey = '0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc'
 
 const schema = Schema.create({
   methods: {
-    ping: Schema.method({
-      params: z.tuple([]),
-      result: z.object({ ok: z.literal(true) }),
-    }),
     add: Schema.method({
       params: z.tuple([z.number(), z.number()]),
       result: z.number(),
+    }),
+    ping: Schema.method({
+      params: z.tuple([]),
+      result: z.object({ ok: z.literal(true) }),
     }),
   },
 })
@@ -408,9 +420,9 @@ describe('mode discipline', () => {
 
     await cTransport.send(
       Envelope.encrypted({
+        ciphertext: `0x${'aa'.repeat(16)}`,
         from: 'consumer',
         nonce: `0x${'00'.repeat(12)}`,
-        ciphertext: `0x${'aa'.repeat(16)}`,
       }),
     )
 
@@ -458,9 +470,9 @@ describe('mode discipline', () => {
 
     await hTransport.send(
       Envelope.encrypted({
+        ciphertext: `0x${'aa'.repeat(16)}`,
         from: 'host',
         nonce: `0x${'00'.repeat(12)}`,
-        ciphertext: `0x${'aa'.repeat(16)}`,
       }),
     )
 
@@ -493,15 +505,15 @@ describe('baseUrl + meta auto-publishing', () => {
   test('host `Wata.create({ baseUrl, meta })` serves /.well-known/urpc/host.json off the transport `.fetch`', async () => {
     const host = HostWata.create({
       baseUrl: 'https://wallet.example',
-      identityPubkey,
-      meta: { name: 'Example Wallet', icon: 'https://wallet.example/icon.png' },
+      meta: { icon: 'https://wallet.example/icon.png', name: 'Example Wallet' },
+      privateKey,
       transport: hostDeviceCode({
-        store: Kv.memory(),
-        path: '/auth/device',
         html: {
-          render: () => new Response('ok'),
           authenticate: async () => new Response('ok'),
+          render: () => new Response('ok'),
         },
+        path: '/auth/device',
+        store: Kv.memory(),
       }),
     })
 
@@ -509,47 +521,47 @@ describe('baseUrl + meta auto-publishing', () => {
       new Request('https://wallet.example/.well-known/urpc/host.json'),
     )
     expect({
-      status: response.status,
       contentType: response.headers.get('content-type'),
+      status: response.status,
     }).toMatchInlineSnapshot(`
-    	{
-    	  "contentType": "application/json",
-    	  "status": 200,
-    	}
+      {
+        "contentType": "application/json",
+        "status": 200,
+      }
     `)
     expect(await response.json()).toMatchInlineSnapshot(`
-    	{
-    	  "icon": "https://wallet.example/icon.png",
-    	  "id": "wallet.example",
-    	  "identity_pubkey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-    	  "name": "Example Wallet",
-    	  "origin": "https://wallet.example",
-    	  "transports": {
-    	    "device-code": {
-    	      "register_url": "https://wallet.example/auth/device/register",
-    	      "token_url": "https://wallet.example/auth/device/token",
-    	    },
-    	  },
-    	  "version": "1.0",
-    	}
+      {
+        "icon": "https://wallet.example/icon.png",
+        "id": "wallet.example",
+        "identity_pubkey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+        "name": "Example Wallet",
+        "origin": "https://wallet.example",
+        "transports": {
+          "device-code": {
+            "register_url": "https://wallet.example/auth/device/register",
+            "token_url": "https://wallet.example/auth/device/token",
+          },
+        },
+        "version": "1.0",
+      }
     `)
   })
 
   test('host `Wata.create({ baseUrl, meta })` still routes transport requests for non-well-known paths', async () => {
     const host = HostWata.create({
       baseUrl: 'https://wallet.example',
-      identityPubkey,
       meta: { name: 'Example Wallet' },
+      privateKey,
       transport: hostDeviceCode({
-        store: Kv.memory(),
-        path: '/auth/device',
         html: {
+          authenticate: async () => new Response('ok'),
           render: ({ userCode }) =>
             new Response(`<form>code=${userCode ?? ''}</form>`, {
               headers: { 'content-type': 'text/html' },
             }),
-          authenticate: async () => new Response('ok'),
         },
+        path: '/auth/device',
+        store: Kv.memory(),
       }),
     })
 
@@ -559,8 +571,8 @@ describe('baseUrl + meta auto-publishing', () => {
       }),
     )
     expect({
-      status: response.status,
       contentType: response.headers.get('content-type'),
+      status: response.status,
     }).toMatchInlineSnapshot(`
       {
         "contentType": "text/html",
@@ -574,11 +586,11 @@ describe('baseUrl + meta auto-publishing', () => {
       HostWata.create({
         meta: { name: 'X' },
         transport: hostDeviceCode({
-          store: Kv.memory(),
           html: {
-            render: () => new Response('ok'),
             authenticate: async () => new Response('ok'),
+            render: () => new Response('ok'),
           },
+          store: Kv.memory(),
         }),
       }),
     ).toThrowErrorMatchingInlineSnapshot(
@@ -589,23 +601,23 @@ describe('baseUrl + meta auto-publishing', () => {
     )
   })
 
-  test('host `Wata.create({ baseUrl, meta })` without `identityPubkey` throws (required per spec §2.2)', () => {
+  test('host `Wata.create({ baseUrl, meta })` without `privateKey` throws (required per spec §2.2)', () => {
     expect(() =>
       HostWata.create({
         baseUrl: 'https://wallet.example',
         meta: { name: 'X' },
         transport: hostDeviceCode({
-          store: Kv.memory(),
           html: {
-            render: () => new Response('ok'),
             authenticate: async () => new Response('ok'),
+            render: () => new Response('ok'),
           },
+          store: Kv.memory(),
         }),
       }),
     ).toThrowErrorMatchingInlineSnapshot(
       `
-    	[BaseError: \`identityPubkey\` is required when \`meta\` is set
-    	Details: host.json publishes the long-term Ed25519 identity pubkey (unpadded base64url, 43 chars)]
+      [BaseError: \`privateKey\` is required when \`meta\` is set
+      Details: host.json publishes the long-term Ed25519 identity pubkey derived from the private seed]
     `,
     )
   })
@@ -614,12 +626,12 @@ describe('baseUrl + meta auto-publishing', () => {
     const host = HostWata.create({
       transport: hostDeviceCode({
         baseUrl: 'https://wallet.example',
-        store: Kv.memory(),
-        path: '/auth/device',
         html: {
-          render: () => new Response('ok'),
           authenticate: async () => new Response('ok'),
+          render: () => new Response('ok'),
         },
+        path: '/auth/device',
+        store: Kv.memory(),
       }),
     })
     // No well-known route mounted by the wrapper — falls through to the
@@ -633,8 +645,6 @@ describe('baseUrl + meta auto-publishing', () => {
   test('consumer `Wata.create({ baseUrl, meta })` lazy-injects meta into deviceCode for /register payload', async () => {
     let registerBody: unknown
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
       fetch: async (input, init) => {
         const url = input instanceof Request ? input.url : String(input)
         if (url.endsWith('/register')) {
@@ -647,18 +657,20 @@ describe('baseUrl + meta auto-publishing', () => {
               user_code: 'AAAA-BBBB',
               verification_uri: 'https://example/verify',
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 200 },
           )
         }
         return new Response(JSON.stringify({ error: 'authorization_pending' }), {
-          status: 400,
           headers: { 'content-type': 'application/json' },
+          status: 400,
         })
       },
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',
-      meta: { name: 'Acme CLI', icon: 'https://acme.dev/icon.png' },
+      meta: { icon: 'https://acme.dev/icon.png', name: 'Acme CLI' },
       transport: consumer,
     })
 
@@ -691,12 +703,51 @@ describe('baseUrl + meta auto-publishing', () => {
     `)
   })
 
+  test('consumer `Wata.create({ baseUrl, meta })` publishes inferred webhook callback URLs', async () => {
+    const consumer = webhookCallback({
+      host: {
+        id: 'wallet.example',
+        identity_pubkey: publicKey,
+        name: 'Example Wallet',
+        origin: 'https://wallet.example',
+        transports: {
+          'webhook-callback': {
+            auth_url_origin: 'https://wallet.example',
+            register_url: 'https://wallet.example/auth/webhook/register',
+          },
+        },
+        version: '1.0',
+      },
+      path: '/cb',
+      store: Kv.memory(),
+    })
+    const wata = Wata.create({
+      baseUrl: 'https://acme.dev',
+      meta: { name: 'Acme CLI' },
+      privateKey,
+      transport: consumer,
+    })
+
+    const response = await wata.fetch!(
+      new Request('https://acme.dev/.well-known/urpc/consumer.json'),
+    )
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "callback_urls": [
+          "https://acme.dev/cb",
+        ],
+        "id": "acme.dev",
+        "identity_pubkey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+        "name": "Acme CLI",
+        "origin": "https://acme.dev",
+        "version": "1.0",
+      }
+    `)
+  })
+
   test('consumer-side inline `meta` on the transport wins over `Wata.create({ meta })`', async () => {
     let registerBody: unknown
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
-      meta: { name: 'Inline Override' },
       fetch: async (input, init) => {
         const url = input instanceof Request ? input.url : String(input)
         if (url.endsWith('/register')) {
@@ -709,14 +760,17 @@ describe('baseUrl + meta auto-publishing', () => {
               user_code: 'AAAA-BBBB',
               verification_uri: 'https://example/verify',
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 200 },
           )
         }
         return new Response(JSON.stringify({ error: 'authorization_pending' }), {
-          status: 400,
           headers: { 'content-type': 'application/json' },
+          status: 400,
         })
       },
+      meta: { name: 'Inline Override' },
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',

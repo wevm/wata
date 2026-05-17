@@ -4,7 +4,7 @@
  *
  * The transport never opens popups or iframes itself. Instead the caller
  * passes a `target` callback that returns a handle on demand. The library
- * owns the **wire** (origin pinning, ready wata, listener cleanup,
+ * owns the **wire** (origin pinning, readiness handshake, listener cleanup,
  * closed detection); the caller owns the **mount** (popup vs iframe vs
  * channel vs opener-supplied window).
  *
@@ -127,13 +127,13 @@ export function postMessage<const target extends Target>(
   const { close, host, source, target: acquire } = options
   const targetOrigin = host ? originFrom(host) : undefined
   return createSide<'consumer', target>({
-    wata: { expect: protocol.hostReady.type, send: protocol.consumerHello },
     options: {
       close,
       source,
       target: () => acquire({ host }),
       targetOrigin,
     },
+    handshake: { expect: protocol.hostReady.type, send: protocol.consumerHello },
     role: 'consumer',
   })
 }
@@ -155,14 +155,14 @@ function originFrom(host: string): string {
 
 /**
  * Internal helper — both consumer and host sides share the wire mechanics
- * (ready wata, origin pinning, listener cleanup, closed detection),
+ * (readiness handshake, origin pinning, listener cleanup, closed detection),
  * so the actual transport object is built here. The host re-exports the
  * same routine via `wata/host`.
  */
 export function createSide<role extends 'consumer' | 'host', target extends Target>(
   parameters: createSide.Options<role, target>,
 ): Transport.Transport<role> {
-  const { role, wata, options } = parameters
+  const { handshake, options, role } = parameters
   const source = options.source ?? (globalThis as { window?: WindowLike }).window
 
   const emitter = Events.create<Transport.EventMap>()
@@ -267,7 +267,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     }
     const { frame } = inbound
     if (protocol.isControlFrame(frame)) {
-      if (frame.type === wata.expect) markReady()
+      if (frame.type === handshake.expect) markReady()
       return
     }
     let envelope: Envelope.Envelope
@@ -330,7 +330,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
         attachClosedPoll()
         // Send our hello after the listener is attached so the peer's reply
         // is never missed.
-        postRaw(wata.send)
+        postRaw(handshake.send)
       } finally {
         startPromise = undefined
       }
@@ -391,12 +391,12 @@ export type InternalOptions<target extends Target> = {
 export declare namespace createSide {
   /** Parameters for {@link createSide}. */
   type Options<role extends 'consumer' | 'host', target extends Target> = {
-    /** Outbound control frame and the inbound frame type to wait for. */
-    wata: { expect: protocol.WireFrame['type']; send: protocol.WireFrame }
     /** Normalized options for the underlying `postMessage` transport. */
     options: InternalOptions<target>
     /** Side of the protocol this transport speaks for. */
     role: role
+    /** Outbound control frame and the inbound frame type to wait for. */
+    handshake: { expect: protocol.WireFrame['type']; send: protocol.WireFrame }
   }
 }
 

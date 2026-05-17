@@ -34,10 +34,10 @@ describe('buildInfo', () => {
     const publicKey_host = `0x${'aa'.repeat(32)}` as const
     const transportContext = '0xdeadbeef' as const
     const info = Session.buildInfo({
-      transportId: 'relay',
       direction: Session.direction.c2h,
       publicKey_host,
       transportContext,
+      transportId: 'relay',
     })
     const expected =
       Hex.fromBytes(new TextEncoder().encode('urpc/v1/relay/c2h')).slice(2) +
@@ -49,9 +49,9 @@ describe('buildInfo', () => {
   test('omits transport_context when undefined', () => {
     const publicKey_host = `0x${'bb'.repeat(32)}` as const
     const info = Session.buildInfo({
-      transportId: 'mobile-link',
       direction: Session.direction.h2c,
       publicKey_host,
+      transportId: 'mobile-link',
     })
     expect(Hex.size(info)).toBe('urpc/v1/mobile-link/h2c'.length + 32)
   })
@@ -63,18 +63,18 @@ describe('derive', () => {
     const host = Crypto.randomKeypair()
 
     const fromConsumer = Session.derive({
+      peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
-      peer: { publicKey: host.x25519.publicKey },
-      transportId: 'relay',
       transportContext: '0x1234',
+      transportId: 'relay',
     })
     const fromHost = Session.derive({
+      peer: { publicKey: consumer.x25519.publicKey },
       role: 'host',
       self: host.x25519,
-      peer: { publicKey: consumer.x25519.publicKey },
-      transportId: 'relay',
       transportContext: '0x1234',
+      transportId: 'relay',
     })
 
     expect(fromConsumer.c2h).toBe(fromHost.c2h)
@@ -89,18 +89,18 @@ describe('derive', () => {
     const host = Crypto.randomKeypair()
 
     const a = Session.derive({
+      peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
-      peer: { publicKey: host.x25519.publicKey },
-      transportId: 'relay',
       transportContext: '0xaaaa',
+      transportId: 'relay',
     })
     const b = Session.derive({
+      peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
-      peer: { publicKey: host.x25519.publicKey },
-      transportId: 'relay',
       transportContext: '0xbbbb',
+      transportId: 'relay',
     })
 
     expect(a.c2h).not.toBe(b.c2h)
@@ -112,15 +112,15 @@ describe('derive', () => {
     const host = Crypto.randomKeypair()
 
     const a = Session.derive({
+      peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
-      peer: { publicKey: host.x25519.publicKey },
       transportId: 'relay',
     })
     const b = Session.derive({
+      peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
-      peer: { publicKey: host.x25519.publicKey },
       transportId: 'mobile-link',
     })
 
@@ -137,21 +137,21 @@ describe('derive', () => {
     })
     const expected = Kdf.derive({
       ikm: sharedSecret,
-      salt: consumer.x25519.publicKey,
       info: Session.buildInfo({
-        transportId: 'relay',
         direction: Session.direction.c2h,
         publicKey_host: host.x25519.publicKey,
         transportContext: '0xfeedface',
+        transportId: 'relay',
       }),
       length: Session.keySize,
+      salt: consumer.x25519.publicKey,
     })
     const derived = Session.derive({
+      peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
-      peer: { publicKey: host.x25519.publicKey },
-      transportId: 'relay',
       transportContext: '0xfeedface',
+      transportId: 'relay',
     })
     expect(derived.c2h).toBe(expected)
   })
@@ -160,18 +160,18 @@ describe('derive', () => {
     const consumer = Crypto.randomKeypair()
     const host = Crypto.randomKeypair()
     const fromHex = Session.derive({
+      peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
-      peer: { publicKey: host.x25519.publicKey },
       transportId: 'relay',
     })
     const fromBytes = Session.derive({
+      peer: { publicKey: Bytes.from(host.x25519.publicKey) },
       role: 'consumer',
       self: {
-        publicKey: Bytes.from(consumer.x25519.publicKey),
         privateKey: Bytes.from(consumer.x25519.privateKey),
+        publicKey: Bytes.from(consumer.x25519.publicKey),
       },
-      peer: { publicKey: Bytes.from(host.x25519.publicKey) },
       transportId: 'relay',
     })
     expect(fromHex.c2h).toBe(fromBytes.c2h)

@@ -3,7 +3,7 @@
  * `WindowProxy`, or `MessagePort` handle.
  *
  * The host side is the mirror of the consumer transport: same `target`
- * callback shape, same origin pinning, but the ready wata is
+ * callback shape, same origin pinning, but the readiness handshake is
  * inverted (host emits `urpc.ready`, waits for the consumer's
  * `urpc.hello`). Unlike the consumer, the host's `target` is
  * **optional** — it defaults to `window.opener ?? window.parent`, the
@@ -93,13 +93,13 @@ export function postMessage<const target extends ConsumerPostMessage.Target = Wi
     }) as () => target | Promise<target>)
 
   return ConsumerPostMessage.createSide({
-    wata: { expect: protocol.consumerHello.type, send: protocol.hostReady },
     options: {
       close: options.close,
       source: options.source,
       target: target_resolved,
       targetOrigin: options.targetOrigin ?? '*',
     },
+    handshake: { expect: protocol.consumerHello.type, send: protocol.hostReady },
     role: 'host',
   })
 }

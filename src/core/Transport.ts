@@ -28,6 +28,8 @@ import * as Envelope from './Envelope.js'
 import * as Errors from './Errors.js'
 import * as Events from './Events.js'
 
+import type { Hex } from 'ox'
+
 /** Side of the protocol this transport speaks for. */
 export type Role = 'consumer' | 'host'
 
@@ -49,6 +51,31 @@ export type EventMap = {
 }
 
 /**
+ * Long-term Ed25519 identity material owned by the wrapping `Wata`
+ * application and lazy-bound into transports that need to sign or
+ * publish authenticated discovery fields.
+ */
+export type Identity = {
+  /** Ed25519 private seed (`0x`-prefixed 32-byte hex). */
+  privateKey: Hex.Hex
+  /** Ed25519 public key encoded as unpadded base64url. */
+  publicKey: string
+}
+
+/**
+ * Parent `Wata.create` context lazy-bound into transports that need
+ * application-level discovery, metadata, or identity material.
+ */
+export type Binding = {
+  /** Public origin shared by the wrapping application. */
+  baseUrl?: string | undefined
+  /** Long-term Ed25519 identity material derived by `Wata.create`. */
+  identity?: Identity | undefined
+  /** Human-facing app metadata. */
+  meta?: unknown | undefined
+}
+
+/**
  * Discovery contribution surfaced by an HTTP-server-shaped transport.
  * Read by `Wata.create({ baseUrl, meta })` to auto-build the
  * `transports` map of `/.well-known/urpc/{host,consumer}.json` —
@@ -60,15 +87,15 @@ export type EventMap = {
  */
 export type DiscoveryBinding = {
   /**
-   * Transport identifier in the published `transports` map (e.g.
-   * `'device-code'`, `'webhook-callback'`, `'relay'`).
-   */
-  id: string
-  /**
    * Build the per-transport binding object (`register_url`,
    * `token_url`, etc.) given the parent `baseUrl`.
    */
   binding: (baseUrl: string) => unknown
+  /**
+   * Transport identifier in the published `transports` map (e.g.
+   * `'device-code'`, `'webhook-callback'`, `'relay'`).
+   */
+  id: string
 }
 
 /**
@@ -77,22 +104,21 @@ export type DiscoveryBinding = {
  */
 export type Transport<role extends Role = Role> = {
   /**
-   * Apply a parent app's `baseUrl` to this transport. Lazy-bound by
-   * `Wata.create({ baseUrl })` so transports that need an origin
-   * (e.g. host `deviceCode` building `verification_uri`) can
-   * inherit it from the wrapping `Wata` instance. Idempotent — a
-   * transport's own constructor-level `baseUrl` (if any) wins.
+   * Apply parent application context to this transport. Lazy-bound by
+   * `Wata.create({ baseUrl, meta, privateKey })` so transports can
+   * derive discovery URLs, sign messages, and surface peer-facing
+   * metadata from one app-level call. Idempotent: constructor-level
+   * transport options still win.
    */
-  bindBaseUrl?: ((baseUrl: string) => void) | undefined
+  bind?: ((binding: Binding) => void) | undefined
   /**
-   * Apply parent {@link Discovery.Meta} to this transport. Lazy-bound
-   * by `Wata.create({ meta })` so transports that need to surface
-   * metadata to the peer (e.g. consumer `deviceCode` serializing
-   * `meta` into `/register` payloads) can inherit it from the
-   * wrapping `Wata` instance. A transport's own constructor-level
-   * `meta` (if any) wins.
+   * Consumer-side discovery contribution surfaced to the wrapping
+   * `Wata.create({ baseUrl, meta })` so that the auto-published
+   * `consumer.json` can carry a `callback_urls` allowlist (e.g.
+   * the `webhookCallback` consumer transport's derived callback URL).
+   * Host transports leave this `undefined`.
    */
-  bindMeta?: ((meta: unknown) => void) | undefined
+  callbackUrls?: readonly string[] | undefined
   /** Close the transport. Idempotent. */
   close: (cause?: Error) => Promise<void>
   /**
@@ -109,6 +135,16 @@ export type Transport<role extends Role = Role> = {
    * `AbortController`.
    */
   on: Events.Emitter<EventMap>['on']
+  /**
+   * Consumer-side identity public key surfaced to the wrapping
+   * `Wata.create({ baseUrl, meta })` so that the auto-published
+   * `consumer.json` can carry the `identity_pubkey` field required
+   * by transports that authenticate the consumer (e.g.
+   * `webhook-callback`). Encoded as **unpadded base64url** per
+   * uRPC Discovery §2.2. Transports that don't authenticate the
+   * consumer leave this `undefined`.
+   */
+  publicKey?: string | undefined
   /** Side of the protocol this transport speaks for. */
   role: role
   /** Send a single envelope frame to the peer. */

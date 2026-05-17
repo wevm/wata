@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vp/test'
-import { Envelope, Wata, Rpc, postMessage as postMessage_consumer } from 'wata'
+import { Envelope, Rpc, Wata, postMessage as postMessage_consumer } from 'wata'
 import { Wata as HostWata, postMessage } from 'wata/host'
 
 import * as protocol from '../../consumer/transports/internal/protocol.js'
@@ -23,11 +23,11 @@ describe('postMessage (host)', () => {
     await transport.start()
     await new Promise((resolve) => setTimeout(resolve, 10))
 
-    const ready = peerSeen[0] as { type: string; id: string }
+    const ready = peerSeen[0] as { id: string; type: string }
     expect({
       count: peerSeen.length,
-      type: ready.type,
       idIsUuidV4: protocol.isUuidV4(ready.id),
+      type: ready.type,
     }).toMatchInlineSnapshot(`
       {
         "count": 1,
@@ -97,7 +97,7 @@ describe('postMessage (host)', () => {
   test('reports role: "host" and exchange: "ongoing"', () => {
     const { port1 } = new MessageChannel()
     const transport = postMessage({ target: () => port1 })
-    expect({ role: transport.role, exchange: transport.exchange }).toMatchInlineSnapshot(`
+    expect({ exchange: transport.exchange, role: transport.role }).toMatchInlineSnapshot(`
       {
         "exchange": "ongoing",
         "role": "host",

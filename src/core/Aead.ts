@@ -46,7 +46,7 @@ export const tagSize = 16
  * ```
  */
 export function seal(options: seal.Options): Hex.Hex {
-  const { key, nonce, aad, plaintext } = options
+  const { aad, key, nonce, plaintext } = options
   const cipher = chacha20poly1305(
     Bytes.from(key),
     Bytes.from(nonce),
@@ -90,7 +90,7 @@ export declare namespace seal {
  * ```
  */
 export function open(options: open.Options): Hex.Hex {
-  const { key, nonce, aad, ciphertext } = options
+  const { aad, ciphertext, key, nonce } = options
   const cipher = chacha20poly1305(
     Bytes.from(key),
     Bytes.from(nonce),

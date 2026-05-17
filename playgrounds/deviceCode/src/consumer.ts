@@ -15,15 +15,15 @@
 import * as Clack from '@clack/prompts'
 import { Wata, deviceCode } from 'wata'
 
-const baseUrl = process.env['BASE_URL'] ?? 'http://localhost:4747'
+const baseUrl = process.env.BASE_URL ?? 'http://localhost:4747'
 
 Clack.intro('uRPC device-code consumer')
 
 const method = await Clack.select({
   message: 'Pick a method to call',
   options: [
-    { value: 'ping', label: 'ping (no params)' },
-    { value: 'echo', label: 'echo (params: { hello: "world" })' },
+    { label: 'ping (no params)', value: 'ping' },
+    { label: 'echo (params: { hello: "world" })', value: 'echo' },
   ],
 })
 if (Clack.isCancel(method)) {
@@ -34,9 +34,9 @@ if (Clack.isCancel(method)) {
 const wata = Wata.create({
   transport: deviceCode({
     meta: {
-      name: 'Acme CLI',
       description: 'uRPC device-code playground consumer',
       icon: 'https://api.dicebear.com/9.x/identicon/svg?seed=acme-cli',
+      name: 'Acme CLI',
     },
     onPrompt({ userCode, verificationUri, verificationUriFull }) {
       Clack.note(

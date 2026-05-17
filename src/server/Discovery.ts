@@ -62,14 +62,6 @@ export type HostOptions = {
   /** Optional `icon` URL. Defaults to `meta.icon`. */
   icon?: string | undefined
   /**
-   * Long-term Ed25519 identity public key, **unpadded base64url** (32
-   * raw bytes → 43 characters). REQUIRED per [uRPC `discovery.md`
-   * §2.2](https://github.com/tempoxyz/urpc/blob/main/specs/discovery.md).
-   * Either `identityPubkey` or a pre-built `document` carrying one
-   * MUST be supplied — `host.json` cannot be served without it.
-   */
-  identityPubkey?: string | undefined
-  /**
    * Override the document's `id` field. Defaults to the request URL's
    * hostname so a single server can publish without hard-coding its
    * identity.
@@ -87,6 +79,14 @@ export type HostOptions = {
    * URL's origin (`scheme + host + port`).
    */
   origin?: string | undefined
+  /**
+   * Long-term Ed25519 identity public key, **unpadded base64url** (32
+   * raw bytes → 43 characters). REQUIRED per [uRPC `discovery.md`
+   * §2.2](https://github.com/tempoxyz/urpc/blob/main/specs/discovery.md).
+   * Either `publicKey` or a pre-built `document` carrying one
+   * MUST be supplied — `host.json` cannot be served without it.
+   */
+  publicKey?: string | undefined
   /**
    * Per-transport bindings (e.g. `{ 'device-code': { register_url,
    * token_url } }`). At least one binding MUST be present.
@@ -131,7 +131,7 @@ export type ConsumerOptions = {
  *
  * const host = hostWellknown({
  *   meta: { name: 'Example Wallet', icon: 'https://wallet.example/logo.png' },
- *   identityPubkey: 'MCowBQYDK2VwAyEA...', // unpadded base64url Ed25519
+ *   publicKey: 'MCowBQYDK2VwAyEA...', // unpadded base64url Ed25519
  *   transports: { 'device-code': { register_url: '...', token_url: '...' } },
  * })
  *
@@ -189,13 +189,13 @@ export function consumerWellknown(options: ConsumerOptions = {}): Http.Server {
 }
 
 function buildHostDocument(options: HostOptions, requestUrl: string): Discovery.HostDocument {
-  const { origin, id } = resolveOriginAndId(options.origin, options.id, requestUrl)
+  const { id, origin } = resolveOriginAndId(options.origin, options.id, requestUrl)
   const name = options.name ?? options.meta?.name
   if (!name)
     throw new Errors.ProtocolError('`name` is required (pass `name` directly or via `meta.name`)')
-  if (!options.identityPubkey)
+  if (!options.publicKey)
     throw new Errors.ProtocolError(
-      '`identityPubkey` is required (unpadded base64url Ed25519 public key, 43 chars)',
+      '`publicKey` is required (unpadded base64url Ed25519 public key, 43 chars)',
     )
   if (!options.transports || Object.keys(options.transports).length === 0)
     throw new Errors.ProtocolError('`transports` map must contain at least one entry')
@@ -203,16 +203,16 @@ function buildHostDocument(options: HostOptions, requestUrl: string): Discovery.
   const description = options.meta?.description
   const websiteUrl = options.meta?.websiteUrl
   return Schema.validate(Discovery.schema.hostDocument, {
-    version: Discovery.version,
-    origin,
     id,
+    identity_pubkey: options.publicKey,
     name,
-    ...(icon ? { icon } : {}),
-    ...(description ? { description } : {}),
-    ...(websiteUrl ? { website_url: websiteUrl } : {}),
-    ...(options.capabilities ? { capabilities: options.capabilities } : {}),
-    identity_pubkey: options.identityPubkey,
+    origin,
     transports: options.transports,
+    version: Discovery.version,
+    ...(options.capabilities ? { capabilities: options.capabilities } : {}),
+    ...(description ? { description } : {}),
+    ...(icon ? { icon } : {}),
+    ...(websiteUrl ? { website_url: websiteUrl } : {}),
   })
 }
 
@@ -220,17 +220,17 @@ function buildConsumerDocument(
   options: ConsumerOptions,
   requestUrl: string,
 ): Discovery.ConsumerDocument {
-  const { origin, id } = resolveOriginAndId(options.origin, options.id, requestUrl)
+  const { id, origin } = resolveOriginAndId(options.origin, options.id, requestUrl)
   const meta = options.meta
   return Schema.validate(Discovery.schema.consumerDocument, {
-    version: Discovery.version,
-    origin,
     id,
-    ...(meta?.name ? { name: meta.name } : {}),
-    ...(meta?.icon ? { icon: meta.icon } : {}),
-    ...(meta?.description ? { description: meta.description } : {}),
-    ...(meta?.websiteUrl ? { website_url: meta.websiteUrl } : {}),
+    origin,
+    version: Discovery.version,
     ...(options.callbackUrls ? { callback_urls: options.callbackUrls } : {}),
+    ...(meta?.description ? { description: meta.description } : {}),
+    ...(meta?.icon ? { icon: meta.icon } : {}),
+    ...(meta?.name ? { name: meta.name } : {}),
+    ...(meta?.websiteUrl ? { website_url: meta.websiteUrl } : {}),
   })
 }
 
@@ -238,11 +238,11 @@ function resolveOriginAndId(
   origin: string | undefined,
   id: string | undefined,
   requestUrl: string,
-): { origin: string; id: string } {
+): { id: string; origin: string } {
   const parsed = new URL(requestUrl)
   const resolvedOrigin = origin ?? parsed.origin
   const resolvedId = id ?? new URL(resolvedOrigin).hostname
-  return { origin: resolvedOrigin, id: resolvedId }
+  return { id: resolvedId, origin: resolvedOrigin }
 }
 
 function jsonOk(request: Request, body: unknown, maxAge: number): Response {
@@ -251,22 +251,22 @@ function jsonOk(request: Request, body: unknown, maxAge: number): Response {
   const notModifiedResponse = Wellknown.notModified(request, documentEtag)
   if (notModifiedResponse) return notModifiedResponse
   return new Response(serialized, {
-    status: 200,
     headers: {
       'cache-control': `public, max-age=${maxAge}`,
       'content-type': 'application/json',
       etag: documentEtag,
     },
+    status: 200,
   })
 }
 
 function jsonError(cause: unknown): Response {
   const message = cause instanceof Error ? cause.message : String(cause)
   return new Response(JSON.stringify({ error: 'invalid_request', error_description: message }), {
-    status: 400,
     headers: {
       'cache-control': 'no-store',
       'content-type': 'application/json',
     },
+    status: 400,
   })
 }

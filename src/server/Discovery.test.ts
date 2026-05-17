@@ -3,13 +3,13 @@ import { Discovery } from 'wata'
 import { hostWellknown, consumerWellknown } from 'wata/server'
 
 // 43-char unpadded base64url Ed25519 pubkey per uRPC discovery.md §2.2.
-const identityPubkey = 'A'.repeat(43)
+const publicKey = 'A'.repeat(43)
 
 describe('hostWellknown', () => {
   test('serves the host.json document with content-type application/json', async () => {
     const server = hostWellknown({
-      identityPubkey,
-      meta: { name: 'Example Wallet', icon: 'https://wallet.example/logo.png' },
+      meta: { icon: 'https://wallet.example/logo.png', name: 'Example Wallet' },
+      publicKey,
       transports: {
         'device-code': {
           register_url: 'https://wallet.example/auth/device/register',
@@ -22,9 +22,9 @@ describe('hostWellknown', () => {
       new Request('https://wallet.example/.well-known/urpc/host.json'),
     )
     expect({
-      status: response.status,
-      contentType: response.headers.get('content-type'),
       cacheControl: response.headers.get('cache-control'),
+      contentType: response.headers.get('content-type'),
+      status: response.status,
     }).toMatchInlineSnapshot(`
     	{
     	  "cacheControl": "public, max-age=60",
@@ -52,15 +52,15 @@ describe('hostWellknown', () => {
 
   test('host_id defaults to the request URL hostname when omitted', async () => {
     const server = hostWellknown({
-      identityPubkey,
       meta: { name: 'Tenant Wallet' },
+      publicKey,
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
     const response = await server.fetch(
       new Request('https://tenant-a.wallet.example:8443/.well-known/urpc/host.json'),
     )
     const body = (await response.json()) as Discovery.HostDocument
-    expect({ status: response.status, origin: body.origin, id: body.id }).toMatchInlineSnapshot(`
+    expect({ id: body.id, origin: body.origin, status: response.status }).toMatchInlineSnapshot(`
       {
         "id": "tenant-a.wallet.example",
         "origin": "https://tenant-a.wallet.example:8443",
@@ -71,17 +71,17 @@ describe('hostWellknown', () => {
 
   test('explicit `origin` / `id` overrides take precedence over the request URL', async () => {
     const server = hostWellknown({
-      identityPubkey,
-      origin: 'https://canonical.wallet.example',
       id: 'canonical-id',
       meta: { name: 'Canonical Wallet' },
+      origin: 'https://canonical.wallet.example',
+      publicKey,
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
     const response = await server.fetch(
       new Request('https://request-host.example/.well-known/urpc/host.json'),
     )
     const body = (await response.json()) as Discovery.HostDocument
-    expect({ origin: body.origin, id: body.id }).toMatchInlineSnapshot(`
+    expect({ id: body.id, origin: body.origin }).toMatchInlineSnapshot(`
       {
         "id": "canonical-id",
         "origin": "https://canonical.wallet.example",
@@ -91,7 +91,7 @@ describe('hostWellknown', () => {
 
   test('returns 400 when neither `name` nor `meta.name` is supplied', async () => {
     const server = hostWellknown({
-      identityPubkey,
+      publicKey,
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
     const response = await server.fetch(
@@ -107,7 +107,7 @@ describe('hostWellknown', () => {
     `)
   })
 
-  test('returns 400 when `identityPubkey` is missing (required per spec §2.2)', async () => {
+  test('returns 400 when `publicKey` is missing (required per spec §2.2)', async () => {
     const server = hostWellknown({
       meta: { name: 'No Pubkey Wallet' },
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
@@ -120,14 +120,14 @@ describe('hostWellknown', () => {
     expect(body).toMatchInlineSnapshot(`
     	{
     	  "error": "invalid_request",
-    	  "error_description": "\`identityPubkey\` is required (unpadded base64url Ed25519 public key, 43 chars)",
+    	  "error_description": "\`publicKey\` is required (unpadded base64url Ed25519 public key, 43 chars)",
     	}
     `)
   })
 
   test('returns 400 when `transports` map is empty', async () => {
     const server = hostWellknown({
-      identityPubkey,
+      publicKey,
       meta: { name: 'Empty Wallet' },
       transports: {},
     })
@@ -139,19 +139,19 @@ describe('hostWellknown', () => {
 
   test('pre-built `document` is served verbatim and validated upfront', async () => {
     const document: Discovery.HostDocument = {
-      version: '1.0',
-      origin: 'https://wallet.example',
       id: 'wallet.example',
+      identity_pubkey: publicKey,
       name: 'Prebuilt',
-      identity_pubkey: identityPubkey,
+      origin: 'https://wallet.example',
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
+      version: '1.0',
     }
     const server = hostWellknown({ document })
     const response = await server.fetch(
       new Request('https://other.example/.well-known/urpc/host.json'),
     )
     const body = (await response.json()) as Discovery.HostDocument
-    expect({ status: response.status, origin: body.origin }).toMatchInlineSnapshot(`
+    expect({ origin: body.origin, status: response.status }).toMatchInlineSnapshot(`
       {
         "origin": "https://wallet.example",
         "status": 200,
@@ -163,17 +163,17 @@ describe('hostWellknown', () => {
 describe('consumerWellknown', () => {
   test('serves the consumer.json document with content-type application/json', async () => {
     const server = consumerWellknown({
-      meta: { name: 'Acme CLI', icon: 'https://acme.dev/icon.png' },
       callbackUrls: ['https://acme.dev/cb'],
+      meta: { icon: 'https://acme.dev/icon.png', name: 'Acme CLI' },
     })
 
     const response = await server.fetch(
       new Request('https://acme.dev/.well-known/urpc/consumer.json'),
     )
     expect({
-      status: response.status,
-      contentType: response.headers.get('content-type'),
       cacheControl: response.headers.get('cache-control'),
+      contentType: response.headers.get('content-type'),
+      status: response.status,
     }).toMatchInlineSnapshot(`
     	{
     	  "cacheControl": "public, max-age=3600",
@@ -201,7 +201,7 @@ describe('consumerWellknown', () => {
       new Request('https://app.example/.well-known/urpc/consumer.json'),
     )
     const body = (await response.json()) as Discovery.ConsumerDocument
-    expect({ status: response.status, origin: body.origin, id: body.id }).toMatchInlineSnapshot(`
+    expect({ id: body.id, origin: body.origin, status: response.status }).toMatchInlineSnapshot(`
       {
         "id": "app.example",
         "origin": "https://app.example",
@@ -222,8 +222,8 @@ describe('consumerWellknown', () => {
 describe('etag', () => {
   test('hostWellknown emits a strong ETag on the 200 response', async () => {
     const server = hostWellknown({
-      identityPubkey,
       meta: { name: 'Etag Wallet' },
+      publicKey,
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
     const response = await server.fetch(
@@ -235,8 +235,8 @@ describe('etag', () => {
 
   test('hostWellknown returns 304 when If-None-Match matches the current ETag', async () => {
     const server = hostWellknown({
-      identityPubkey,
       meta: { name: 'Etag Wallet' },
+      publicKey,
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
     const first = await server.fetch(
@@ -248,7 +248,7 @@ describe('etag', () => {
         headers: { 'if-none-match': tag },
       }),
     )
-    expect({ status: conditional.status, etag: conditional.headers.get('etag') })
+    expect({ etag: conditional.headers.get('etag'), status: conditional.status })
       .toMatchInlineSnapshot(`
         {
           "etag": "${tag}",
@@ -260,8 +260,8 @@ describe('etag', () => {
 
   test('hostWellknown returns 200 when If-None-Match does not match', async () => {
     const server = hostWellknown({
-      identityPubkey,
       meta: { name: 'Etag Wallet' },
+      publicKey,
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
     const response = await server.fetch(
@@ -274,8 +274,8 @@ describe('etag', () => {
 
   test('consumerWellknown emits an ETag and honors If-None-Match', async () => {
     const server = consumerWellknown({
-      meta: { name: 'Etag CLI' },
       callbackUrls: ['https://acme.dev/cb'],
+      meta: { name: 'Etag CLI' },
     })
     const first = await server.fetch(new Request('https://acme.dev/.well-known/urpc/consumer.json'))
     const tag = first.headers.get('etag')!
@@ -292,14 +292,14 @@ describe('etag', () => {
 describe('listener', () => {
   test('host and consumer factories expose a Node-shaped listener', () => {
     const host = hostWellknown({
-      identityPubkey,
       meta: { name: 'X' },
+      publicKey,
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
     const consumer = consumerWellknown({ meta: { name: 'Y' } })
     expect({
-      hostListener: typeof host.listener,
       consumerListener: typeof consumer.listener,
+      hostListener: typeof host.listener,
     }).toMatchInlineSnapshot(`
       {
         "consumerListener": "function",

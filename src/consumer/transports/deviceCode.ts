@@ -140,9 +140,9 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
   const registerUrl = `${baseUrl}/register`
   const tokenUrl = `${baseUrl}/token`
 
-  // Constructor-level `meta` / `consumerUrl` are sticky. `bindMeta`
-  // (from a wrapping `Wata.create({ meta })`) only fills in values
-  // that weren't set explicitly.
+  // Constructor-level `meta` / `consumerUrl` are sticky. `bind()`
+  // (from a wrapping `Wata.create({ baseUrl, meta })`) only fills in
+  // values that weren't set explicitly.
   const meta_ctor = options.meta
   let meta_bound: Discovery.Meta | undefined
   const consumerUrl_ctor = options.consumerUrl
@@ -294,8 +294,8 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
             ? {
                 meta: {
                   name: meta.name,
-                  ...(meta.icon ? { icon: meta.icon } : {}),
                   ...(meta.description ? { description: meta.description } : {}),
+                  ...(meta.icon ? { icon: meta.icon } : {}),
                   ...(meta.websiteUrl ? { website_url: meta.websiteUrl } : {}),
                 },
               }
@@ -364,21 +364,13 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
   }
 
   return {
-    bindBaseUrl(baseUrl) {
-      // Used to derive `consumer_url` when the consumer transport was
-      // built without an explicit `consumerUrl` option. Constructor
-      // value still wins; the first bound value sticks.
-      if (consumerUrl_ctor) return
-      if (consumerUrl_bound) return
-      const trimmed = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
-      consumerUrl_bound = `${trimmed}/.well-known/urpc/consumer.json`
-    },
-    bindMeta(meta) {
-      // Parent `Wata.create({ meta })` lazy-injection. Constructor
-      // value still wins; the first bound value sticks.
-      if (meta_ctor) return
-      if (meta_bound) return
-      meta_bound = meta as Discovery.Meta
+    bind(binding) {
+      const { baseUrl, meta } = binding
+      if (baseUrl && !consumerUrl_ctor && !consumerUrl_bound) {
+        const trimmed = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
+        consumerUrl_bound = `${trimmed}/.well-known/urpc/consumer.json`
+      }
+      if (meta && !meta_ctor && !meta_bound) meta_bound = meta as Discovery.Meta
     },
     async close(cause) {
       if (state.closed) return

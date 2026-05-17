@@ -32,19 +32,19 @@ describe('success', () => {
 
 describe('error', () => {
   test('infers literal data type', () => {
-    const message = Rpc.error({ id: 1, code: -1, message: 'nope', data: { x: 1 } as const })
+    const message = Rpc.error({ code: -1, data: { x: 1 } as const, id: 1, message: 'nope' })
     expectTypeOf(message.error.data).toEqualTypeOf<{ readonly x: 1 } | undefined>()
   })
 
   test('data is undefined when omitted', () => {
-    const message = Rpc.error({ id: 1, code: -1, message: 'nope' })
+    const message = Rpc.error({ code: -1, id: 1, message: 'nope' })
     expectTypeOf(message.error.data).toEqualTypeOf<undefined>()
   })
 })
 
 describe('parse', () => {
   test('returns a discriminated union', () => {
-    const message = Rpc.parse({ jsonrpc: '2.0', id: 1, method: 'ping', params: [] })
+    const message = Rpc.parse({ id: 1, jsonrpc: '2.0', method: 'ping', params: [] })
     expectTypeOf(message).toEqualTypeOf<Rpc.Envelope>()
 
     if ('error' in message) {

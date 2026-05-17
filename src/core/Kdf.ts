@@ -58,7 +58,7 @@ export declare namespace extract {
  * ```
  */
 export function expand(options: expand.Options): Hex.Hex {
-  const { prk, info, length } = options
+  const { info, length, prk } = options
   const okm = hkdf_expand(
     sha256,
     Bytes.from(prk),

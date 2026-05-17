@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, test } from 'vp/test'
-import { Envelope, Wata, Kv, deviceCode } from 'wata'
+import { Envelope, Kv, Wata, deviceCode } from 'wata'
 import {
   DeviceCode as HostDeviceCode,
   Wata as HostWata,
@@ -25,17 +25,16 @@ type HostFetch = { fetch: (request: Request) => Promise<Response> }
 async function registerOnce(host: HostFetch, baseUrl: string) {
   const response = await host.fetch(
     new Request(`${baseUrl}/register`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         code_challenge: 'wrong_challenge',
         code_challenge_method: 'S256',
-        message: Envelope.rpcRequests([{ jsonrpc: '2.0', id: 1, method: 'ping', params: [] }]),
+        message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
       }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
     }),
   )
   return {
-    response,
     body: (await response.json()) as {
       device_code: string
       expires_in: number
@@ -44,6 +43,7 @@ async function registerOnce(host: HostFetch, baseUrl: string) {
       verification_uri: string
       verification_uri_complete?: string
     },
+    response,
   }
 }
 
@@ -54,9 +54,9 @@ async function pollToken(
 ) {
   return await host.fetch(
     new Request(`${baseUrl}/token`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
     }),
   )
 }
@@ -68,11 +68,7 @@ function pair() {
   let lastUserCode: string | undefined
 
   const html: HostDeviceCode.html.Hooks = {
-    render: ({ userCode }) =>
-      new Response(`<form>code=${userCode ?? ''}</form>`, {
-        headers: { 'content-type': 'text/html' },
-      }),
-    authenticate: async ({ request, actions }) => {
+    authenticate: async ({ actions, request }) => {
       const form = await request.formData()
       const userCode = String(form.get('user_code') ?? '')
       const action = String(form.get('action') ?? 'approve')
@@ -80,14 +76,18 @@ function pair() {
       else await actions.approve(userCode)
       return new Response('ok')
     },
+    render: ({ userCode }) =>
+      new Response(`<form>code=${userCode ?? ''}</form>`, {
+        headers: { 'content-type': 'text/html' },
+      }),
   }
 
   const host = hostDeviceCode({
-    store,
     baseUrl: 'https://wallet.example',
     html,
     path: '/auth/device',
     pollingInterval: 1000,
+    store,
   })
 
   const fetchImpl: typeof fetch = async (input, init) => {
@@ -104,9 +104,9 @@ function pair() {
   }
 
   const consumer = deviceCode({
-    url: baseUrl,
-    pollingInterval: 50,
     fetch: fetchImpl,
+    pollingInterval: 50,
+    url: baseUrl,
   })
 
   async function waitForUserCode(): Promise<string> {
@@ -123,7 +123,7 @@ function pair() {
     const form = new FormData()
     form.set('user_code', userCode)
     form.set('action', 'approve')
-    await host.fetch(new Request(`${baseUrl}/verify`, { method: 'POST', body: form }))
+    await host.fetch(new Request(`${baseUrl}/verify`, { body: form, method: 'POST' }))
   }
 
   async function deny(): Promise<void> {
@@ -131,15 +131,15 @@ function pair() {
     const form = new FormData()
     form.set('user_code', userCode)
     form.set('action', 'deny')
-    await host.fetch(new Request(`${baseUrl}/verify`, { method: 'POST', body: form }))
+    await host.fetch(new Request(`${baseUrl}/verify`, { body: form, method: 'POST' }))
   }
 
-  return { baseUrl, consumer, host, store, approve, deny }
+  return { approve, baseUrl, consumer, deny, host, store }
 }
 
 describe('wata-device-code', () => {
   test('end-to-end approval delivers the host response', async () => {
-    const { consumer, host, approve } = pair()
+    const { approve, consumer, host } = pair()
 
     const wata = Wata.create({ transport: consumer })
     const hostWata = HostWata.create({ transport: host })
@@ -159,7 +159,7 @@ describe('wata-device-code', () => {
   })
 
   test('user denial surfaces as `UserRejectedError`', async () => {
-    const { consumer, host, deny } = pair()
+    const { consumer, deny, host } = pair()
     const wata = Wata.create({ transport: consumer })
     HostWata.create({ transport: host })
 
@@ -176,13 +176,13 @@ describe('wata-device-code', () => {
 
     const registerResponse = await host.fetch(
       new Request(`${baseUrl}/register`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           code_challenge: 'wrong_challenge',
           code_challenge_method: 'S256',
-          message: Envelope.rpcRequests([{ jsonrpc: '2.0', id: 1, method: 'ping', params: [] }]),
+          message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
         }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
       }),
     )
     expect(registerResponse.status).toMatchInlineSnapshot(`200`)
@@ -190,17 +190,17 @@ describe('wata-device-code', () => {
 
     const tokenResponse = await host.fetch(
       new Request(`${baseUrl}/token`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           code_verifier: 'something_unrelated',
           device_code: registered.device_code,
           grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
         }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
       }),
     )
     const body = (await tokenResponse.json()) as { error: string }
-    expect({ status: tokenResponse.status, body }).toMatchInlineSnapshot(`
+    expect({ body, status: tokenResponse.status }).toMatchInlineSnapshot(`
     	{
     	  "body": {
     	    "error": "invalid_grant",
@@ -212,7 +212,7 @@ describe('wata-device-code', () => {
   })
 
   test('post-terminal `send()` rejects with `ClosedError`', async () => {
-    const { consumer, host, approve } = pair()
+    const { approve, consumer, host } = pair()
     const wata = Wata.create({ transport: consumer })
     const hostWata = HostWata.create({ transport: host })
     hostWata.on('request', (event) => {
@@ -252,7 +252,7 @@ describe('wata-device-code', () => {
     const { baseUrl, host } = pair()
     const { response, body } = await registerOnce(host, baseUrl)
     // pair() configures pollingInterval=1000ms → 1 second.
-    expect({ status: response.status, interval: body.interval }).toMatchInlineSnapshot(`
+    expect({ interval: body.interval, status: response.status }).toMatchInlineSnapshot(`
       {
         "interval": 1,
         "status": 200,
@@ -263,7 +263,7 @@ describe('wata-device-code', () => {
   test('every endpoint sets `Cache-Control: no-store` and `Pragma: no-cache`', async () => {
     const { baseUrl, host } = pair()
 
-    const { response: registerResponse, body } = await registerOnce(host, baseUrl)
+    const { body, response: registerResponse } = await registerOnce(host, baseUrl)
     const tokenResponse = await pollToken(host, baseUrl, {
       code_verifier: 'irrelevant',
       device_code: body.device_code,
@@ -274,7 +274,7 @@ describe('wata-device-code', () => {
     form.set('user_code', body.user_code)
     form.set('action', 'approve')
     const verifyPost = await host.fetch(
-      new Request(`${baseUrl}/verify`, { method: 'POST', body: form }),
+      new Request(`${baseUrl}/verify`, { body: form, method: 'POST' }),
     )
     const cacheHeaders = (response: Response) => ({
       cacheControl: response.headers.get('cache-control'),
@@ -315,7 +315,7 @@ describe('wata-device-code', () => {
       device_code: registered.device_code,
     })
     const body = (await response.json()) as { error: string; error_description?: string }
-    expect({ status: response.status, body }).toMatchInlineSnapshot(`
+    expect({ body, status: response.status }).toMatchInlineSnapshot(`
     	{
     	  "body": {
     	    "error": "invalid_request",
@@ -335,7 +335,7 @@ describe('wata-device-code', () => {
       grant_type: 'authorization_code',
     })
     const body = (await response.json()) as { error: string }
-    expect({ status: response.status, error: body.error }).toMatchInlineSnapshot(`
+    expect({ error: body.error, status: response.status }).toMatchInlineSnapshot(`
       {
         "error": "invalid_request",
         "status": 400,
@@ -351,7 +351,7 @@ describe('wata-device-code', () => {
       grant_type: grantType,
     })
     const body = (await response.json()) as { error: string }
-    expect({ status: response.status, error: body.error }).toMatchInlineSnapshot(`
+    expect({ error: body.error, status: response.status }).toMatchInlineSnapshot(`
       {
         "error": "expired_token",
         "status": 400,
@@ -362,14 +362,14 @@ describe('wata-device-code', () => {
   test('`/token` returns `expired_token` after the intent expires', async () => {
     const baseUrl = 'https://wallet.example/auth/device'
     const host = hostDeviceCode({
-      store: Kv.memory(),
       baseUrl: 'https://wallet.example',
-      path: '/auth/device',
       expiresIn: 0,
       html: {
-        render: () => new Response(''),
         authenticate: () => new Response(''),
+        render: () => new Response(''),
       },
+      path: '/auth/device',
+      store: Kv.memory(),
     })
     const { body: registered } = await registerOnce(host, baseUrl)
     const response = await pollToken(host, baseUrl, {
@@ -378,7 +378,7 @@ describe('wata-device-code', () => {
       grant_type: grantType,
     })
     const body = (await response.json()) as { error: string }
-    expect({ status: response.status, error: body.error }).toMatchInlineSnapshot(`
+    expect({ error: body.error, status: response.status }).toMatchInlineSnapshot(`
       {
         "error": "expired_token",
         "status": 400,
@@ -400,7 +400,7 @@ describe('wata-device-code', () => {
       grant_type: grantType,
     })
     const body = (await response.json()) as { error: string }
-    expect({ status: response.status, error: body.error }).toMatchInlineSnapshot(`
+    expect({ error: body.error, status: response.status }).toMatchInlineSnapshot(`
       {
         "error": "invalid_grant",
         "status": 400,
@@ -418,13 +418,13 @@ describe('wata-device-code', () => {
 
     const registerResponse = await host.fetch(
       new Request(`${baseUrl}/register`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           code_challenge: challenge,
           code_challenge_method: 'S256',
-          message: Envelope.rpcRequests([{ jsonrpc: '2.0', id: 1, method: 'ping', params: [] }]),
+          message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
         }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
       }),
     )
     const registered = (await registerResponse.json()) as { device_code: string }
@@ -437,8 +437,8 @@ describe('wata-device-code', () => {
       grant_type: grantType,
     })
     expect({
-      status: first.status,
       error: ((await first.json()) as { error: string }).error,
+      status: first.status,
     }).toMatchInlineSnapshot(`
       {
         "error": "authorization_pending",
@@ -453,8 +453,8 @@ describe('wata-device-code', () => {
       grant_type: grantType,
     })
     expect({
-      status: second.status,
       error: ((await second.json()) as { error: string }).error,
+      status: second.status,
     }).toMatchInlineSnapshot(`
       {
         "error": "slow_down",
@@ -471,8 +471,8 @@ describe('wata-device-code', () => {
       grant_type: grantType,
     })
     expect({
-      status: third.status,
       error: ((await third.json()) as { error: string }).error,
+      status: third.status,
     }).toMatchInlineSnapshot(`
       {
         "error": "authorization_pending",
@@ -485,9 +485,9 @@ describe('wata-device-code', () => {
     const { baseUrl, host } = pair()
     const response = await host.fetch(
       new Request(`${baseUrl}/token`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
         body: 'not json at all',
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
       }),
     )
     const body = (await response.json()) as Record<string, unknown>
@@ -508,8 +508,6 @@ describe('wata-device-code', () => {
     const { baseUrl, host } = pair()
     let lastTokenBody: { grant_type?: string } | undefined
     const consumer = deviceCode({
-      url: baseUrl,
-      pollingInterval: 50,
       fetch: async (input, init) => {
         const url = input instanceof Request ? input.url : String(input)
         if (url.endsWith('/token')) {
@@ -518,6 +516,8 @@ describe('wata-device-code', () => {
         }
         return await host.fetch(new Request(url, init))
       },
+      pollingInterval: 50,
+      url: baseUrl,
     })
     HostWata.create({ transport: host })
     const wata = Wata.create({ transport: consumer })
@@ -547,11 +547,9 @@ describe('wata-device-code', () => {
       // then authorization_pending, then a real success envelope.
       let tokenCalls = 0
       const responsePayload = Envelope.rpcResponses([
-        { jsonrpc: '2.0', id: 1, result: { ok: true } },
+        { id: 1, jsonrpc: '2.0', result: { ok: true } },
       ])
       const consumer = deviceCode({
-        url: 'https://example/auth/device',
-        pollingInterval: 50,
         fetch: async (input) => {
           const url = input instanceof Request ? input.url : String(input)
           if (url.endsWith('/register'))
@@ -563,27 +561,29 @@ describe('wata-device-code', () => {
                 user_code: 'AAAA-BBBB',
                 verification_uri: 'https://example/verify',
               }),
-              { status: 200, headers: { 'content-type': 'application/json' } },
+              { headers: { 'content-type': 'application/json' }, status: 200 },
             )
           if (url.endsWith('/token')) {
             tokenCalls += 1
             if (tokenCalls === 1)
               return new Response(JSON.stringify({ error: 'slow_down' }), {
-                status: 400,
                 headers: { 'content-type': 'application/json' },
+                status: 400,
               })
             if (tokenCalls === 2)
               return new Response(JSON.stringify({ error: 'authorization_pending' }), {
-                status: 400,
                 headers: { 'content-type': 'application/json' },
+                status: 400,
               })
             return new Response(JSON.stringify(responsePayload), {
-              status: 200,
               headers: { 'content-type': 'application/json' },
+              status: 200,
             })
           }
           throw new Error(`unexpected ${url}`)
         },
+        pollingInterval: 50,
+        url: 'https://example/auth/device',
       })
       const wata = Wata.create({ transport: consumer })
       const { result } = await wata.send({ method: 'ping', params: [] })
@@ -605,8 +605,6 @@ describe('wata-device-code', () => {
     { timeout: 25_000 },
     async () => {
       const consumer = deviceCode({
-        url: 'https://example/auth/device',
-        pollingInterval: 50,
         fetch: async (input) => {
           const url = input instanceof Request ? input.url : String(input)
           if (url.endsWith('/register'))
@@ -618,15 +616,17 @@ describe('wata-device-code', () => {
                 user_code: 'AAAA-BBBB',
                 verification_uri: 'https://example/verify',
               }),
-              { status: 200, headers: { 'content-type': 'application/json' } },
+              { headers: { 'content-type': 'application/json' }, status: 200 },
             )
           if (url.endsWith('/token'))
             return new Response(JSON.stringify({ error: 'slow_down' }), {
-              status: 400,
               headers: { 'content-type': 'application/json' },
+              status: 400,
             })
           throw new Error(`unexpected ${url}`)
         },
+        pollingInterval: 50,
+        url: 'https://example/auth/device',
       })
       const wata = Wata.create({ transport: consumer })
       await expect(
@@ -641,16 +641,16 @@ describe('wata-device-code', () => {
     const { baseUrl, host } = pair()
     const response = await host.fetch(
       new Request(`${baseUrl}/register`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           code_challenge_method: 'S256',
-          message: Envelope.rpcRequests([{ jsonrpc: '2.0', id: 1, method: 'ping', params: [] }]),
+          message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
         }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
       }),
     )
     const body = (await response.json()) as { error: string; error_description?: string }
-    expect({ status: response.status, body }).toMatchInlineSnapshot(`
+    expect({ body, status: response.status }).toMatchInlineSnapshot(`
     	{
     	  "body": {
     	    "error": "invalid_request",
@@ -665,17 +665,17 @@ describe('wata-device-code', () => {
     const { baseUrl, host } = pair()
     const response = await host.fetch(
       new Request(`${baseUrl}/register`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           code_challenge: 'whatever',
           code_challenge_method: 'plain',
-          message: Envelope.rpcRequests([{ jsonrpc: '2.0', id: 1, method: 'ping', params: [] }]),
+          message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
         }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
       }),
     )
     const body = (await response.json()) as { error: string; error_description?: string }
-    expect({ status: response.status, body }).toMatchInlineSnapshot(`
+    expect({ body, status: response.status }).toMatchInlineSnapshot(`
     	{
     	  "body": {
     	    "error": "invalid_request",
@@ -690,17 +690,17 @@ describe('wata-device-code', () => {
     const { baseUrl, host } = pair()
     const response = await host.fetch(
       new Request(`${baseUrl}/register`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           code_challenge: 'whatever',
           code_challenge_method: 'S256',
-          message: Envelope.rpcResponses([{ jsonrpc: '2.0', id: 1, result: 'pong' }]),
+          message: Envelope.rpcResponses([{ id: 1, jsonrpc: '2.0', result: 'pong' }]),
         }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
       }),
     )
     const body = (await response.json()) as { error: string; error_description?: string }
-    expect({ status: response.status, body }).toMatchInlineSnapshot(`
+    expect({ body, status: response.status }).toMatchInlineSnapshot(`
       {
         "body": {
           "error": "invalid_request",
@@ -715,13 +715,13 @@ describe('wata-device-code', () => {
     const { baseUrl, host } = pair()
     const response = await host.fetch(
       new Request(`${baseUrl}/register`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
         body: 'not json',
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
       }),
     )
     const body = (await response.json()) as { error: string }
-    expect({ status: response.status, error: body.error }).toMatchInlineSnapshot(`
+    expect({ error: body.error, status: response.status }).toMatchInlineSnapshot(`
       {
         "error": "invalid_request",
         "status": 400,
@@ -741,16 +741,16 @@ describe('wata-device-code', () => {
     const baseUrl = 'https://wallet.example/auth/device'
     let renderArgs: HostDeviceCode.html.render.Options | undefined
     const host = hostDeviceCode({
-      store: Kv.memory(),
       baseUrl: 'https://wallet.example',
-      path: '/auth/device',
       html: {
+        authenticate: () => new Response('ok'),
         render: (options) => {
           renderArgs = options
           return new Response('ok')
         },
-        authenticate: () => new Response('ok'),
       },
+      path: '/auth/device',
+      store: Kv.memory(),
     })
     const { body } = await registerOnce(host, baseUrl)
     await host.fetch(new Request(`${baseUrl}/verify?user_code=${body.user_code}`))
@@ -782,16 +782,16 @@ describe('wata-device-code', () => {
     const baseUrl = 'https://wallet.example/auth/device'
     let renderArgs: HostDeviceCode.html.render.Options | undefined
     const host = hostDeviceCode({
-      store: Kv.memory(),
       baseUrl: 'https://wallet.example',
-      path: '/auth/device',
       html: {
+        authenticate: () => new Response('ok'),
         render: (options) => {
           renderArgs = options
           return new Response('ok')
         },
-        authenticate: () => new Response('ok'),
       },
+      path: '/auth/device',
+      store: Kv.memory(),
     })
     await host.fetch(new Request(`${baseUrl}/verify?user_code=NOPE-NOPE`))
     expect(renderArgs?.userCode).toBe('NOPE-NOPE')
@@ -803,11 +803,8 @@ describe('wata-device-code', () => {
     let calls = 0
     let firstActions: HostDeviceCode.html.Actions | undefined
     const host = hostDeviceCode({
-      store: Kv.memory(),
       baseUrl: 'https://wallet.example',
-      path: '/auth/device',
       html: {
-        render: () => new Response('ok'),
         authenticate: async ({ actions, request }) => {
           calls += 1
           firstActions = actions
@@ -815,12 +812,15 @@ describe('wata-device-code', () => {
           await actions.deny(String(form.get('user_code')))
           return new Response('ok')
         },
+        render: () => new Response('ok'),
       },
+      path: '/auth/device',
+      store: Kv.memory(),
     })
     const { body } = await registerOnce(host, baseUrl)
     const form = new FormData()
     form.set('user_code', body.user_code)
-    await host.fetch(new Request(`${baseUrl}/verify`, { method: 'POST', body: form }))
+    await host.fetch(new Request(`${baseUrl}/verify`, { body: form, method: 'POST' }))
     expect(calls).toBe(1)
     // A second deny on the same `user_code` must not throw — it's a
     // no-op once the record is already terminal.
@@ -831,19 +831,19 @@ describe('wata-device-code', () => {
     const baseUrl = 'https://wallet.example/auth/device'
     let actions: HostDeviceCode.html.Actions | undefined
     const host = hostDeviceCode({
-      store: Kv.memory(),
       baseUrl: 'https://wallet.example',
-      path: '/auth/device',
       html: {
-        render: () => new Response('ok'),
         authenticate: async (options) => {
           actions = options.actions
           return new Response('ok')
         },
+        render: () => new Response('ok'),
       },
+      path: '/auth/device',
+      store: Kv.memory(),
     })
     // Trigger `authenticate` once to capture `actions`.
-    await host.fetch(new Request(`${baseUrl}/verify`, { method: 'POST', body: new FormData() }))
+    await host.fetch(new Request(`${baseUrl}/verify`, { body: new FormData(), method: 'POST' }))
     let approveError: unknown
     try {
       await actions!.approve('NOPE-NOPE')
@@ -865,19 +865,19 @@ describe('wata-device-code', () => {
     const baseUrl = 'https://wallet.example/auth/device'
     let actions: HostDeviceCode.html.Actions | undefined
     const host = hostDeviceCode({
-      store: Kv.memory(),
       baseUrl: 'https://wallet.example',
-      path: '/auth/device',
       html: {
-        render: () => new Response('ok'),
         authenticate: async (options) => {
           actions = options.actions
           return new Response('ok')
         },
+        render: () => new Response('ok'),
       },
+      path: '/auth/device',
+      store: Kv.memory(),
     })
     const { body } = await registerOnce(host, baseUrl)
-    await host.fetch(new Request(`${baseUrl}/verify`, { method: 'POST', body: new FormData() }))
+    await host.fetch(new Request(`${baseUrl}/verify`, { body: new FormData(), method: 'POST' }))
     const record = await actions!.get(body.user_code)
     expect(record?.deviceCode).toBe(body.device_code)
     expect(record?.status).toBe('pending')
@@ -885,8 +885,6 @@ describe('wata-device-code', () => {
 
   test('consumer maps `access_denied` to `DeviceCode.UserRejectedError` with description', async () => {
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
       fetch: async (input) => {
         const url = input instanceof Request ? input.url : String(input)
         if (url.endsWith('/register'))
@@ -898,15 +896,17 @@ describe('wata-device-code', () => {
               user_code: 'AAAA-BBBB',
               verification_uri: 'https://example/verify',
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 200 },
           )
         if (url.endsWith('/token'))
           return new Response(
             JSON.stringify({ error: 'access_denied', error_description: 'user said no' }),
-            { status: 400, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 400 },
           )
         throw new Error(`unexpected ${url}`)
       },
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     await expect(
@@ -916,8 +916,6 @@ describe('wata-device-code', () => {
 
   test('consumer maps `expired_token` to `Transport.ClosedError`', async () => {
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
       fetch: async (input) => {
         const url = input instanceof Request ? input.url : String(input)
         if (url.endsWith('/register'))
@@ -929,15 +927,17 @@ describe('wata-device-code', () => {
               user_code: 'AAAA-BBBB',
               verification_uri: 'https://example/verify',
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 200 },
           )
         if (url.endsWith('/token'))
           return new Response(JSON.stringify({ error: 'expired_token' }), {
-            status: 400,
             headers: { 'content-type': 'application/json' },
+            status: 400,
           })
         throw new Error(`unexpected ${url}`)
       },
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     await expect(
@@ -949,8 +949,6 @@ describe('wata-device-code', () => {
 
   test('consumer maps an unknown `/token` 4xx to `Transport.TransportError` carrying the description', async () => {
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
       fetch: async (input) => {
         const url = input instanceof Request ? input.url : String(input)
         if (url.endsWith('/register'))
@@ -962,15 +960,17 @@ describe('wata-device-code', () => {
               user_code: 'AAAA-BBBB',
               verification_uri: 'https://example/verify',
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 200 },
           )
         if (url.endsWith('/token'))
           return new Response(
             JSON.stringify({ error: 'totally_made_up', error_description: 'host bug' }),
-            { status: 418, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 418 },
           )
         throw new Error(`unexpected ${url}`)
       },
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     await expect(
@@ -982,8 +982,6 @@ describe('wata-device-code', () => {
 
   test('consumer surfaces a malformed success envelope as `Transport.TransportError`', async () => {
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
       fetch: async (input) => {
         const url = input instanceof Request ? input.url : String(input)
         if (url.endsWith('/register'))
@@ -995,15 +993,17 @@ describe('wata-device-code', () => {
               user_code: 'AAAA-BBBB',
               verification_uri: 'https://example/verify',
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 200 },
           )
         if (url.endsWith('/token'))
           return new Response(JSON.stringify({ not: 'an envelope' }), {
-            status: 200,
             headers: { 'content-type': 'application/json' },
+            status: 200,
           })
         throw new Error(`unexpected ${url}`)
       },
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     await expect(wata.send({ method: 'ping', params: [] })).rejects
@@ -1015,8 +1015,6 @@ describe('wata-device-code', () => {
 
   test('consumer rejects a `/register` response missing `device_code` with `Transport.TransportError`', async () => {
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
       fetch: async () =>
         new Response(
           JSON.stringify({
@@ -1025,8 +1023,10 @@ describe('wata-device-code', () => {
             user_code: 'AAAA-BBBB',
             verification_uri: 'https://example/verify',
           }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
+          { headers: { 'content-type': 'application/json' }, status: 200 },
         ),
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     await expect(
@@ -1038,13 +1038,13 @@ describe('wata-device-code', () => {
 
   test('consumer maps a `/register` 400 to `Errors.ProtocolError`', async () => {
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
       fetch: async () =>
         new Response(
           JSON.stringify({ error: 'invalid_request', error_description: 'bad message envelope' }),
-          { status: 400, headers: { 'content-type': 'application/json' } },
+          { headers: { 'content-type': 'application/json' }, status: 400 },
         ),
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     await expect(
@@ -1056,13 +1056,13 @@ describe('wata-device-code', () => {
 
   test('consumer maps a `/register` 5xx to `Transport.TransportError`', async () => {
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
       fetch: async () =>
         new Response(JSON.stringify({ error: 'server_error', error_description: 'oops' }), {
-          status: 502,
           headers: { 'content-type': 'application/json' },
+          status: 502,
         }),
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     await expect(
@@ -1074,11 +1074,11 @@ describe('wata-device-code', () => {
 
   test('consumer surfaces a `fetch` failure as `Transport.TransportError`', async () => {
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
       fetch: async () => {
         throw new Error('network down')
       },
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     await expect(
@@ -1093,7 +1093,7 @@ describe('wata-device-code', () => {
     // Consumer-side `send` is fire-and-forget — failures arrive on the
     // `error` event before the auto-close.
     const errorPromise = new Promise<unknown>((resolve) => consumer.on('error', resolve))
-    await consumer.send(Envelope.rpcResponses([{ jsonrpc: '2.0', id: 1, result: 'pong' }]))
+    await consumer.send(Envelope.rpcResponses([{ id: 1, jsonrpc: '2.0', result: 'pong' }]))
     expect(await errorPromise).toMatchInlineSnapshot(
       `[Transport.UnsupportedError: device-code transport only carries rpc-requests envelopes; received \`rpc-responses\`]`,
     )
@@ -1104,11 +1104,6 @@ describe('wata-device-code', () => {
       | Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]>
       | undefined
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
-      onPrompt: (received) => {
-        prompt = received
-      },
       fetch: async (input) => {
         const url = input instanceof Request ? input.url : String(input)
         if (url.endsWith('/register'))
@@ -1121,14 +1116,19 @@ describe('wata-device-code', () => {
               verification_uri: 'https://example/verify',
               verification_uri_complete: 'https://example/verify?user_code=AAAA-BBBB',
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 200 },
           )
         // Sit forever on /token so we can close cleanly.
         return new Response(JSON.stringify({ error: 'authorization_pending' }), {
-          status: 400,
           headers: { 'content-type': 'application/json' },
+          status: 400,
         })
       },
+      onPrompt: (received) => {
+        prompt = received
+      },
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
@@ -1160,10 +1160,6 @@ describe('wata-device-code', () => {
       | Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]>
       | undefined
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      onPrompt: (received) => {
-        prompt = received
-      },
       fetch: async (input) => {
         const url = input instanceof Request ? input.url : String(input)
         if (url.endsWith('/register'))
@@ -1175,13 +1171,17 @@ describe('wata-device-code', () => {
               user_code: 'AAAA-BBBB',
               verification_uri: 'https://example/verify',
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 200 },
           )
         return new Response(JSON.stringify({ error: 'authorization_pending' }), {
-          status: 400,
           headers: { 'content-type': 'application/json' },
+          status: 400,
         })
       },
+      onPrompt: (received) => {
+        prompt = received
+      },
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
@@ -1202,10 +1202,6 @@ describe('wata-device-code', () => {
       | Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]>
       | undefined
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      onPrompt: (received) => {
-        prompt = received
-      },
       fetch: async (input) => {
         const url = input instanceof Request ? input.url : String(input)
         if (url.endsWith('/register'))
@@ -1217,13 +1213,17 @@ describe('wata-device-code', () => {
               user_code: 'AAAA-BBBB',
               verification_uri: 'https://example/verify',
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 200 },
           )
         return new Response(JSON.stringify({ error: 'authorization_pending' }), {
-          status: 400,
           headers: { 'content-type': 'application/json' },
+          status: 400,
         })
       },
+      onPrompt: (received) => {
+        prompt = received
+      },
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
@@ -1239,7 +1239,7 @@ describe('wata-device-code', () => {
   })
 
   test('consumer auto-closes after a successful exchange', async () => {
-    const { consumer, host, approve } = pair()
+    const { approve, consumer, host } = pair()
     const closed: Array<unknown> = []
     consumer.on('close', (cause) => {
       closed.push(cause)
@@ -1256,7 +1256,7 @@ describe('wata-device-code', () => {
 
     // `Wata.create` may surface `undefined` or `null` depending on
     // how the close cause is normalized — both mean "clean close".
-    expect({ length: closed.length, cause: closed[0] ?? undefined }).toMatchInlineSnapshot(`
+    expect({ cause: closed[0] ?? undefined, length: closed.length }).toMatchInlineSnapshot(`
       {
         "cause": undefined,
         "length": 1,
@@ -1264,14 +1264,14 @@ describe('wata-device-code', () => {
     `)
 
     await expect(
-      consumer.send(Envelope.rpcRequests([{ jsonrpc: '2.0', id: 2, method: 'ping', params: [] }])),
+      consumer.send(Envelope.rpcRequests([{ id: 2, jsonrpc: '2.0', method: 'ping', params: [] }])),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.ClosedError: device-code transport already closed]`,
     )
   })
 
   test('host transport auto-closes after `transport.send` settles the exchange', async () => {
-    const { consumer, host, approve } = pair()
+    const { approve, consumer, host } = pair()
     const closed: Array<unknown> = []
     host.on('close', (cause) => {
       closed.push(cause)
@@ -1290,7 +1290,7 @@ describe('wata-device-code', () => {
   test('host `transport.send` before `start()` rejects with `Transport.ClosedError`', async () => {
     const { host } = pair()
     await expect(
-      host.send(Envelope.rpcResponses([{ jsonrpc: '2.0', id: 1, result: 'pong' }])),
+      host.send(Envelope.rpcResponses([{ id: 1, jsonrpc: '2.0', result: 'pong' }])),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.ClosedError: device-code transport not started]`,
     )
@@ -1300,7 +1300,7 @@ describe('wata-device-code', () => {
     const { host } = pair()
     await host.start()
     await expect(
-      host.send(Envelope.rpcResponses([{ jsonrpc: '2.0', id: 1, result: 'pong' }])),
+      host.send(Envelope.rpcResponses([{ id: 1, jsonrpc: '2.0', result: 'pong' }])),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.TransportError: no active device-code; \`transport.send\` was called before any user approval]`,
     )
@@ -1320,8 +1320,6 @@ describe('wata-device-code', () => {
   test('consumer `close()` while in flight settles `send()` with `Transport.ClosedError`', async () => {
     let resolveToken: ((response: Response) => void) | undefined
     const consumer = deviceCode({
-      url: 'https://example/auth/device',
-      pollingInterval: 5,
       fetch: async (input) => {
         const url = input instanceof Request ? input.url : String(input)
         if (url.endsWith('/register'))
@@ -1333,13 +1331,15 @@ describe('wata-device-code', () => {
               user_code: 'AAAA-BBBB',
               verification_uri: 'https://example/verify',
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { headers: { 'content-type': 'application/json' }, status: 200 },
           )
         // Hang forever — `consumer.close()` should make `send()` settle.
         return await new Promise<Response>((resolve) => {
           resolveToken = resolve
         })
       },
+      pollingInterval: 5,
+      url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transport: consumer })
     const sendPromise = wata.send({ method: 'ping', params: [] })
@@ -1364,19 +1364,19 @@ describe('wata-device-code', () => {
     const baseUrl = 'https://wallet.example/auth/device'
     let actions: HostDeviceCode.html.Actions | undefined
     const host = hostDeviceCode({
-      store: Kv.memory(),
       baseUrl: 'https://wallet.example',
-      path: '/auth/device',
       html: {
-        render: () => new Response('ok'),
         authenticate: async (options) => {
           actions = options.actions
           return new Response('ok')
         },
+        render: () => new Response('ok'),
       },
+      path: '/auth/device',
+      store: Kv.memory(),
     })
     const { body } = await registerOnce(host, baseUrl)
-    await host.fetch(new Request(`${baseUrl}/verify`, { method: 'POST', body: new FormData() }))
+    await host.fetch(new Request(`${baseUrl}/verify`, { body: new FormData(), method: 'POST' }))
     // `user_code` is generated uppercase; verify a lowercase lookup
     // still resolves it (the host stores it under an uppercased key).
     const record = await actions!.get(body.user_code.toLowerCase())
@@ -1393,25 +1393,25 @@ describe('meta resolution', () => {
     const baseUrl = 'https://wallet.example/auth/device'
     let renderedMeta: unknown
     const html: HostDeviceCode.html.Hooks = {
+      authenticate: async () => new Response('ok'),
       render: ({ meta, userCode }) => {
         renderedMeta = meta
         return new Response(`<form>code=${userCode ?? ''}</form>`, {
           headers: { 'content-type': 'text/html' },
         })
       },
-      authenticate: async () => new Response('ok'),
     }
     const host = hostDeviceCode({
-      store: Kv.memory(),
       baseUrl: 'https://wallet.example',
-      path: '/auth/device',
       html,
+      path: '/auth/device',
+      store: Kv.memory(),
       ...(options.fetch ? { fetch: options.fetch } : {}),
     })
     return {
       baseUrl,
-      host,
       getRenderedMeta: () => renderedMeta as HostDeviceCode.PendingRecord['meta'] | undefined,
+      host,
     }
   }
 
@@ -1422,23 +1422,23 @@ describe('meta resolution', () => {
   ) {
     const response = await host.fetch(
       new Request(`${baseUrl}/register`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           code_challenge: 'wrong_challenge',
           code_challenge_method: 'S256',
-          message: Envelope.rpcRequests([{ jsonrpc: '2.0', id: 1, method: 'ping', params: [] }]),
+          message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
           ...body,
         }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
       }),
     )
-    return { response, body: (await response.json()) as { user_code: string } }
+    return { body: (await response.json()) as { user_code: string }, response }
   }
 
   test('inline `meta` on /register reaches `render` callback', async () => {
-    const { baseUrl, host, getRenderedMeta } = metaPair()
+    const { baseUrl, getRenderedMeta, host } = metaPair()
     const { body } = await registerWithBody(host, baseUrl, {
-      meta: { name: 'Inline Acme', icon: 'https://acme.dev/icon.png' },
+      meta: { icon: 'https://acme.dev/icon.png', name: 'Inline Acme' },
     })
 
     await host.fetch(new Request(`${baseUrl}/verify?user_code=${body.user_code}`))
@@ -1452,7 +1452,7 @@ describe('meta resolution', () => {
   })
 
   test('no inline meta + no consumer_url ⇒ render receives `undefined`', async () => {
-    const { baseUrl, host, getRenderedMeta } = metaPair()
+    const { baseUrl, getRenderedMeta, host } = metaPair()
     const { body } = await registerWithBody(host, baseUrl, {})
     await host.fetch(new Request(`${baseUrl}/verify?user_code=${body.user_code}`))
     expect(getRenderedMeta()).toBeUndefined()
@@ -1460,21 +1460,21 @@ describe('meta resolution', () => {
 
   test('consumer_url fallback fetches consumer.json and surfaces its meta', async () => {
     const consumerDocument = {
-      version: '1.0' as const,
-      origin: 'https://acme.dev',
       id: 'acme.dev',
-      meta: { name: 'Discovery Acme', icon: 'https://acme.dev/i.png' },
+      meta: { icon: 'https://acme.dev/i.png', name: 'Discovery Acme' },
+      origin: 'https://acme.dev',
+      version: '1.0' as const,
     }
     const fetchImpl = (async (input: RequestInfo | URL) => {
       const url = input instanceof Request ? input.url : String(input)
       if (url === 'https://acme.dev/.well-known/urpc/consumer.json')
         return new Response(JSON.stringify(consumerDocument), {
-          status: 200,
           headers: { 'content-type': 'application/json' },
+          status: 200,
         })
       throw new Error(`unexpected fetch to ${url}`)
     }) as typeof globalThis.fetch
-    const { baseUrl, host, getRenderedMeta } = metaPair({ fetch: fetchImpl })
+    const { baseUrl, getRenderedMeta, host } = metaPair({ fetch: fetchImpl })
     const { body } = await registerWithBody(host, baseUrl, {
       consumer_url: 'https://acme.dev',
     })
@@ -1491,15 +1491,15 @@ describe('meta resolution', () => {
       discoveryCalls += 1
       return new Response('nope', { status: 500 })
     }) as typeof globalThis.fetch
-    const { baseUrl, host, getRenderedMeta } = metaPair({ fetch: fetchImpl })
+    const { baseUrl, getRenderedMeta, host } = metaPair({ fetch: fetchImpl })
     const { body } = await registerWithBody(host, baseUrl, {
-      meta: { name: 'Inline Wins' },
       consumer_url: 'https://acme.dev',
+      meta: { name: 'Inline Wins' },
     })
 
     await host.fetch(new Request(`${baseUrl}/verify?user_code=${body.user_code}`))
 
-    expect({ meta: getRenderedMeta(), discoveryCalls }).toMatchInlineSnapshot(`
+    expect({ discoveryCalls, meta: getRenderedMeta() }).toMatchInlineSnapshot(`
       {
         "discoveryCalls": 0,
         "meta": {
@@ -1513,23 +1513,23 @@ describe('meta resolution', () => {
 describe('baseUrl optional', () => {
   test('verification_uri falls back to the incoming request URL origin when no baseUrl supplied', async () => {
     const host = hostDeviceCode({
-      store: Kv.memory(),
-      path: '/auth/device',
       html: {
-        render: () => new Response('ok'),
         authenticate: async () => new Response('ok'),
+        render: () => new Response('ok'),
       },
+      path: '/auth/device',
+      store: Kv.memory(),
     })
 
     const response = await host.fetch(
       new Request('https://tenant-a.wallet.example/auth/device/register', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           code_challenge: 'wrong',
           code_challenge_method: 'S256',
-          message: Envelope.rpcRequests([{ jsonrpc: '2.0', id: 1, method: 'ping', params: [] }]),
+          message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
         }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
       }),
     )
     const body = (await response.json()) as { verification_uri: string }
@@ -1544,17 +1544,17 @@ describe('baseUrl optional', () => {
 
   test('discovery binding builds register_url / token_url from the supplied baseUrl', () => {
     const host = hostDeviceCode({
-      store: Kv.memory(),
-      path: '/auth/device',
       html: {
-        render: () => new Response('ok'),
         authenticate: async () => new Response('ok'),
+        render: () => new Response('ok'),
       },
+      path: '/auth/device',
+      store: Kv.memory(),
     })
     expect(host.discovery).toBeDefined()
     expect({
-      id: host.discovery!.id,
       binding: host.discovery!.binding('https://wallet.example'),
+      id: host.discovery!.id,
     }).toMatchInlineSnapshot(`
       {
         "binding": {

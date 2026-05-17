@@ -6,10 +6,10 @@
  * {@link Options.path}; consumers never see Hono in the public type
  * surface — they get web-standard primitives:
  *
- * - {@link DeviceCodeTransport.fetch} — `(req: Request) => Promise<Response>`.
+ * - {@link DeviceCode.fetch} — `(req: Request) => Promise<Response>`.
  *   The canonical fetch-style handler. Same code runs on Cloudflare
  *   Workers, Bun, Deno, Vercel Edge, or `Hono` mounted at any path.
- * - {@link DeviceCodeTransport.listener} — Node `http.RequestListener`
+ * - {@link DeviceCode.listener} — Node `http.RequestListener`
  *   adapter, powered by `@hono/node-server`'s `getRequestListener`.
  *
  * Routes (all under {@link Options.path}, defaults to `/`):
@@ -62,6 +62,7 @@ import * as Events from '../../core/Events.js'
 import * as Http from '../../core/Http.js'
 import * as Kv from '../../core/Kv.js'
 import * as Transport from '../../core/Transport.js'
+import * as Uri from '../../internal/Uri.js'
 
 /** Persisted device-code lifecycle record. */
 export type PendingRecord = {
@@ -115,7 +116,7 @@ export type Options = {
    *
    * Optional — when omitted, the transport falls back to the incoming
    * request's URL origin. The parent `Wata.create({ baseUrl })` also
-   * lazy-injects its own value through {@link Transport.Transport.bindBaseUrl}.
+   * lazy-injects its own value through {@link Transport.Transport.bind}.
    * A constructor-level value wins over both fallbacks; reach for it
    * in multi-tenant servers where each tenant has a fixed origin.
    */
@@ -228,7 +229,7 @@ export declare namespace html {
 }
 
 /** `transport.fetch` / `transport.listener`-augmented {@link Transport.Transport}. */
-export type DeviceCodeTransport = Transport.Transport<'host'> & Http.Server
+export type DeviceCode = Transport.Transport<'host'> & Http.Server
 
 /**
  * Create a host-side `device-code` transport.
@@ -245,7 +246,7 @@ export type DeviceCodeTransport = Transport.Transport<'host'> & Http.Server
  * })
  * ```
  */
-export function deviceCode(options: Options): DeviceCodeTransport {
+export function deviceCode(options: Options): DeviceCode {
   const {
     expiresIn = 600,
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
@@ -256,10 +257,10 @@ export function deviceCode(options: Options): DeviceCodeTransport {
   } = options
 
   // Constructor-level `baseUrl` is sticky and wins over any later
-  // `bindBaseUrl()` call from a wrapping `Wata.create({ baseUrl })`.
+  // `bind()` call from a wrapping `Wata.create({ baseUrl })`.
   // When neither is set, the request-handler falls back to the
   // incoming request URL's origin.
-  const baseUrl_ctor = options.baseUrl ? trimTrailingSlash(options.baseUrl) : undefined
+  const baseUrl_ctor = options.baseUrl ? Uri.trimTrailingSlash(options.baseUrl) : undefined
   let baseUrl_bound: string | undefined
 
   function resolveBaseUrl(requestUrl: string): string {
@@ -422,14 +423,14 @@ export function deviceCode(options: Options): DeviceCodeTransport {
     const record: PendingRecord = {
       codeChallenge: body.code_challenge,
       codeChallengeMethod: 'S256',
-      ...(consumerUrl ? { consumerUrl } : {}),
       createdAt: now,
       deviceCode: deviceCodeValue,
       expiresAt: now + expiresIn * 1000,
-      ...(meta ? { meta } : {}),
       message: envelope,
       status: 'pending',
       userCode: userCodeValue,
+      ...(consumerUrl ? { consumerUrl } : {}),
+      ...(meta ? { meta } : {}),
     }
 
     await store.set(deviceCodeKey(deviceCodeValue), record, { ttl: expiresIn })
@@ -583,8 +584,8 @@ export function deviceCode(options: Options): DeviceCodeTransport {
       resolved = document.name
         ? {
             name: document.name,
-            ...(document.icon ? { icon: document.icon } : {}),
             ...(document.description ? { description: document.description } : {}),
+            ...(document.icon ? { icon: document.icon } : {}),
             ...(document.website_url ? { websiteUrl: document.website_url } : {}),
           }
         : undefined
@@ -605,13 +606,15 @@ export function deviceCode(options: Options): DeviceCodeTransport {
   const { fetch, listener } = Http.fromHono(app)
 
   return {
-    bindBaseUrl(baseUrl) {
+    bind(binding) {
       // Constructor-level `baseUrl` wins; bound value is a one-time
       // injection from `Wata.create({ baseUrl })` and a later call
       // is a no-op so the first parent binding sticks.
+      const baseUrl = binding.baseUrl
+      if (!baseUrl) return
       if (baseUrl_ctor) return
       if (baseUrl_bound) return
-      baseUrl_bound = trimTrailingSlash(baseUrl)
+      baseUrl_bound = Uri.trimTrailingSlash(baseUrl)
     },
     async close(cause) {
       if (state.closed) return
@@ -619,11 +622,11 @@ export function deviceCode(options: Options): DeviceCodeTransport {
       emitter.emit('close', cause)
     },
     discovery: {
-      id: 'device-code',
       binding(baseUrl) {
-        const prefix = `${trimTrailingSlash(baseUrl)}${path ?? ''}`
+        const prefix = `${Uri.trimTrailingSlash(baseUrl)}${path ?? ''}`
         return { register_url: `${prefix}/register`, token_url: `${prefix}/token` }
       },
+      id: 'device-code',
     },
     exchange: 'single_exchange',
     fetch,
@@ -659,10 +662,6 @@ export function deviceCode(options: Options): DeviceCodeTransport {
   }
 }
 
-function trimTrailingSlash(value: string): string {
-  return value.endsWith('/') ? value.slice(0, -1) : value
-}
-
 function deviceCodeKey(deviceCode: string): string {
   return `device:${deviceCode}`
 }
@@ -678,7 +677,7 @@ function appendUserCode(verificationUri: string, userCode: string): string {
 }
 
 function generateDeviceCode(): string {
-  return Base64.fromBytes(Bytes.random(32), { url: true, pad: false })
+  return Base64.fromBytes(Bytes.random(32), { pad: false, url: true })
 }
 
 const userCodeAlphabet = 'BCDFGHJKLMNPQRSTVWXZ'
@@ -694,7 +693,7 @@ function generateUserCode(): string {
 /** PKCE challenge from `code_verifier` (`base64url(SHA-256(verifier))`). */
 export function pkceChallenge(verifier: string): string {
   const digest = sha256(Bytes.fromString(verifier))
-  return Base64.fromBytes(digest, { url: true, pad: false })
+  return Base64.fromBytes(digest, { pad: false, url: true })
 }
 
 /** Length-checked constant-time string equality. */
