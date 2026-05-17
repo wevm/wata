@@ -28,7 +28,7 @@ const wata = Wata.create({
   meta: {
     name: 'Example Wallet',
     description: 'Device-code playground host',
-    url: baseUrl,
+    websiteUrl: baseUrl,
   },
   transport: deviceCode({
     store: Kv.memory(),

@@ -65,6 +65,6 @@ describe('Meta', () => {
     expectTypeOf<Discovery.Meta['name']>().toEqualTypeOf<string>()
     expectTypeOf<Discovery.Meta['icon']>().toEqualTypeOf<string | undefined>()
     expectTypeOf<Discovery.Meta['description']>().toEqualTypeOf<string | undefined>()
-    expectTypeOf<Discovery.Meta['website_url']>().toEqualTypeOf<string | undefined>()
+    expectTypeOf<Discovery.Meta['websiteUrl']>().toEqualTypeOf<string | undefined>()
   })
 })

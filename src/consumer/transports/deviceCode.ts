@@ -290,7 +290,16 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
           code_challenge_method: 'S256',
           message: envelope,
           ...(consumerUrl ? { consumer_url: consumerUrl } : {}),
-          ...(meta ? { meta } : {}),
+          ...(meta
+            ? {
+                meta: {
+                  name: meta.name,
+                  ...(meta.icon ? { icon: meta.icon } : {}),
+                  ...(meta.description ? { description: meta.description } : {}),
+                  ...(meta.websiteUrl ? { website_url: meta.websiteUrl } : {}),
+                },
+              }
+            : {}),
         }),
         headers: { accept: 'application/json', 'content-type': 'application/json' },
         method: 'POST',

@@ -73,11 +73,11 @@ export function notModified(request: Request, currentEtag: string): Response | u
  */
 export function buildHostDocument(options: {
   baseUrl: string
-  identity_pubkey: string
+  identityPubkey: string
   meta: Discovery.Meta
   transports: Record<string, unknown>
 }): Discovery.HostDocument {
-  const { baseUrl, identity_pubkey, meta, transports } = options
+  const { baseUrl, identityPubkey, meta, transports } = options
   const origin = new URL(baseUrl).origin
   return Schema.validate(Discovery.schema.hostDocument, {
     version: Discovery.version,
@@ -86,8 +86,8 @@ export function buildHostDocument(options: {
     name: meta.name,
     ...(meta.icon ? { icon: meta.icon } : {}),
     ...(meta.description ? { description: meta.description } : {}),
-    ...(meta.website_url ? { website_url: meta.website_url } : {}),
-    identity_pubkey,
+    ...(meta.websiteUrl ? { website_url: meta.websiteUrl } : {}),
+    identity_pubkey: identityPubkey,
     transports,
   })
 }
@@ -110,7 +110,7 @@ export function buildConsumerDocument(options: {
     name: meta.name,
     ...(meta.icon ? { icon: meta.icon } : {}),
     ...(meta.description ? { description: meta.description } : {}),
-    ...(meta.website_url ? { website_url: meta.website_url } : {}),
+    ...(meta.websiteUrl ? { website_url: meta.websiteUrl } : {}),
   })
 }
 

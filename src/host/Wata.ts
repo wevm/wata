@@ -246,14 +246,14 @@ export function create<
 >(options: create.Options<schema, transport>): Host<schema, transport> {
   const transport = options.transport as transport
   const schema = options.schema as schema
-  const { baseUrl, meta, identity_pubkey } = options
+  const { baseUrl, meta, identityPubkey } = options
 
   if (meta && !baseUrl)
     throw new Errors.BaseError('`baseUrl` is required when `meta` is set', {
       details: 'host_id and transport bindings need a fully-qualified origin',
     })
-  if (meta && !identity_pubkey)
-    throw new Errors.BaseError('`identity_pubkey` is required when `meta` is set', {
+  if (meta && !identityPubkey)
+    throw new Errors.BaseError('`identityPubkey` is required when `meta` is set', {
       details:
         'host.json publishes the long-term Ed25519 identity pubkey (unpadded base64url, 43 chars)',
     })
@@ -541,10 +541,10 @@ export function create<
   // its own `.fetch` / `.listener` even when nothing else is mounted).
   let httpFetch = http.fetch
   let httpListener = http.listener
-  if (meta && baseUrl && identity_pubkey) {
+  if (meta && baseUrl && identityPubkey) {
     const document = Wellknown.buildHostDocument({
       baseUrl,
-      identity_pubkey,
+      identityPubkey,
       meta,
       transports: collectTransports(transport, baseUrl),
     })
@@ -627,10 +627,10 @@ export declare namespace create {
      * whenever {@link meta} + {@link baseUrl} are set (i.e. whenever
      * `Wata` auto-publishes `/.well-known/urpc/host.json`).
      */
-    identity_pubkey?: string | undefined
+    identityPubkey?: string | undefined
     /**
      * Optional human-facing app metadata. When set together with
-     * {@link baseUrl} and {@link identity_pubkey}, `Wata` auto-publishes
+     * {@link baseUrl} and {@link identityPubkey}, `Wata` auto-publishes
      * a `/.well-known/urpc/host.json` off the transport's existing
      * `.fetch` / `.listener` — no separate mount required. The
      * published doc's `transports` map is auto-built from the
