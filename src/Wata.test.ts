@@ -4,7 +4,7 @@ import { Wata as HostWata, deviceCode as hostDeviceCode } from 'wata/host'
 import { z } from 'zod/mini'
 
 // 43-char unpadded base64url Ed25519 pubkey per uRPC discovery.md §2.2.
-const identity_pubkey = 'A'.repeat(43)
+const identityPubkey = 'A'.repeat(43)
 
 const schema = Schema.create({
   methods: {
@@ -493,7 +493,7 @@ describe('baseUrl + meta auto-publishing', () => {
   test('host `Wata.create({ baseUrl, meta })` serves /.well-known/urpc/host.json off the transport `.fetch`', async () => {
     const host = HostWata.create({
       baseUrl: 'https://wallet.example',
-      identity_pubkey,
+      identityPubkey,
       meta: { name: 'Example Wallet', icon: 'https://wallet.example/icon.png' },
       transport: hostDeviceCode({
         store: Kv.memory(),
@@ -538,7 +538,7 @@ describe('baseUrl + meta auto-publishing', () => {
   test('host `Wata.create({ baseUrl, meta })` still routes transport requests for non-well-known paths', async () => {
     const host = HostWata.create({
       baseUrl: 'https://wallet.example',
-      identity_pubkey,
+      identityPubkey,
       meta: { name: 'Example Wallet' },
       transport: hostDeviceCode({
         store: Kv.memory(),
@@ -589,7 +589,7 @@ describe('baseUrl + meta auto-publishing', () => {
     )
   })
 
-  test('host `Wata.create({ baseUrl, meta })` without `identity_pubkey` throws (required per spec §2.2)', () => {
+  test('host `Wata.create({ baseUrl, meta })` without `identityPubkey` throws (required per spec §2.2)', () => {
     expect(() =>
       HostWata.create({
         baseUrl: 'https://wallet.example',
@@ -604,7 +604,7 @@ describe('baseUrl + meta auto-publishing', () => {
       }),
     ).toThrowErrorMatchingInlineSnapshot(
       `
-    	[BaseError: \`identity_pubkey\` is required when \`meta\` is set
+    	[BaseError: \`identityPubkey\` is required when \`meta\` is set
     	Details: host.json publishes the long-term Ed25519 identity pubkey (unpadded base64url, 43 chars)]
     `,
     )
