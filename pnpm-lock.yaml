@@ -132,6 +132,28 @@ importers:
         specifier: latest
         version: 6.0.3
 
+  examples/webhookCallback:
+    dependencies:
+      '@hono/node-server':
+        specifier: latest
+        version: 2.0.2(hono@4.12.18)
+      hono:
+        specifier: latest
+        version: 4.12.18
+      wata:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: latest
+        version: 25.7.0
+      tsx:
+        specifier: latest
+        version: 4.21.0
+      typescript:
+        specifier: latest
+        version: 6.0.3
+
   playgrounds/deviceCode:
     dependencies:
       '@clack/prompts':
