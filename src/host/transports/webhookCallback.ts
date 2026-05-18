@@ -423,22 +423,27 @@ export function webhookCallback(options: Options): WebhookCallback {
     // §3.1.2 — validate webhook_url against the consumer's
     // `consumer.json` `callback_urls` allowlist (byte-equal + same-
     // origin). Fetch the consumer doc once at registration.
-    const webhookUrlOrigin = (() => {
+    const webhookUrl = (() => {
       try {
-        return new URL(body.webhook_url).origin
+        return new URL(body.webhook_url)
       } catch {
         return undefined
       }
     })()
-    if (!webhookUrlOrigin)
+    if (!webhookUrl)
       return c.json(
         { error: 'invalid_request', error_description: 'invalid `webhook_url`' },
         { status: 400 },
       )
+    if (webhookUrl.protocol !== 'https:')
+      return c.json(
+        { error: 'forbidden', error_description: '`webhook_url` must use https' },
+        { status: 403 },
+      )
 
     let consumerDoc: Discovery.ConsumerDocument | undefined
     try {
-      consumerDoc = await Discovery.fetchConsumer(webhookUrlOrigin, { fetch: fetchImpl })
+      consumerDoc = await Discovery.fetchConsumer(webhookUrl.origin, { fetch: fetchImpl })
     } catch (cause) {
       return c.json(
         {
@@ -465,7 +470,7 @@ export function webhookCallback(options: Options): WebhookCallback {
         },
         { status: 403 },
       )
-    if (new URL(body.webhook_url).origin !== new URL(consumerDoc.origin).origin)
+    if (webhookUrl.origin !== new URL(consumerDoc.origin).origin)
       return c.json(
         {
           error: 'forbidden',
