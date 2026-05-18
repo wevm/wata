@@ -291,7 +291,7 @@ function pair(options: PairOptions = {}) {
 }
 
 function signedRequest(options: signedRequest.Options): Request {
-  const { body, components, keyid, method, nonce, privateKey, publicKey, url } = options
+  const { body, components, created, keyid, method, nonce, privateKey, publicKey, url } = options
   const headers =
     body === undefined
       ? { 'urpc-public-key': publicKey }
@@ -305,7 +305,7 @@ function signedRequest(options: signedRequest.Options): Request {
     message: { headers, method, url },
     parameters: {
       alg: 'ed25519',
-      created: Math.floor(Date.now() / 1000),
+      created: created ?? Math.floor(Date.now() / 1000),
       keyid,
       ...(nonce ? { nonce } : {}),
     },
@@ -320,6 +320,7 @@ declare namespace signedRequest {
   type Options = {
     body?: string | undefined
     components: readonly string[]
+    created?: number | undefined
     keyid: string
     method: string
     nonce?: string | undefined
@@ -1460,6 +1461,42 @@ describe('webhookCallback end-to-end', () => {
     expect(hostStore.scanKeys('webhook:code:')).toEqual([])
   })
 
+  test('rejects /register outside the signature created window', async () => {
+    const { consumerKeypair, hostOrigin, hostPath, hostStore, hostTransport, webhookUrl } = pair()
+    const publicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+    const body = JSON.stringify({ message, webhook_url: webhookUrl })
+    const response = await hostTransport.fetch(
+      signedRequest({
+        body,
+        components: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-public-key',
+        ],
+        created: Math.floor(Date.now() / 1000) - 301,
+        keyid: 'https://acme.dev#identity',
+        method: 'POST',
+        nonce: 'stale-created',
+        privateKey: consumerKeypair.privateKey,
+        publicKey,
+        url: `${hostOrigin}${hostPath}/register`,
+      }),
+    )
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "unauthorized",
+        "error_description": "signature created outside acceptance window",
+      }
+    `)
+    expect(hostStore.scanKeys('webhook:code:')).toEqual([])
+  })
+
   test('rejects replayed /register signature nonces before creating another intent', async () => {
     const { consumerKeypair, hostOrigin, hostPath, hostStore, hostTransport, webhookUrl } = pair()
     const publicKey = ed25519Pubkey(consumerKeypair.publicKey)
@@ -2147,6 +2184,75 @@ describe('webhookCallback end-to-end', () => {
     expect(first.status).toBe(400)
     expect(second.status).toBe(401)
     expect(third.status).toBe(401)
+  })
+
+  test('consumer rejects webhook delivery outside the signature created window', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostKeypair,
+      hostStore,
+      webhookUrl,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    const body = JSON.stringify(
+      Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]),
+    )
+    const headers = {
+      'content-digest': MessageSig.contentDigest(body),
+      'content-type': 'application/json',
+      'urpc-auth-req-id': record.authReqId,
+      'urpc-idempotency-key': record.authReqId,
+      'urpc-public-key': ed25519Pubkey(hostKeypair.publicKey),
+    }
+    const { signature, signatureInput } = MessageSig.sign({
+      components: [
+        '@method',
+        '@target-uri',
+        '@authority',
+        'content-type',
+        'content-digest',
+        'urpc-auth-req-id',
+        'urpc-public-key',
+      ],
+      message: { headers, method: 'POST', url: webhookUrl },
+      parameters: {
+        alg: 'ed25519',
+        created: Math.floor(Date.now() / 1000) - 301,
+        keyid: 'https://wallet.example#identity',
+        nonce: 'stale-created',
+      },
+      privateKey: hostKeypair.privateKey,
+    })
+
+    const response = await consumerTransport.fetch(
+      new Request(webhookUrl, {
+        body,
+        headers: { ...headers, signature, 'signature-input': signatureInput },
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "signature created outside acceptance window",
+      }
+    `)
   })
 
   test('consumer does not consume idempotency keys for invalid webhook bodies', async () => {

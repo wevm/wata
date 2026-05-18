@@ -450,6 +450,8 @@ export function webhookCallback(options: Options): WebhookCallback {
 
     // §5.4 — per-(host identity, auth_req_id) nonce replay protection.
     const parsedInput = MessageSig.parseSignatureInput(request.headers.get('signature-input') ?? '')
+    const metadataError = signatureMetadataError(parsedInput)
+    if (metadataError) return c.json({ error: metadataError }, { status: 401 })
     const nonce = parsedInput.parameters.nonce
     if (!nonce) return c.json({ error: 'missing signature nonce' }, { status: 401 })
     const nonceKey = `webhook:nonce:${pinned}:${authReqId}:${nonce}`
@@ -612,3 +614,17 @@ function constantTimeEqual(a: string, b: string): boolean {
   for (let i = 0; i < a.length; i += 1) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i)
   return mismatch === 0
 }
+
+function signatureMetadataError(
+  parsedInput: MessageSig.ParsedSignatureInput,
+): string | undefined {
+  const { alg, created } = parsedInput.parameters
+  if (alg !== 'ed25519') return 'signature alg must be `ed25519`'
+  if (created === undefined) return 'missing signature created'
+  const now = Math.floor(Date.now() / 1000)
+  if (Math.abs(now - created) > signatureCreatedToleranceSeconds)
+    return 'signature created outside acceptance window'
+  return undefined
+}
+
+const signatureCreatedToleranceSeconds = 300

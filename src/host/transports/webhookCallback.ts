@@ -1054,6 +1054,8 @@ export function webhookCallback(options: Options): WebhookCallback {
     } catch (cause) {
       return (cause as Error).message
     }
+    const metadataError = signatureMetadataError(parsedInput)
+    if (metadataError) return metadataError
     const nonce = parsedInput.parameters.nonce
     if (!nonce) return 'missing signature nonce'
     const key = signatureNonceKey(publicKey, nonce)
@@ -1467,6 +1469,18 @@ function collectHeaders(headers: Headers): Record<string, string> {
   return out
 }
 
+function signatureMetadataError(
+  parsedInput: MessageSig.ParsedSignatureInput,
+): string | undefined {
+  const { alg, created } = parsedInput.parameters
+  if (alg !== 'ed25519') return 'signature alg must be `ed25519`'
+  if (created === undefined) return 'missing signature created'
+  const now = Math.floor(Date.now() / 1000)
+  if (Math.abs(now - created) > signatureCreatedToleranceSeconds)
+    return 'signature created outside acceptance window'
+  return undefined
+}
+
 const approvalSurfaceCsp = [
   "default-src 'self'",
   "frame-ancestors 'none'",
@@ -1476,6 +1490,7 @@ const approvalSurfaceCsp = [
   "style-src 'self' 'unsafe-inline'",
 ].join('; ')
 
+const signatureCreatedToleranceSeconds = 300
 const signatureNonceTtl = 86400
 
 function assertSignatureKeyid(request: Request, expectedKeyid: string): void {
