@@ -563,6 +563,12 @@ export function webhookCallback(options: Options): WebhookCallback {
         { error: 'unauthorized', error_description: 'signature verification failed' },
         { status: 401 },
       )
+    const nonceError = await consumeSignatureNonce(request, consumerDoc.identity_pubkey)
+    if (nonceError)
+      return c.json(
+        { error: 'unauthorized', error_description: nonceError },
+        { status: 401 },
+      )
 
     // Mint fresh opaque identifiers. Spec §3.1.3 — `auth_req_id` and
     // the `?code=` handle MUST each carry ≥128 bits of CSPRNG entropy
@@ -673,6 +679,12 @@ export function webhookCallback(options: Options): WebhookCallback {
     if (!verified)
       return c.json(
         { error: 'unauthorized', error_description: 'signature verification failed' },
+        { status: 401 },
+      )
+    const nonceError = await consumeSignatureNonce(request, record.consumer.publicKey)
+    if (nonceError)
+      return c.json(
+        { error: 'unauthorized', error_description: nonceError },
         { status: 401 },
       )
 
@@ -920,6 +932,24 @@ export function webhookCallback(options: Options): WebhookCallback {
     await store.set(authReqIdKey(record.authReqId), record, { ttl })
   }
 
+  async function consumeSignatureNonce(
+    request: Request,
+    publicKey: string,
+  ): Promise<string | undefined> {
+    let parsedInput: MessageSig.ParsedSignatureInput
+    try {
+      parsedInput = MessageSig.parseSignatureInput(request.headers.get('signature-input') ?? '')
+    } catch (cause) {
+      return (cause as Error).message
+    }
+    const nonce = parsedInput.parameters.nonce
+    if (!nonce) return 'missing signature nonce'
+    const key = signatureNonceKey(publicKey, nonce)
+    if (await store.get(key)) return 'replay detected'
+    await store.set(key, true, { ttl: signatureNonceTtl })
+    return undefined
+  }
+
   async function requirePendingRecord(code: string): Promise<PendingRecord> {
     const record = await store.get<PendingRecord>(codeKey(code))
     if (!record) throw new UnknownCodeError(code)
@@ -1132,6 +1162,10 @@ function authReqIdKey(authReqId: string): string {
   return `webhook:authReqId:${authReqId}`
 }
 
+function signatureNonceKey(publicKey: string, nonce: string): string {
+  return `webhook:signatureNonce:${publicKey}:${nonce}`
+}
+
 function generateOpaque(byteCount: number): string {
   return Base64.fromBytes(Bytes.random(byteCount), { pad: false, url: true })
 }
@@ -1268,6 +1302,8 @@ const approvalSurfaceCsp = [
   "object-src 'none'",
   "style-src 'self' 'unsafe-inline'",
 ].join('; ')
+
+const signatureNonceTtl = 86400
 
 function assertSignatureKeyid(request: Request, expectedKeyid: string): void {
   const parsedInput = MessageSig.parseSignatureInput(request.headers.get('signature-input') ?? '')

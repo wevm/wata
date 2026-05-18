@@ -284,6 +284,45 @@ function pair(options: PairOptions = {}) {
   }
 }
 
+function signedRequest(options: signedRequest.Options): Request {
+  const { body, components, keyid, method, nonce, privateKey, publicKey, url } = options
+  const headers =
+    body === undefined
+      ? { 'urpc-public-key': publicKey }
+      : {
+          'content-digest': MessageSig.contentDigest(body),
+          'content-type': 'application/json',
+          'urpc-public-key': publicKey,
+        }
+  const { signature, signatureInput } = MessageSig.sign({
+    components,
+    message: { headers, method, url },
+    parameters: {
+      alg: 'ed25519',
+      created: Math.floor(Date.now() / 1000),
+      keyid,
+      ...(nonce ? { nonce } : {}),
+    },
+    privateKey,
+  })
+  const signedHeaders = { ...headers, signature, 'signature-input': signatureInput }
+  if (body === undefined) return new Request(url, { headers: signedHeaders, method })
+  return new Request(url, { body, headers: signedHeaders, method })
+}
+
+declare namespace signedRequest {
+  type Options = {
+    body?: string | undefined
+    components: readonly string[]
+    keyid: string
+    method: string
+    nonce?: string | undefined
+    privateKey: Hex.Hex
+    publicKey: string
+    url: string
+  }
+}
+
 describe('webhookCallback end-to-end', () => {
   test('register → approve → outbound webhook → consumer resolves send()', async () => {
     const setup = pair()
@@ -1117,6 +1156,79 @@ describe('webhookCallback end-to-end', () => {
     expect(response.status).toBe(401)
   })
 
+  test('rejects /register without a signature nonce', async () => {
+    const { consumerKeypair, hostOrigin, hostPath, hostStore, hostTransport, webhookUrl } = pair()
+    const publicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+    const body = JSON.stringify({ message, webhook_url: webhookUrl })
+    const response = await hostTransport.fetch(
+      signedRequest({
+        body,
+        components: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-public-key',
+        ],
+        keyid: 'https://acme.dev#identity',
+        method: 'POST',
+        privateKey: consumerKeypair.privateKey,
+        publicKey,
+        url: `${hostOrigin}${hostPath}/register`,
+      }),
+    )
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "unauthorized",
+        "error_description": "missing signature nonce",
+      }
+    `)
+    expect(hostStore.scanKeys('webhook:code:')).toEqual([])
+  })
+
+  test('rejects replayed /register signature nonces before creating another intent', async () => {
+    const { consumerKeypair, hostOrigin, hostPath, hostStore, hostTransport, webhookUrl } = pair()
+    const publicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+    const body = JSON.stringify({ message, webhook_url: webhookUrl })
+    const registerUrl = `${hostOrigin}${hostPath}/register`
+    const request = () =>
+      signedRequest({
+        body,
+        components: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-public-key',
+        ],
+        keyid: 'https://acme.dev#identity',
+        method: 'POST',
+        nonce: 'fixed-register-nonce',
+        privateKey: consumerKeypair.privateKey,
+        publicKey,
+        url: registerUrl,
+      })
+
+    const first = await hostTransport.fetch(request())
+    const second = await hostTransport.fetch(request())
+
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(401)
+    expect(await second.json()).toMatchInlineSnapshot(`
+      {
+        "error": "unauthorized",
+        "error_description": "replay detected",
+      }
+    `)
+    expect(hostStore.scanKeys('webhook:code:')).toHaveLength(1)
+  })
+
   test('rejects /register when consumer.json omits identity_pubkey', async () => {
     const { consumerKeypair, consumerOrigin, consumerTransport } = pair({
       consumerDiscoveryPublicKey: null,
@@ -1166,6 +1278,104 @@ describe('webhookCallback end-to-end', () => {
       `webhook:authReqId:${record.authReqId}`,
     )) as HostWebhookCallback.PendingRecord
     expect(after.status).toBe('cancelled')
+  })
+
+  test('rejects cancel without a signature nonce', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostStore,
+      hostTransport,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    const publicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const url = `https://wallet.example/auth/webhook/register/${encodeURIComponent(record.authReqId)}`
+    const response = await hostTransport.fetch(
+      signedRequest({
+        components: ['@method', '@target-uri', '@authority', 'urpc-public-key'],
+        keyid: 'https://acme.dev#identity',
+        method: 'DELETE',
+        privateKey: consumerKeypair.privateKey,
+        publicKey,
+        url,
+      }),
+    )
+    const after = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:authReqId:${record.authReqId}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "unauthorized",
+        "error_description": "missing signature nonce",
+      }
+    `)
+    expect(after.status).toBe('pending')
+  })
+
+  test('rejects cancel that reuses the register signature nonce', async () => {
+    const { consumerKeypair, hostOrigin, hostPath, hostStore, hostTransport, webhookUrl } = pair()
+    const publicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+    const body = JSON.stringify({ message, webhook_url: webhookUrl })
+    const register = await hostTransport.fetch(
+      signedRequest({
+        body,
+        components: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-public-key',
+        ],
+        keyid: 'https://acme.dev#identity',
+        method: 'POST',
+        nonce: 'shared-nonce',
+        privateKey: consumerKeypair.privateKey,
+        publicKey,
+        url: `${hostOrigin}${hostPath}/register`,
+      }),
+    )
+    const { auth_req_id } = (await register.json()) as { auth_req_id: string }
+    const response = await hostTransport.fetch(
+      signedRequest({
+        components: ['@method', '@target-uri', '@authority', 'urpc-public-key'],
+        keyid: 'https://acme.dev#identity',
+        method: 'DELETE',
+        nonce: 'shared-nonce',
+        privateKey: consumerKeypair.privateKey,
+        publicKey,
+        url: `${hostOrigin}${hostPath}/register/${encodeURIComponent(auth_req_id)}`,
+      }),
+    )
+    const after = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:authReqId:${auth_req_id}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "unauthorized",
+        "error_description": "replay detected",
+      }
+    `)
+    expect(after.status).toBe('pending')
   })
 
   test('returns the same terminal response for unknown and cancelled verification codes', async () => {
