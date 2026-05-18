@@ -425,6 +425,64 @@ describe('webhookCallback end-to-end', () => {
     expect(after?.status).toBe('undeliverable')
   })
 
+  test('does not overwrite an existing terminal delivery transition', async () => {
+    let setup!: ReturnType<typeof pair>
+    let authReqId = ''
+    const winnerBody = JSON.stringify(
+      Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: 'winner' } })]),
+    )
+    const winnerResponse = Envelope.rpcResponses([
+      Rpc.success({ id: 1, result: { ok: 'winner' } }),
+    ])
+
+    setup = pair({
+      hostDelivery: async () => {
+        const current = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+          `webhook:authReqId:${authReqId}`,
+        )) as HostWebhookCallback.PendingRecord
+        current.response = winnerResponse
+        current.responseBody = winnerBody
+        current.status = 'delivered'
+        await setup.hostStore.set(`webhook:authReqId:${authReqId}`, current)
+        return new Response('ok')
+      },
+    })
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transport: setup.hostTransport })
+
+    await setup.consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await setup.findActiveCode()
+    const record = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    authReqId = record.authReqId
+    const response = await setup.postApproval(
+      code,
+      JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
+    )
+
+    let after: HostWebhookCallback.PendingRecord | undefined
+    const start = Date.now()
+    while (Date.now() - start < 2_000) {
+      after = await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+        `webhook:authReqId:${authReqId}`,
+      )
+      if (after?.status === 'delivered' && after.responseBody === winnerBody) break
+      await new Promise((r) => setTimeout(r, 5))
+    }
+
+    expect(response.status).toBe(200)
+    expect(setup.getDeliveryAttempts()).toBe(1)
+    expect(after?.status).toBe('delivered')
+    expect(after?.responseBody).toBe(winnerBody)
+  })
+
   test('user denial delivers `-32000 denied by user` to the consumer', async () => {
     const { consumerKeypair, consumerOrigin, consumerTransport, deny, hostKeypair, hostTransport } =
       pair()

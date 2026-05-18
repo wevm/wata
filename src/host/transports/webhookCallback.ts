@@ -867,10 +867,7 @@ export function webhookCallback(options: Options): WebhookCallback {
           httpResponse.status === 408 || httpResponse.status === 429 || httpResponse.status >= 500,
         type: 'failed',
       }
-    record.status = 'delivered'
-    record.response = response
-    record.responseBody = body
-    await persist(record)
+    await completeDelivery(record, body, response)
     return { type: 'delivered' }
   }
 
@@ -930,6 +927,23 @@ export function webhookCallback(options: Options): WebhookCallback {
     const ttl = Math.ceil(Math.max(60, (retentionUntil - Date.now()) / 1000))
     await store.set(codeKey(record.code), record, { ttl })
     await store.set(authReqIdKey(record.authReqId), record, { ttl })
+  }
+
+  async function completeDelivery(
+    record: PendingRecord,
+    body: string,
+    response: Envelope.Envelope,
+  ): Promise<void> {
+    const current = await take<PendingRecord>(authReqIdKey(record.authReqId))
+    if (!current) return
+    if (current.status !== 'approved' && current.status !== 'denied') {
+      await persist(current)
+      return
+    }
+    current.response = response
+    current.responseBody = body
+    current.status = 'delivered'
+    await persist(current)
   }
 
   async function consumeSignatureNonce(
