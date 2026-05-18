@@ -109,14 +109,14 @@ const wata = Wata.create({
   baseUrl: 'https://wallet.example',
   transport: deviceCode({
     html: {
-      async authenticate(c) {
-        const body = await c.request.formData()
-        await c.actions.approve(String(body.get('user_code')))
+      async authenticate({ actions, request }) {
+        const body = await request.formData()
+        await actions.approve(String(body.get('user_code')))
         return new Response('approved')
       },
-      render(c) {
+      render({ userCode }) {
         return new Response(
-          `<form method="post"><input name="user_code" value="${c.userCode ?? ''}" /><button>Approve</button></form>`,
+          `<form method="post"><input name="user_code" value="${userCode ?? ''}" required /><button>Approve</button></form>`,
           { headers: { 'content-type': 'text/html' } },
         )
       },
@@ -186,14 +186,15 @@ const wata = Wata.create({
         return new Response('approved')
       },
       render({ approvalToken, code, record }) {
-        if (!record) return new Response('no pending request')
-        return new Response(`
-          <form method="post">
+        if (!record) return new Response('no pending request', { status: 404 })
+        return new Response(
+          `<form method="post">
             <input type="hidden" name="approval_token" value="${approvalToken ?? ''}" />
             <input type="hidden" name="code" value="${code ?? ''}" />
             <button>Approve</button>
-          </form>
-        `)
+          </form>`,
+          { headers: { 'content-type': 'text/html' } },
+        )
       },
     },
     path: '/auth/webhook',
