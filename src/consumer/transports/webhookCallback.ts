@@ -105,10 +105,10 @@ export type Options = {
    */
   registerUrl?: string | undefined
   /**
-   * Pluggable storage for per-`auth_req_id` replay-nonce tracking.
-   * Must implement {@link Kv.Kv.take} for atomic one-time-consume
-   * semantics — in-memory and Durable Object backends qualify; raw
-   * Cloudflare KV does not.
+   * Pluggable storage for per-`auth_req_id` replay-nonce and delivery
+   * dedupe tracking. Use {@link Kv.memory} for local examples; use a
+   * shared durable backend when multiple consumer instances can receive
+   * callbacks.
    */
   store: Kv.Kv
 }
