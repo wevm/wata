@@ -23,10 +23,10 @@ const wata = Wata.create({
         const decision = String(form.get('decision') ?? '')
         if (decision === 'approve') {
           await actions.approve(userCode)
-          return html('<h1>Approved ✅</h1>')
+          return html('<p>Approved</p>')
         }
         await actions.deny(userCode)
-        return html('<h1>Denied ❌</h1>')
+        return html('<p>Denied</p>')
       },
       render({ userCode, record }) {
         if (!userCode || !record)
@@ -40,9 +40,9 @@ const wata = Wata.create({
 
         return html(`
           <h1>Approve request?</h1>
-          <p>Code: <code>${userCode}</code></p>
+          <p>Code: <code>${escape(userCode)}</code></p>
           <form method="post" action="/auth/device/verify">
-            <input type="hidden" name="user_code" value="${userCode}" />
+            <input type="hidden" name="user_code" value="${escape(userCode)}" />
             <button type="submit" name="decision" value="approve">Approve</button>
             <button type="submit" name="decision" value="deny">Deny</button>
           </form>
@@ -71,4 +71,12 @@ function html(body: string, status = 200): Response {
     headers: { 'content-type': 'text/html; charset=utf-8' },
     status,
   })
+}
+
+function escape(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
