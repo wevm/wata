@@ -106,6 +106,13 @@ export type PendingRecord = {
   webhookUrl: string
 }
 
+type CachedConsumerIcon = {
+  /** Base64-encoded bytes for JSON-compatible {@link Kv.Kv} storage. */
+  body: string
+  /** Sanitized image content type served by the host-origin proxy. */
+  contentType: string
+}
+
 /** Options accepted by {@link webhookCallback}. */
 export type Options = {
   /**
@@ -168,8 +175,8 @@ export type Options = {
 
 export declare namespace Options {
   type OutboundRequest = {
-    /** Registration-time discovery fetch or approval webhook delivery. */
-    kind: 'consumer-discovery' | 'webhook-delivery'
+    /** Consumer-controlled outbound request being validated or fetched. */
+    kind: 'consumer-discovery' | 'consumer-icon' | 'webhook-delivery'
     /** Exact outbound URL being validated or fetched. */
     url: URL
     /**
@@ -237,7 +244,10 @@ export declare namespace html {
   }
 
   /** Consumer metadata safe to pass to an approval surface. */
-  type ApprovalMeta = Omit<Discovery.Meta, 'icon'>
+  type ApprovalMeta = Omit<Discovery.Meta, 'icon'> & {
+    /** Host-origin icon proxy URL. Raw consumer icon URLs are never exposed. */
+    icon?: string | undefined
+  }
 
   namespace render {
     /** Argument passed to {@link html.Hooks.render}. */
@@ -383,6 +393,13 @@ export function webhookCallback(options: Options): WebhookCallback {
     return url.toString()
   }
 
+  function consumerIconPath(record: PendingRecord): string | undefined {
+    if (!record.consumer.meta?.icon) return undefined
+    const url = new URL(`${path ?? ''}/verify/icon`, 'https://host.invalid')
+    url.searchParams.set('code', record.code)
+    return `${url.pathname}${url.search}`
+  }
+
   const emitter = Events.create<Transport.EventMap>()
 
   // Single-exchange transport. Direct approval delivery goes through
@@ -429,7 +446,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     },
     async get(code) {
       const record = await store.get<PendingRecord>(codeKey(code))
-      return record ? approvalRecord(record) : undefined
+      return record ? approvalRecord(record, consumerIconPath(record)) : undefined
     },
   }
 
@@ -837,6 +854,36 @@ export function webhookCallback(options: Options): WebhookCallback {
     return new Response(null, { status: 204 })
   })
 
+  app.get('/verify/icon', async (c) => {
+    const code = c.req.query('code')
+    if (!code) return new Response(null, { status: 404 })
+
+    const record = await store.get<PendingRecord>(codeKey(code))
+    if (!record || record.status !== 'pending') return new Response(null, { status: 410 })
+    if (Date.now() >= record.expiresAt) return new Response(null, { status: 410 })
+
+    const icon = record.consumer.meta?.icon
+    if (!icon) return new Response(null, { status: 404 })
+
+    const cacheKey = consumerIconKey(code)
+    const cached = await store.get<CachedConsumerIcon>(cacheKey)
+    if (cached) return consumerIconResponse(cached)
+
+    let proxied: CachedConsumerIcon
+    try {
+      proxied = await fetchConsumerIcon(new URL(icon), record)
+    } catch (cause) {
+      return c.json(
+        { error: 'bad_gateway', error_description: (cause as Error).message },
+        { status: 502 },
+      )
+    }
+    await store.set(cacheKey, proxied, {
+      ttl: Math.max(1, Math.ceil((record.expiresAt - Date.now()) / 1000)),
+    })
+    return consumerIconResponse(proxied)
+  })
+
   app.get('/verify', async (c) => {
     const code = c.req.query('code') ?? undefined
     if (!code)
@@ -859,7 +906,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     const response = await html.render({
       approvalToken: approvalSession.approvalToken,
       code,
-      record: approvalRecord(record),
+      record: approvalRecord(record, consumerIconPath(record)),
       request: c.req.raw,
     })
     return withSetCookie(response, approvalSession.cookie)
@@ -906,7 +953,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     if (html.authenticate) {
       const authResponse = await html.authenticate({
         actions,
-        record: record ? approvalRecord(record) : undefined,
+        record: record ? approvalRecord(record, consumerIconPath(record)) : undefined,
         request: request.clone(),
         code,
       })
@@ -1122,6 +1169,39 @@ export function webhookCallback(options: Options): WebhookCallback {
     }
     if (!validateOutboundRequest) return
     await validateOutboundRequest({ ...request, url: new URL(request.url.toString()) })
+  }
+
+  async function fetchConsumerIcon(
+    url: URL,
+    record: PendingRecord,
+  ): Promise<CachedConsumerIcon> {
+    await validateOutbound({
+      authReqId: record.authReqId,
+      kind: 'consumer-icon',
+      url,
+    })
+    const response = await fetchImpl(url, { redirect: 'manual' })
+    if (response.status >= 300 && response.status < 400)
+      throw new Transport.TransportError('consumer icon redirected')
+    if (!response.ok)
+      throw new Transport.TransportError(`consumer icon returned status ${response.status}`)
+
+    const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
+    if (!contentType?.startsWith('image/'))
+      throw new Transport.TransportError('consumer icon response is not an image')
+
+    const contentLength = Number(response.headers.get('content-length') ?? 0)
+    if (contentLength > maxConsumerIconBytes)
+      throw new Transport.TransportError('consumer icon exceeds maximum size')
+
+    const body = await response.arrayBuffer()
+    if (body.byteLength > maxConsumerIconBytes)
+      throw new Transport.TransportError('consumer icon exceeds maximum size')
+
+    return {
+      body: Base64.fromBytes(new Uint8Array(body)),
+      contentType,
+    }
   }
 
   function isLoopbackOutboundAllowed(url: URL): boolean {
@@ -1521,6 +1601,10 @@ function approvalSessionKey(code: string, token: string): string {
   return `webhook:approvalSession:${code}:${token}`
 }
 
+function consumerIconKey(code: string): string {
+  return `webhook:consumerIcon:${code}`
+}
+
 function authReqIdKey(authReqId: string): string {
   return `webhook:authReqId:${authReqId}`
 }
@@ -1562,13 +1646,13 @@ function cancelRecord(record: PendingRecord): void {
   record.status = 'cancelled'
 }
 
-function approvalRecord(record: PendingRecord): html.ApprovalRecord {
+function approvalRecord(record: PendingRecord, icon?: string | undefined): html.ApprovalRecord {
   return {
     code: record.code,
     consumer: {
       id: record.consumer.id,
       origin: record.consumer.origin,
-      ...(record.consumer.meta ? { meta: approvalMeta(record.consumer.meta) } : {}),
+      ...(record.consumer.meta ? { meta: approvalMeta(record.consumer.meta, icon) } : {}),
     },
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
@@ -1578,10 +1662,11 @@ function approvalRecord(record: PendingRecord): html.ApprovalRecord {
   }
 }
 
-function approvalMeta(meta: Discovery.Meta): html.ApprovalMeta {
+function approvalMeta(meta: Discovery.Meta, icon?: string | undefined): html.ApprovalMeta {
   return {
     name: meta.name,
     ...(meta.description !== undefined ? { description: meta.description } : {}),
+    ...(icon !== undefined ? { icon } : {}),
     ...(meta.websiteUrl !== undefined ? { websiteUrl: meta.websiteUrl } : {}),
   }
 }
@@ -1632,6 +1717,13 @@ function invalidVerificationUriResponse(): Response {
     { error: 'gone', error_description: 'approval request is no longer available' },
     { status: 410 },
   )
+}
+
+function consumerIconResponse(icon: CachedConsumerIcon): Response {
+  const body = Uint8Array.from(Base64.toBytes(icon.body)).buffer
+  return new Response(body, {
+    headers: { 'content-type': icon.contentType },
+  })
 }
 
 function deniedResponseFor(
@@ -1802,6 +1894,7 @@ const approvalSurfaceCsp = [
 
 const signatureCreatedToleranceSeconds = 300
 const signatureNonceTtl = 86400
+const maxConsumerIconBytes = 1_000_000
 
 function assertSignatureKeyid(request: Request, expectedKeyid: string): void {
   const parsedInput = MessageSig.parseSignatureInput(request.headers.get('signature-input') ?? '')

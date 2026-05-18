@@ -99,7 +99,8 @@ describe('webhookCallback (host)', () => {
     expectTypeOf<WebhookCallback.html.ApprovalRecord>().not.toHaveProperty('authReqId')
     expectTypeOf<WebhookCallback.html.ApprovalRecord>().not.toHaveProperty('webhookUrl')
     expectTypeOf<NonNullable<WebhookCallback.html.ApprovalRecord['consumer']['meta']>>()
-      .not.toHaveProperty('icon')
+      .toHaveProperty('icon')
+      .toEqualTypeOf<string | undefined>()
     expectTypeOf<WebhookCallback.html.ApprovalRecord['consumer']>().not.toHaveProperty(
       'publicKey',
     )

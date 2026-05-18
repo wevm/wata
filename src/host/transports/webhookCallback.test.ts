@@ -828,7 +828,7 @@ describe('webhookCallback end-to-end', () => {
     expect(response.headers.get('set-cookie')).toContain('; Secure')
   })
 
-  test('omits auth_req_id from approval hook records', async () => {
+  test('omits internal fields from approval hook records', async () => {
     const store = memoryWithScan()
     const now = Date.now()
     await store.set('webhook:code:code-1', {
@@ -836,6 +836,10 @@ describe('webhookCallback end-to-end', () => {
       code: 'code-1',
       consumer: {
         id: 'acme.dev',
+        meta: {
+          icon: 'https://acme.dev/icon.png',
+          name: 'Acme',
+        },
         origin: 'https://acme.dev',
         publicKey: 'A'.repeat(43),
       },
@@ -850,8 +854,9 @@ describe('webhookCallback end-to-end', () => {
     let renderHasAuthReqId: boolean | undefined
     let renderHasWebhookUrl: boolean | undefined
     let renderHasPublicKey: boolean | undefined
-    let renderHasRawIcon: boolean | undefined
+    let renderIcon: string | undefined
     let authenticateHasAuthReqId: boolean | undefined
+    let getIcon: string | undefined
     let getHasAuthReqId: boolean | undefined
     const transport = hostWebhookCallback({
       baseUrl: 'https://wallet.example',
@@ -860,6 +865,7 @@ describe('webhookCallback end-to-end', () => {
           authenticateHasAuthReqId = !!record && 'authReqId' in record
           const fetched = code ? await actions.get(code) : undefined
           getHasAuthReqId = !!fetched && 'authReqId' in fetched
+          getIcon = fetched?.consumer.meta?.icon
           return new Response('ok')
         },
         render: ({ approvalToken: token, record }) => {
@@ -867,7 +873,7 @@ describe('webhookCallback end-to-end', () => {
           renderHasAuthReqId = !!record && 'authReqId' in record
           renderHasWebhookUrl = !!record && 'webhookUrl' in record
           renderHasPublicKey = !!record && 'publicKey' in record.consumer
-          renderHasRawIcon = !!record?.consumer.meta && 'icon' in record.consumer.meta
+          renderIcon = record?.consumer.meta?.icon
           return new Response('ok')
         },
       },
@@ -896,9 +902,66 @@ describe('webhookCallback end-to-end', () => {
     expect(renderHasAuthReqId).toBe(false)
     expect(renderHasWebhookUrl).toBe(false)
     expect(renderHasPublicKey).toBe(false)
-    expect(renderHasRawIcon).toBe(false)
+    expect(renderIcon).toBe('/auth/webhook/verify/icon?code=code-1')
     expect(authenticateHasAuthReqId).toBe(false)
     expect(getHasAuthReqId).toBe(false)
+    expect(getIcon).toBe('/auth/webhook/verify/icon?code=code-1')
+  })
+
+  test('proxies consumer icons through a host-origin approval route', async () => {
+    const store = memoryWithScan()
+    const now = Date.now()
+    await store.set('webhook:code:code-1', {
+      authReqId: 'auth-1',
+      code: 'code-1',
+      consumer: {
+        id: 'acme.dev',
+        meta: {
+          icon: 'https://acme.dev/icon.png',
+          name: 'Acme',
+        },
+        origin: 'https://acme.dev',
+        publicKey: 'A'.repeat(43),
+      },
+      createdAt: now,
+      expiresAt: now + 60_000,
+      message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+      retrySeconds: 300,
+      status: 'pending',
+      webhookUrl: 'https://acme.dev/cb',
+    } satisfies HostWebhookCallback.PendingRecord)
+
+    let fetches = 0
+    const transport = hostWebhookCallback({
+      baseUrl: 'https://wallet.example',
+      fetch: async (input) => {
+        fetches += 1
+        expect(String(input)).toBe('https://acme.dev/icon.png')
+        return new Response('icon-bytes', {
+          headers: {
+            'content-length': '10',
+            'content-type': 'image/png',
+          },
+        })
+      },
+      html: { render: () => new Response('ok') },
+      path: '/auth/webhook',
+      store,
+    })
+
+    const first = await transport.fetch(
+      new Request('https://wallet.example/auth/webhook/verify/icon?code=code-1'),
+    )
+    const second = await transport.fetch(
+      new Request('https://wallet.example/auth/webhook/verify/icon?code=code-1'),
+    )
+
+    expect(first.status).toBe(200)
+    expect(first.headers.get('content-type')).toBe('image/png')
+    await expect(first.text()).resolves.toBe('icon-bytes')
+    expect(second.status).toBe(200)
+    await expect(second.text()).resolves.toBe('icon-bytes')
+    expect(fetches).toBe(1)
   })
 
   test('rejects supplied invalid verification codes before rendering', async () => {
