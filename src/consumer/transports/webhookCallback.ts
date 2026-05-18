@@ -425,12 +425,12 @@ export function webhookCallback(options: Options): WebhookCallback {
 
     // §5.4 — per-(host identity, auth_req_id) nonce replay protection.
     const parsedInput = MessageSig.parseSignatureInput(request.headers.get('signature-input') ?? '')
-    if (parsedInput.parameters.nonce) {
-      const nonceKey = `webhook:nonce:${pinned}:${authReqId}:${parsedInput.parameters.nonce}`
-      const seen = await store.get(nonceKey)
-      if (seen) return c.json({ error: 'replay detected' }, { status: 401 })
-      await store.set(nonceKey, true, { ttl: 86400 })
-    }
+    const nonce = parsedInput.parameters.nonce
+    if (!nonce) return c.json({ error: 'missing signature nonce' }, { status: 401 })
+    const nonceKey = `webhook:nonce:${pinned}:${authReqId}:${nonce}`
+    const seen = await store.get(nonceKey)
+    if (seen) return c.json({ error: 'replay detected' }, { status: 401 })
+    await store.set(nonceKey, true, { ttl: 86400 })
 
     // §3.4.2 step 5: idempotency by uRPC-Idempotency-Key.
     const idemKey = request.headers.get('urpc-idempotency-key')
