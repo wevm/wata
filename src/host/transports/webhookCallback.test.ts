@@ -311,6 +311,7 @@ function signedRequest(options: signedRequest.Options): Request {
   const {
     body,
     components,
+    contentEncoding,
     contentType = 'application/json',
     created,
     keyid,
@@ -327,6 +328,7 @@ function signedRequest(options: signedRequest.Options): Request {
           'content-digest': MessageSig.contentDigest(body),
           'content-type': contentType,
           'urpc-public-key': publicKey,
+          ...(contentEncoding ? { 'content-encoding': contentEncoding } : {}),
         }
   const { signature, signatureInput } = MessageSig.sign({
     components,
@@ -348,6 +350,7 @@ declare namespace signedRequest {
   type Options = {
     body?: string | undefined
     components: readonly string[]
+    contentEncoding?: string | undefined
     contentType?: string | undefined
     created?: number | undefined
     keyid: string
@@ -1284,6 +1287,47 @@ describe('webhookCallback end-to-end', () => {
     expect(record.status).toBe('pending')
   })
 
+  test('rejects default approval submissions with non-identity content-encoding', async () => {
+    const setup = pair()
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+
+    await setup.consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await setup.findActiveCode()
+    const session = await setup.getApprovalSession(code)
+    if (!session) throw new Error('approval session missing')
+    const response = await setup.hostTransport.fetch(
+      new Request(`${setup.hostOrigin}${setup.hostPath}/verify?code=${encodeURIComponent(code)}`, {
+        body: JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
+        headers: {
+          'content-encoding': 'gzip',
+          'content-type': 'application/json',
+          cookie: session.cookie,
+          origin: setup.hostOrigin,
+          'urpc-approval-token': session.token,
+        },
+        method: 'POST',
+      }),
+    )
+    const record = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "invalid_request",
+        "error_description": "unsupported \`Content-Encoding\`",
+      }
+    `)
+    expect(record.status).toBe('pending')
+  })
+
   test('rejects approval tokens from another approval session', async () => {
     const setup = pair()
     Wata.create({
@@ -1645,6 +1689,42 @@ describe('webhookCallback end-to-end', () => {
       {
         "error": "invalid_request",
         "error_description": "expected \`Content-Type: application/json\`",
+      }
+    `)
+    expect(hostStore.scanKeys('webhook:code:')).toEqual([])
+  })
+
+  test('rejects /register with non-identity content-encoding', async () => {
+    const { consumerKeypair, hostOrigin, hostPath, hostStore, hostTransport, webhookUrl } = pair()
+    const publicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+    const body = JSON.stringify({ message, webhook_url: webhookUrl })
+    const response = await hostTransport.fetch(
+      signedRequest({
+        body,
+        components: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-public-key',
+        ],
+        contentEncoding: 'gzip',
+        keyid: 'https://acme.dev#identity',
+        method: 'POST',
+        nonce: 'encoded-register',
+        privateKey: consumerKeypair.privateKey,
+        publicKey,
+        url: `${hostOrigin}${hostPath}/register`,
+      }),
+    )
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "invalid_request",
+        "error_description": "unsupported \`Content-Encoding\`",
       }
     `)
     expect(hostStore.scanKeys('webhook:code:')).toEqual([])

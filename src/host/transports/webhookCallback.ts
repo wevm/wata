@@ -442,6 +442,15 @@ export function webhookCallback(options: Options): WebhookCallback {
         },
         { status: 400 },
       )
+    const contentEncoding = request.headers.get('content-encoding')
+    if (contentEncoding && contentEncoding.toLowerCase() !== 'identity')
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'unsupported `Content-Encoding`',
+        },
+        { status: 400 },
+      )
 
     // Verify Content-Digest before reading body.
     const expectedDigest = MessageSig.contentDigest(bodyText)
@@ -854,6 +863,15 @@ export function webhookCallback(options: Options): WebhookCallback {
         {
           error: 'invalid_request',
           error_description: 'expected `Content-Type: application/json`',
+        },
+        { status: 400 },
+      )
+    const contentEncoding = request.headers.get('content-encoding')
+    if (contentEncoding && contentEncoding.toLowerCase() !== 'identity')
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'unsupported `Content-Encoding`',
         },
         { status: 400 },
       )
