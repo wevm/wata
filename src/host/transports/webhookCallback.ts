@@ -37,9 +37,14 @@
  *   privateKey,
  *   transport: webhookCallback({
  *     html: {
- *       render: ({ code }) =>
+ *       authenticate: async ({ actions, request }) => {
+ *         const body = await request.formData()
+ *         await actions.approve(String(body.get('code')))
+ *         return new Response('approved')
+ *       },
+ *       render: ({ approvalToken, code }) =>
  *         new Response(
- *           `<form method="post"><input name="code" value="${code ?? ''}" /><button>Approve</button></form>`,
+ *           `<form method="post"><input type="hidden" name="approval_token" value="${approvalToken ?? ''}" /><input type="hidden" name="code" value="${code ?? ''}" /><button>Approve</button></form>`,
  *           { headers: { 'content-type': 'text/html' } },
  *         ),
  *     },
