@@ -76,6 +76,9 @@ type PairOptions = {
   hostExpiresIn?: number | undefined
   hostRegistrationRateLimit?: HostWebhookCallback.Options['registrationRateLimit'] | undefined
   hostRetrySeconds?: number | undefined
+  hostValidateOutboundRequest?:
+    | HostWebhookCallback.Options['validateOutboundRequest']
+    | undefined
 }
 
 function pair(options: PairOptions = {}) {
@@ -164,6 +167,7 @@ function pair(options: PairOptions = {}) {
     registrationRateLimit: options.hostRegistrationRateLimit,
     retrySeconds: options.hostRetrySeconds,
     store: hostStore,
+    validateOutboundRequest: options.hostValidateOutboundRequest,
   })
 
   consumerTransport = webhookCallback({
@@ -351,6 +355,64 @@ describe('webhookCallback end-to-end', () => {
         "ok": true,
       }
     `)
+  })
+
+  test('calls outbound request guard before discovery and delivery fetches', async () => {
+    const outboundRequests: Array<{ authReqId?: string | undefined; kind: string; url: string }> =
+      []
+    const setup = pair({
+      hostValidateOutboundRequest: ({ authReqId, kind, url }) => {
+        outboundRequests.push({
+          kind,
+          url: url.toString(),
+          ...(authReqId ? { authReqId } : {}),
+        })
+      },
+    })
+    const wata = Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transport: setup.hostTransport })
+
+    const sendPromise = wata.send({ method: 'ping', params: [] })
+    const code = await setup.findActiveCode()
+    const record = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    await setup.approve()
+    await sendPromise
+
+    expect(outboundRequests).toContainEqual({
+      kind: 'consumer-discovery',
+      url: `${setup.consumerOrigin}/.well-known/urpc/consumer.json`,
+    })
+    expect(outboundRequests).toContainEqual({
+      authReqId: record.authReqId,
+      kind: 'webhook-delivery',
+      url: setup.webhookUrl,
+    })
+  })
+
+  test('rejects registration when outbound request guard refuses consumer discovery', async () => {
+    const setup = pair({
+      hostValidateOutboundRequest: ({ kind }) => {
+        if (kind === 'consumer-discovery') throw new Error('blocked private address')
+      },
+    })
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+
+    await expect(
+      setup.consumerTransport.send(
+        Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+      ),
+    ).rejects.toThrow('consumer discovery fetch failed: blocked private address')
+    expect(setup.hostStore.scanKeys('webhook:code:')).toEqual([])
   })
 
   test('retries webhook delivery after a transient failure', async () => {

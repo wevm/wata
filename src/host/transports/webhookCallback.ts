@@ -148,6 +148,16 @@ export type Options = {
    */
   retrySeconds?: number | undefined
   /**
+   * Called immediately before host-initiated network requests to
+   * consumer-controlled origins. Hosts can use this hook to perform
+   * runtime-specific DNS resolution / connect-address checks for the
+   * SSRF rules in the Webhook Callback spec. Throw to refuse the
+   * outbound request before `fetch` runs.
+   */
+  validateOutboundRequest?:
+    | ((request: Options.OutboundRequest) => void | Promise<void>)
+    | undefined
+  /**
    * Pluggable persistence for {@link PendingRecord}s. Use
    * {@link Kv.memory} for tests. Must support atomic {@link Kv.Kv.take}
    * so approval codes can be consumed exactly once.
@@ -156,6 +166,15 @@ export type Options = {
 }
 
 export declare namespace Options {
+  type OutboundRequest = {
+    /** Registration-time discovery fetch or approval webhook delivery. */
+    kind: 'consumer-discovery' | 'webhook-delivery'
+    /** Exact outbound URL about to be fetched. */
+    url: URL
+    /** Correlation handle for webhook delivery requests. */
+    authReqId?: string | undefined
+  }
+
   type RegistrationRateLimit = {
     /** Number of accepted registration requests allowed per window. */
     max?: number | undefined
@@ -270,6 +289,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     registrationRateLimit: registrationRateLimit_option,
     retrySeconds = 900,
     store,
+    validateOutboundRequest,
   } = options
   const take = (() => {
     const take = store.take?.bind(store)
@@ -488,6 +508,10 @@ export function webhookCallback(options: Options): WebhookCallback {
 
     let consumerDoc: Discovery.ConsumerDocument | undefined
     try {
+      await validateOutbound({
+        kind: 'consumer-discovery',
+        url: new URL(Discovery.consumerUrl(webhookUrl.origin)),
+      })
       consumerDoc = await Discovery.fetchConsumer(webhookUrl.origin, { fetch: fetchImpl })
     } catch (cause) {
       return c.json(
@@ -859,6 +883,11 @@ export function webhookCallback(options: Options): WebhookCallback {
 
     let httpResponse: Response
     try {
+      await validateOutbound({
+        authReqId: record.authReqId,
+        kind: 'webhook-delivery',
+        url: new URL(record.webhookUrl),
+      })
       httpResponse = await fetchImpl(record.webhookUrl, {
         body,
         headers,
@@ -945,6 +974,11 @@ export function webhookCallback(options: Options): WebhookCallback {
     void deliverWithRetry(record, body, response).catch((cause) => {
       emitter.emit('error', cause as Error)
     })
+  }
+
+  async function validateOutbound(request: Options.OutboundRequest): Promise<void> {
+    if (!validateOutboundRequest) return
+    await validateOutboundRequest({ ...request, url: new URL(request.url.toString()) })
   }
 
   async function persist(record: PendingRecord): Promise<void> {
