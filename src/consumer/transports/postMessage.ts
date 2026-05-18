@@ -29,27 +29,31 @@
  *
  * @example iframe
  * ```ts
- * const transport = postMessage({
- *   host: 'https://wallet.example/auth',
- *   target: ({ host }) => {
- *     const iframe = document.createElement('iframe')
- *     iframe.src = host
- *     iframe.hidden = true
- *     document.body.appendChild(iframe)
- *     return iframe.contentWindow!
- *   },
- *   close: (handle) => (handle as Window).frameElement?.remove(),
+ * const wata = Wata.create({
+ *   transport: postMessage({
+ *     host: 'https://wallet.example/auth',
+ *     target: ({ host }) => {
+ *       const iframe = document.createElement('iframe')
+ *       iframe.src = host
+ *       iframe.hidden = true
+ *       document.body.appendChild(iframe)
+ *       return iframe.contentWindow!
+ *     },
+ *     close: (handle) => (handle as Window).frameElement?.remove(),
+ *   }),
  * })
  * ```
  *
  * @example MessageChannel
  * ```ts
- * const transport = postMessage({
- *   target: () => {
- *     const { port1, port2 } = new MessageChannel()
- *     sendPortSomehow(port2)
- *     return port1
- *   },
+ * const wata = Wata.create({
+ *   transport: postMessage({
+ *     target: () => {
+ *       const { port1, port2 } = new MessageChannel()
+ *       sendPortSomehow(port2)
+ *       return port1
+ *     },
+ *   }),
  * })
  * ```
  */
