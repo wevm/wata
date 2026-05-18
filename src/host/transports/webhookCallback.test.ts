@@ -852,6 +852,28 @@ describe('webhookCallback end-to-end', () => {
     expect(record.expiresAt - record.createdAt).toBe(600_000)
   })
 
+  test('host returns distinct auth_req_id and verification code handles', async () => {
+    const prompts: Array<{ authReqId: string; verificationUri: string }> = []
+    const setup = pair({
+      consumerOnPrompt: (prompt) => {
+        prompts.push(prompt)
+      },
+    })
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+
+    await setup.consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+
+    const prompt = prompts[0]
+    if (!prompt) throw new Error('prompt missing')
+    expect(new URL(prompt.verificationUri).searchParams.get('code')).not.toBe(prompt.authReqId)
+  })
+
   test('consumer validates the returned verification_uri code shape', async () => {
     async function expectVerificationUriRejected(
       verificationUri: string,

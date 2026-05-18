@@ -680,7 +680,11 @@ export function webhookCallback(options: Options): WebhookCallback {
     // the `?code=` handle MUST each carry ≥128 bits of CSPRNG entropy
     // and MUST NOT be the same value.
     const authReqId = generateOpaque(16)
-    const code = generateOpaque(16)
+    const code = (() => {
+      let code = generateOpaque(16)
+      while (code === authReqId) code = generateOpaque(16)
+      return code
+    })()
     const now = Date.now()
     const effectiveExpiry = Math.min(Math.max(60, Math.floor(requestedExpiry)), effectiveExpiresIn)
 
