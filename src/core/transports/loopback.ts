@@ -1,5 +1,5 @@
 /**
- * In-process loopback transport — paired consumer + host adapters that
+ * In-process loopback transport: paired consumer + host adapters that
  * round-trip frames synchronously through a shared queue.
  *
  * This is the test substrate the rest of the suite relies on:
@@ -8,9 +8,9 @@
  *   message/close/error subscriptions) without spinning up a network,
  * - it accepts and emits Envelope frames just like a real transport, so
  *   the encryption + JSON-RPC layers can be exercised end-to-end against
- *   it without a `Wata` instance (Phase 0 exit criteria),
- * - and once `Wata.create` lands in Phase 1, the same loopback pair
- *   becomes the substrate for high-level integration tests.
+ *   it without a `Wata` instance,
+ * - and it provides the paired transport substrate for high-level
+ *   integration tests.
  *
  * @example
  * ```ts

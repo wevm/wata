@@ -1,5 +1,5 @@
 /**
- * `wata` `Wata` namespace — the consumer-side public surface
+ * `wata` `Wata` namespace: the consumer-side public surface
  * plus the shared types both sides re-export.
  *
  * `Wata.create` here always returns a {@link Consumer}. To create a
@@ -13,9 +13,9 @@
  * in this file and are re-exported verbatim from
  * {@link "./host/Wata"} so user code can reach them from either side.
  *
- * Phase 1 ships the minimum vertical slice — enough to drive the `window`
- * transport end-to-end through real `postMessage`. AEAD, batched requests,
- * and discovery-aware bootstrap land in later phases (see `tasks/PLAN.md`).
+ * Consumers can opt into typed JSON-RPC methods through `schema`, app
+ * metadata/discovery through `baseUrl` + `meta`, and transport-specific
+ * HTTP handlers through the wrapped transport.
  */
 
 import { Base64, Bytes, Ed25519, type Hex } from 'ox'
@@ -33,7 +33,7 @@ import * as Wellknown from './core/Wellknown.js'
 /**
  * Result of a single {@link Consumer.send} call. We return `{ id, result }`
  * (rather than the bare `result`) so callers can correlate with logs and
- * future batch/trace tooling without losing the JSON-RPC identity.
+ * batch/trace tooling without losing the JSON-RPC identity.
  */
 export type SendResult<result> = {
   /** Id of the JSON-RPC request that produced this response. */
@@ -44,7 +44,7 @@ export type SendResult<result> = {
 
 /**
  * Listener supplied to {@link Consumer.on} (and to {@link "./host/Wata".Host.on}).
- * Receives the typed payload for the subscribed event directly — the
+ * Receives the typed payload for the subscribed event directly. The
  * underlying `rettime` `TypedEvent` is unwrapped to keep call sites
  * focused on the data they care about.
  */
@@ -73,7 +73,7 @@ export type Consumer<
    * Web-standard fetch handler + Node `http.RequestListener` pair.
    * Present (with the standard {@link Http.Server} signatures) when
    * either the wrapped transport carries HTTP-server-shaped `.fetch`
-   * / `.listener` (e.g. the future `webhookCallback`) or when
+   * / `.listener` (e.g. `webhookCallback`) or when
    * {@link create.Options.meta} + {@link create.Options.baseUrl} were
    * supplied (so a `/.well-known/urpc/consumer.json` publisher is
    * mounted). Otherwise both are `undefined`.
@@ -120,7 +120,7 @@ export type Consumer<
     options: Consumer.SendOptions<method, params>,
   ) => Promise<SendResult<Consumer.ResultOf<schema, method>>>
   /**
-   * Explicitly bring the session up — starts the transport and resolves
+   * Explicitly bring the session up. Starts the transport and resolves
    * once it is ready to send and receive frames. Emits `'open'` on success.
    *
    * Optional: {@link Consumer.send} and {@link Consumer.notify} call
@@ -216,14 +216,14 @@ export function create<
   const methodById = new Map<Rpc.Id, string>()
   // `started` = currently in an active session. After close, drops back
   // to `false`, and the next `send()` / `notify()` lazily re-starts the
-  // transport — popups closing externally is a normal end-of-session
+  // transport. Popups closing externally are a normal end-of-session
   // event, not a permanent wata failure.
   //
   // `phase` enforces the spec §7 mode-discipline gate: while `pre-key`,
   // any inbound `encrypted` envelope is rejected with JSON-RPC `-32600`
   // and the session is torn down. Once the AEAD layer flips it to
-  // `keyed` (future commit, when key derivation lands), the inverse
-  // rule kicks in — any inbound plaintext envelope is rejected the same
+  // `keyed` (after key derivation), the inverse rule kicks in: any
+  // inbound plaintext envelope is rejected the same
   // way. The transition is one-way; never reverts.
   type State = { phase: 'pre-key' | 'keyed'; started: boolean }
   const state: State = {
@@ -289,7 +289,7 @@ export function create<
       try {
         await transport.close(error)
       } catch {
-        // Same — surface via the local `error` event below regardless.
+        // Same: surface via the local `error` event below regardless.
       }
       emitter.emit('error', error)
     })()
@@ -303,10 +303,10 @@ export function create<
       rejectModeViolation('encrypted envelope received before key derivation')
       return
     }
-    // Keyed phase: the inverse — any plaintext envelope is rejected
+    // Keyed phase: the inverse, any plaintext envelope is rejected
     // because the spec forbids mixing plaintext and ciphertext after
-    // keying. Reachable once the AEAD wiring lands; harmless dead code
-    // until then because nothing flips `state.phase` to `keyed` yet.
+    // keying. Reachable once a session enters keyed mode; harmless
+    // while nothing flips `state.phase` to `keyed`.
     if (state.phase === 'keyed' && envelope.type !== 'encrypted') {
       rejectModeViolation('plaintext envelope received after key derivation')
       return
@@ -346,8 +346,8 @@ export function create<
     return startPromise
   }
 
-  // HTTP-shaped consumer transports (future `webhookCallback` etc.)
-  // expose `.fetch` / `.listener`. When `meta` + `baseUrl` are set,
+  // HTTP-shaped consumer transports (e.g. `webhookCallback`) expose
+  // `.fetch` / `.listener`. When `meta` + `baseUrl` are set,
   // wrap them so GET `/.well-known/urpc/consumer.json` serves the
   // auto-built document and every other request falls through.
   type HttpHandlers = {
@@ -439,7 +439,7 @@ export declare namespace create {
      * Public origin of the consumer app (e.g. `https://acme.dev`).
      * Lifted to the `Wata.create` root because it's an app-wide
      * concept. Lazy-injected into transports that need it via
-     * {@link Transport.Transport.bind} -- e.g. consumer
+     * {@link Transport.Transport.bind}. For example, consumer
      * `deviceCode` derives `consumer_url =
      * ${baseUrl}/.well-known/urpc/consumer.json` from it.
      *
@@ -485,7 +485,7 @@ function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {
 
 /**
  * Validate inbound `params` against the schema entry for `method` if one
- * exists. Used by both sides — consumer validates outbound calls before
+ * exists. Used by both sides. Consumer validates outbound calls before
  * sending; host validates inbound requests/notifications before dispatch.
  *
  * @internal

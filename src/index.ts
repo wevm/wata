@@ -1,12 +1,7 @@
-// wata — consumer entrypoint
+// wata: consumer entrypoint
 //
-// Re-exports the consumer half of the public API. Per `tasks/plan.md`, this
-// surface grows incrementally:
-// - Phase 0 exposes the low-level toolkit (`Crypto`, `Aad`, `Aead`, `Nonce`,
-//   `Envelope`, `Rpc`, `Schema`, `Discovery`, `Errors`, `Transport`) and the
-//   in-process `loopback` transport factory.
-// - Phase 1 adds `Wata.create` and the consumer `postMessage` transport.
-// - Later phases add the remaining consumer-side transports.
+// Re-exports the consumer public API: shared primitives, `Wata.create`,
+// and consumer-side transport factories.
 
 export * as Aad from './core/Aad.js'
 export * as Aead from './core/Aead.js'
