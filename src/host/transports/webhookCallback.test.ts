@@ -472,6 +472,106 @@ describe('webhookCallback end-to-end', () => {
     expect(setup.hostStore.scanKeys('webhook:code:')).toEqual([])
   })
 
+  test('inferred Node outbound guard rejects DNS names resolving to reserved addresses', async () => {
+    const hostKeypair = Ed25519.createKeyPair()
+    const consumerKeypair = Ed25519.createKeyPair()
+    const hostOrigin = 'https://wallet.example'
+    const hostPath = '/auth/webhook'
+    const hostStore = memoryWithScan()
+    const hostTransport = hostWebhookCallback({
+      baseUrl: hostOrigin,
+      html: { render: () => new Response('ok') },
+      path: hostPath,
+      store: hostStore,
+    })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
+    const consumerOrigin = 'https://acme.dev'
+    const consumerPublicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const registerUrl = `${hostOrigin}${hostPath}/register`
+    const body = JSON.stringify({
+      message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+      webhook_url: 'https://lvh.me/cb',
+    })
+
+    const response = await hostTransport.fetch(
+      signedRequest({
+        body,
+        components: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-public-key',
+        ],
+        keyid: `${consumerOrigin}#identity`,
+        method: 'POST',
+        nonce: 'n',
+        privateKey: consumerKeypair.privateKey,
+        publicKey: consumerPublicKey,
+        url: registerUrl,
+      }),
+    )
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "forbidden",
+        "error_description": "webhook_url validation failed: outbound webhook-delivery host \`lvh.me\` resolved to reserved address 127.0.0.1",
+      }
+    `)
+    expect(hostStore.scanKeys('webhook:code:')).toEqual([])
+  })
+
+  test('rejects dotted loopback webhook_url forms before outbound validation', async () => {
+    const hostKeypair = Ed25519.createKeyPair()
+    const hostOrigin = 'https://wallet.example'
+    const transport = hostWebhookCallback({
+      baseUrl: hostOrigin,
+      html: { render: () => new Response('ok') },
+      path: '/auth/webhook',
+      store: memoryWithScan(),
+      validateOutboundRequest: () => {},
+    })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transport })
+    const consumerKeypair = Ed25519.createKeyPair()
+    const consumerOrigin = 'https://acme.dev'
+    const consumerPublicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const registerUrl = `${hostOrigin}/auth/webhook/register`
+    const body = JSON.stringify({
+      message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+      webhook_url: 'https://localhost./cb',
+    })
+
+    const response = await transport.fetch(
+      signedRequest({
+        body,
+        components: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-public-key',
+        ],
+        keyid: `${consumerOrigin}#identity`,
+        method: 'POST',
+        nonce: 'n',
+        privateKey: consumerKeypair.privateKey,
+        publicKey: consumerPublicKey,
+        url: registerUrl,
+      }),
+    )
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "forbidden",
+        "error_description": "\`webhook_url\` must use a public https URL (http allowed only for loopback development)",
+      }
+    `)
+  })
+
   test('retries webhook delivery after a transient failure', async () => {
     let failures = 0
     const setup = pair({

@@ -124,6 +124,9 @@ export type Options = {
    * Override the `fetch` implementation used for outbound webhook
    * delivery and (when needed) for fetching the consumer's
    * `consumer.json`. Defaults to `globalThis.fetch`.
+   *
+   * When omitted, the Node runtime path performs built-in DNS SSRF
+   * checks before public consumer-controlled outbound requests.
    */
   fetch?: typeof globalThis.fetch | undefined
   /** Bring-your-own approval UI hooks. */
@@ -149,10 +152,10 @@ export type Options = {
   retrySeconds?: number | undefined
   /**
    * Called immediately before host-initiated network requests to
-   * consumer-controlled origins. Hosts can use this hook to perform
-   * runtime-specific DNS resolution / connect-address checks for the
-   * SSRF rules in the Webhook Callback spec. Throw to refuse the
-   * registration or outbound request before `fetch` runs.
+   * consumer-controlled origins. The transport performs built-in DNS
+   * SSRF checks when the runtime exposes suitable primitives (Node).
+   * Hosts can use this hook for extra runtime-specific checks. Throw
+   * to refuse the registration or outbound request before `fetch` runs.
    */
   validateOutboundRequest?: ((request: Options.OutboundRequest) => void | Promise<void>) | undefined
   /**
@@ -320,7 +323,7 @@ type RegistrationRateLimit = { max: number; windowSeconds: number }
 export function webhookCallback(options: Options): WebhookCallback {
   const {
     expiresIn = 600,
-    fetch: fetchImpl = globalThis.fetch.bind(globalThis),
+    fetch: fetch_option,
     html,
     path,
     registrationRateLimit: registrationRateLimit_option,
@@ -336,6 +339,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       )
     return take
   })()
+  const fetchImpl = fetch_option ?? globalThis.fetch.bind(globalThis)
 
   const baseUrl_ctor = options.baseUrl ? Uri.trimTrailingSlash(options.baseUrl) : undefined
   const effectiveExpiresIn = Math.min(
@@ -1104,8 +1108,20 @@ export function webhookCallback(options: Options): WebhookCallback {
   }
 
   async function validateOutbound(request: Options.OutboundRequest): Promise<void> {
+    if (!fetch_option && !isLoopbackOutboundAllowed(request.url)) {
+      const defaultValidation = await validateDefaultOutboundRequest(request)
+      if (defaultValidation === 'unsupported' && !validateOutboundRequest)
+        throw new Transport.TransportError(
+          'runtime cannot validate public webhook-callback outbound DNS addresses',
+        )
+    }
     if (!validateOutboundRequest) return
     await validateOutboundRequest({ ...request, url: new URL(request.url.toString()) })
+  }
+
+  function isLoopbackOutboundAllowed(url: URL): boolean {
+    const baseUrl = baseUrl_ctor ?? baseUrl_bound
+    return !!baseUrl && isLoopbackHost(new URL(baseUrl).hostname) && isLoopbackHost(url.hostname)
   }
 
   async function createApprovalSession(
@@ -1372,6 +1388,43 @@ export function webhookCallback(options: Options): WebhookCallback {
   }
 }
 
+let nodeDnsLookup: Promise<typeof import('node:dns/promises').lookup> | undefined
+
+async function validateDefaultOutboundRequest(
+  request: Options.OutboundRequest,
+): Promise<'unsupported' | 'validated'> {
+  const lookup = await loadNodeDnsLookup()
+  if (!lookup) return 'unsupported'
+  const addresses = await lookup(canonicalHostname(request.url.hostname), {
+    all: true,
+    verbatim: true,
+  })
+  if (addresses.length === 0)
+    throw new Transport.TransportError(
+      `outbound ${request.kind} host \`${request.url.hostname}\` did not resolve`,
+    )
+
+  for (const { address } of addresses) {
+    if (!isReservedHost(address)) continue
+    throw new Transport.TransportError(
+      `outbound ${request.kind} host \`${request.url.hostname}\` resolved to reserved address ${address}`,
+    )
+  }
+  return 'validated'
+}
+
+async function loadNodeDnsLookup(): Promise<
+  typeof import('node:dns/promises').lookup | undefined
+> {
+  if (!isNodeRuntime()) return undefined
+  if (!nodeDnsLookup) nodeDnsLookup = import('node:dns/promises').then(({ lookup }) => lookup)
+  return await nodeDnsLookup
+}
+
+function isNodeRuntime(): boolean {
+  return typeof process !== 'undefined' && !!process.versions?.node
+}
+
 function identityKeyid(url: string): string {
   return `${new URL(url).origin}#identity`
 }
@@ -1388,12 +1441,14 @@ function isAllowedWebhookUrl(url: URL, hostUrl: URL): boolean {
 }
 
 function isLoopbackHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
-  return host === 'localhost' || host === '::1' || host.startsWith('127.')
+  const host = canonicalHostname(hostname)
+  if (host === 'localhost' || host === '::1' || host.startsWith('127.')) return true
+  const mappedIpv4 = parseIpv4MappedIpv6(host)
+  return !!mappedIpv4 && mappedIpv4[0] === 127
 }
 
 function isReservedHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  const host = canonicalHostname(hostname)
   if (isLoopbackHost(host)) return true
   const ipv4 = parseIpv4(host)
   if (ipv4) return isReservedIpv4(ipv4)
@@ -1407,6 +1462,10 @@ function isReservedHost(hostname: string): boolean {
   if ((firstHextet & 0xfe00) === 0xfc00) return true
   if ((firstHextet & 0xff00) === 0xff00) return true
   return host === 'fd00:ec2::254'
+}
+
+function canonicalHostname(hostname: string): string {
+  return hostname.replace(/^\[|\]$/g, '').replace(/\.+$/g, '').toLowerCase()
 }
 
 function isReservedIpv4(ipv4: [number, number, number, number]): boolean {
