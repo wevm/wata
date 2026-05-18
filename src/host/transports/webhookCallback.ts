@@ -249,6 +249,10 @@ export function webhookCallback(options: Options): WebhookCallback {
   } = options
 
   const baseUrl_ctor = options.baseUrl ? Uri.trimTrailingSlash(options.baseUrl) : undefined
+  const effectiveRetrySeconds = Math.min(
+    86400,
+    Math.max(300, Number.isFinite(retrySeconds) ? Math.floor(retrySeconds) : 900),
+  )
   let baseUrl_bound: string | undefined
   let identity_bound: Transport.Identity | undefined
 
@@ -554,19 +558,21 @@ export function webhookCallback(options: Options): WebhookCallback {
       expiresAt: now + effectiveExpiry * 1000,
       message: envelope,
       code,
-      retrySeconds,
+      retrySeconds: effectiveRetrySeconds,
       status: 'pending',
       webhookUrl: body.webhook_url,
     }
     await store.set(codeKey(code), record, {
-      ttl: effectiveExpiry + retrySeconds,
+      ttl: effectiveExpiry + effectiveRetrySeconds,
     })
-    await store.set(authReqIdKey(authReqId), record, { ttl: effectiveExpiry + retrySeconds })
+    await store.set(authReqIdKey(authReqId), record, {
+      ttl: effectiveExpiry + effectiveRetrySeconds,
+    })
 
     return c.json({
       auth_req_id: authReqId,
       expires_in: effectiveExpiry,
-      retry_seconds: retrySeconds,
+      retry_seconds: effectiveRetrySeconds,
       verification_uri: verificationUriFor(c.req.url, code),
     })
   })

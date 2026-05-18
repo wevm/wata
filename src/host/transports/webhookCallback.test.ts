@@ -62,10 +62,12 @@ function memoryWithScan(): Kv.Kv & { scanKeys: (prefix: string) => string[] } {
 }
 
 type PairOptions = {
+  consumerOnPrompt?: Parameters<typeof webhookCallback>[0]['onPrompt'] | undefined
   consumerDiscoveryPublicKey?: string | null | undefined
   hostAuthenticate?:
     | NonNullable<Parameters<typeof hostWebhookCallback>[0]['html']['authenticate']>
     | undefined
+  hostRetrySeconds?: number | undefined
 }
 
 function pair(options: PairOptions = {}) {
@@ -145,12 +147,14 @@ function pair(options: PairOptions = {}) {
       ...(options.hostAuthenticate ? { authenticate: options.hostAuthenticate } : {}),
     },
     path: hostPath,
+    retrySeconds: options.hostRetrySeconds,
     store: hostStore,
   })
 
   consumerTransport = webhookCallback({
     fetch: consumerFetchOverride,
     host: hostOrigin,
+    onPrompt: options.consumerOnPrompt,
     path: '/cb',
     store: consumerStore,
   })
@@ -390,6 +394,41 @@ describe('webhookCallback end-to-end', () => {
     expect(response.headers.get('referrer-policy')).toBe('same-origin')
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('x-frame-options')).toBe('DENY')
+  })
+
+  test('clamps advertised retry_seconds to the spec bounds', async () => {
+    async function registerWith(retrySeconds: number) {
+      const prompts: Array<{ retrySeconds: number | undefined }> = []
+      const setup = pair({
+        consumerOnPrompt: (prompt) => {
+          prompts.push(prompt)
+        },
+        hostRetrySeconds: retrySeconds,
+      })
+      Wata.create({
+        baseUrl: setup.consumerOrigin,
+        privateKey: setup.consumerKeypair.privateKey,
+        transport: setup.consumerTransport,
+      })
+
+      await setup.consumerTransport.send(
+        Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+      )
+      const code = await setup.findActiveCode()
+      const record = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+        `webhook:code:${code}`,
+      )) as HostWebhookCallback.PendingRecord
+
+      return { prompt: prompts[0], record }
+    }
+
+    const low = await registerWith(1)
+    const high = await registerWith(100_000)
+
+    expect(low.prompt?.retrySeconds).toBe(300)
+    expect(low.record.retrySeconds).toBe(300)
+    expect(high.prompt?.retrySeconds).toBe(86400)
+    expect(high.record.retrySeconds).toBe(86400)
   })
 
   test('rejects approval body whose response ids do not match the queued request', async () => {
