@@ -824,8 +824,8 @@ export function webhookCallback(options: Options): WebhookCallback {
   })
 
   app.post('/verify', async (c) => {
-    const code = c.req.query('code') ?? undefined
     const request = c.req.raw
+    const code = await approvalCodeFromRequest(c.req.query('code') ?? undefined, request)
     const metadataError = approvalMetadataError(request, new URL(resolveBaseUrl(c.req.url)).origin)
     if (metadataError)
       return c.json({ error: 'forbidden', error_description: metadataError }, { status: 403 })
@@ -1540,6 +1540,21 @@ async function approvalTokenFromRequest(request: Request): Promise<string | unde
   try {
     const form = await request.clone().formData()
     const value = form.get('approval_token')
+    return typeof value === 'string' && value ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function approvalCodeFromRequest(
+  queryCode: string | undefined,
+  request: Request,
+): Promise<string | undefined> {
+  if (queryCode) return queryCode
+  if (!isFormRequest(request)) return undefined
+  try {
+    const form = await request.clone().formData()
+    const value = form.get('code')
     return typeof value === 'string' && value ? value : undefined
   } catch {
     return undefined

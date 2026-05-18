@@ -1302,6 +1302,52 @@ describe('webhookCallback end-to-end', () => {
     expect(record.status).toBe('pending')
   })
 
+  test('rejects form approval submissions without an approval token', async () => {
+    let authenticates = 0
+    const setup = pair({
+      hostAuthenticate: () => {
+        authenticates += 1
+        return new Response('called')
+      },
+    })
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+
+    await setup.consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await setup.findActiveCode()
+    const response = await setup.hostTransport.fetch(
+      new Request(`${setup.hostOrigin}${setup.hostPath}/verify`, {
+        body: new URLSearchParams({
+          code,
+          decision: 'approve',
+        }),
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          origin: setup.hostOrigin,
+        },
+        method: 'POST',
+      }),
+    )
+    const record = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "forbidden",
+        "error_description": "missing approval token",
+      }
+    `)
+    expect(authenticates).toBe(0)
+    expect(record.status).toBe('pending')
+  })
+
   test('rejects default approval submissions without a JSON content type', async () => {
     const setup = pair()
     Wata.create({
