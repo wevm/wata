@@ -184,11 +184,16 @@ export declare namespace Consumer {
  * @example
  * ```ts
  * import { Wata, loopback } from 'wata'
+ * import { Wata as HostWata } from 'wata/host'
  *
- * const { consumer } = loopback()
+ * const { consumer, host } = loopback()
+ *
+ * const hostWata = HostWata.create({ transport: host })
+ * hostWata.on('request', async (event) => {
+ *   if (event.method === 'ping') await event.respond({ ok: true })
+ * })
+ *
  * const wata = Wata.create({ transport: consumer })
- *
- * await wata.start()
  * const { result } = await wata.send({ method: 'ping', params: [] })
  * ```
  */

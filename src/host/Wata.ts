@@ -170,10 +170,10 @@ export type Host<
    * Resolves once the success response has flushed to the transport, so
    * popup hosts can `await` delivery before calling `window.close()`.
    *
-   * Pair with `wata.on('request', (event) => setPending((p) => [...p, event]))`
-   * for UI flows where the response is gathered asynchronously (approval
-   * dialogs, late confirmations, …). No need for per-request closures
-   * or to return a Promise from the listener.
+   * Store `event.id` from a `'request'` listener for UI flows where
+   * the response is gathered asynchronously (approval dialogs, late
+   * confirmations, etc.). No need for per-request closures or to
+   * return a Promise from the listener.
    *
    * Throws {@link UnknownRequestError} if no request with that id is
    * currently pending (already responded, never received, or the
@@ -224,7 +224,7 @@ export declare namespace reject {
  * const wata = Wata.create({
  *   transport: postMessage(),
  * })
- * await wata.start()
+ *
  * wata.on('request', async (event) => {
  *   if (event.method === 'ping') await event.respond({ ok: true })
  * })
@@ -240,12 +240,14 @@ export declare namespace reject {
  *   transport: postMessage(),
  * })
  *
+ * let id: string | number | undefined
+ *
  * wata.on('request', (event) => {
- *   setPending((prev) => [...prev, event])
+ *   id = event.id
  * })
  *
  * // Later, when the user clicks "approve":
- * await wata.respond(event.id, { ok: true })
+ * if (id !== undefined) await wata.respond(id, { ok: true })
  * ```
  */
 export function create<

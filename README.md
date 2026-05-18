@@ -64,7 +64,8 @@ const wata = Wata.create({
 })
 
 wata.on('request', async (c) => {
-  if (c.method === 'wallet_connect') await c.respond(['0xabc…'])
+  if (c.method === 'wallet_connect')
+    await c.respond(['0x0000000000000000000000000000000000000001'])
 })
 ```
 
@@ -126,7 +127,8 @@ const wata = Wata.create({
 })
 
 wata.on('request', async (c) => {
-  if (c.method === 'wallet_connect') await c.respond(['0xabc…'])
+  if (c.method === 'wallet_connect')
+    await c.respond(['0x0000000000000000000000000000000000000001'])
 })
 
 createServer(wata.listener).listen(3000)
@@ -200,7 +202,8 @@ const wata = Wata.create({
 })
 
 wata.on('request', async (event) => {
-  if (event.method === 'wallet_connect') await event.respond(['0xabc…'])
+  if (event.method === 'wallet_connect')
+    await event.respond(['0x0000000000000000000000000000000000000001'])
 })
 ```
 
