@@ -1,5 +1,5 @@
 /**
- * `wata/host` `Wata` namespace — the host-side public surface.
+ * `wata/host` `Wata` namespace: the host-side public surface.
  *
  * `Wata.create` here always returns a {@link Host}. To create a
  * consumer, import from `wata` instead. Shared types
@@ -79,7 +79,7 @@ export type NotificationEvent<
 
 /**
  * Distribute over the schema's method names so the `request` payload is a
- * proper discriminated union — narrowing on `event.method` narrows
+ * proper discriminated union. Narrowing on `event.method` narrows
  * `event.respond`'s argument and `event.params` together.
  */
 type DistributeRequest<schema extends Schema.Schema, name extends string> =
@@ -116,9 +116,9 @@ export type SchemaNotificationEvent<schema extends Schema.Schema | undefined> =
 
 /** Host-side event map (lifecycle + request/notification dispatch). */
 export type HostEventMap<schema extends Schema.Schema | undefined> = Wata.LifecycleEventMap & {
-  /** Inbound JSON-RPC notification — fire-and-forget. */
+  /** Inbound JSON-RPC notification. Fire-and-forget. */
   notification: SchemaNotificationEvent<schema>
-  /** Inbound JSON-RPC request — first non-`undefined` listener return wins. */
+  /** Inbound JSON-RPC request. First non-`undefined` listener return wins. */
   request: SchemaRequestEvent<schema>
 }
 
@@ -158,7 +158,7 @@ export type Host<
   ) => AbortController
   /**
    * Settle a still-pending inbound request by id with a JSON-RPC error.
-   * Mirror of {@link Host.respond} — resolves once the error response
+   * Mirror of {@link Host.respond}. Resolves once the error response
    * has flushed to the transport.
    *
    * @param id - Id of the pending request to settle.
@@ -172,7 +172,7 @@ export type Host<
    *
    * Pair with `wata.on('request', (event) => setPending((p) => [...p, event]))`
    * for UI flows where the response is gathered asynchronously (approval
-   * dialogs, late confirmations, …) — no need for per-request closures
+   * dialogs, late confirmations, …). No need for per-request closures
    * or to return a Promise from the listener.
    *
    * Throws {@link UnknownRequestError} if no request with that id is
@@ -188,7 +188,7 @@ export type Host<
   /** Optional method-registry schema flowed through `'request'` / `'notification'` events. */
   schema: schema
   /**
-   * Explicitly bring the session up — starts the transport and resolves
+   * Explicitly bring the session up. Starts the transport and resolves
    * once it is ready to send and receive frames. Emits `'open'` on success.
    *
    * Optional: {@link Host.on} (and {@link Host.respond} / {@link Host.reject})
@@ -281,8 +281,8 @@ export function create<
   // `phase` enforces the spec §7 mode-discipline gate: while `pre-key`,
   // any inbound `encrypted` envelope is rejected with JSON-RPC `-32600`
   // and the session is torn down. Once the AEAD layer flips it to
-  // `keyed` (future commit, when key derivation lands), the inverse
-  // rule kicks in — any inbound plaintext envelope is rejected the same
+  // `keyed` (after key derivation), the inverse rule applies: any
+  // inbound plaintext envelope is rejected the same
   // way. The transition is one-way; never reverts.
   type State = { phase: 'pre-key' | 'keyed'; started: boolean }
   const state: State = {
@@ -355,7 +355,7 @@ export function create<
       }
     }
 
-    // No listener has any chance of answering this request — fall through
+    // No listener has any chance of answering this request. Fall through
     // to JSON-RPC `method not found` so the consumer doesn't hang.
     if (requestListeners.size === 0) {
       await safeSend(transport, [
@@ -492,10 +492,10 @@ export function create<
       rejectModeViolation('encrypted envelope received before key derivation')
       return
     }
-    // Keyed phase: the inverse — any plaintext envelope is rejected
+    // Keyed phase: the inverse, any plaintext envelope is rejected
     // because the spec forbids mixing plaintext and ciphertext after
-    // keying. Reachable once the AEAD wiring lands; harmless dead code
-    // until then because nothing flips `state.phase` to `keyed` yet.
+    // keying. Reachable once a session enters keyed mode; harmless
+    // while nothing flips `state.phase` to `keyed`.
     if (state.phase === 'keyed' && envelope.type !== 'encrypted') {
       rejectModeViolation('plaintext envelope received after key derivation')
       return
@@ -613,7 +613,7 @@ export declare namespace create {
     /**
      * Public origin of the host (e.g. `https://wallet.example`).
      * Lifted to the `Wata.create` root because it's an app-wide
-     * concept — every transport on this `Wata` shares the same origin.
+     * concept. Every transport on this `Wata` shares the same origin.
      * Lazy-injected into transports that need it via
      * {@link Transport.Transport.bind}.
      *
@@ -626,7 +626,7 @@ export declare namespace create {
      * Optional human-facing app metadata. When set together with
      * {@link baseUrl} and {@link privateKey}, `Wata` auto-publishes
      * a `/.well-known/urpc/host.json` off the transport's existing
-     * `.fetch` / `.listener` — no separate mount required. The
+     * `.fetch` / `.listener`. No separate mount required. The
      * published doc's `transports` map is auto-built from the
      * transport's {@link Transport.Transport.discovery} binding.
      * Lazy-injected into transports that opt into
@@ -661,9 +661,9 @@ function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {
 /**
  * Collect the per-transport `transports` map entries the wrapping
  * `Wata.create({ baseUrl, meta })` publishes in `host.json`. Walks
- * the single bound transport (and any nested HTTP-shaped sub-transports
- * a future composite adapter might expose) and asks each one to
- * contribute its discovery binding for `baseUrl`.
+ * the single bound transport and any nested HTTP-shaped sub-transports
+ * exposed by composite adapters, then asks each one to contribute its
+ * discovery binding for `baseUrl`.
  *
  * @internal
  */
