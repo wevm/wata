@@ -19,7 +19,6 @@ const wata = Wata.create({
   meta: { name: 'Example Wallet' },
   privateKey,
   transport: webhookCallback({
-    baseUrl,
     html: {
       async authenticate({ request, actions }) {
         const form = await request.formData()

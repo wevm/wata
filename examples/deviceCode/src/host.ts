@@ -14,8 +14,8 @@ const port = 4747
 const baseUrl = `http://localhost:${port}`
 
 const wata = Wata.create({
+  baseUrl,
   transport: deviceCode({
-    baseUrl,
     html: {
       async authenticate({ request, actions }) {
         const form = await request.formData()

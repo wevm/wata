@@ -105,8 +105,8 @@ import { createServer } from 'node:http'
 import { Wata, Kv, deviceCode } from 'wata/host'
 
 const wata = Wata.create({
+  baseUrl: 'https://wallet.example',
   transport: deviceCode({
-    baseUrl: 'https://wallet.example',
     html: {
       async authenticate(c) {
         const body = await c.request.formData()
