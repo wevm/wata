@@ -343,6 +343,8 @@ export function webhookCallback(options: Options): WebhookCallback {
       throw new Errors.ProtocolError(
         'verification_uri must contain exactly one `code` query parameter',
       )
+    if (codeValues[0] === data.auth_req_id)
+      throw new Errors.ProtocolError('verification_uri code must not equal `auth_req_id`')
 
     state.activeAuthReqId = data.auth_req_id
     state.activeHostPubkey = hostDoc.identity_pubkey

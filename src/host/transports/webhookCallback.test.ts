@@ -749,6 +749,10 @@ describe('webhookCallback end-to-end', () => {
       'verification_uri must contain exactly one `code` query parameter',
     )
     await expectVerificationUriRejected(
+      'https://wallet.example/auth?code=auth-1',
+      'verification_uri code must not equal `auth_req_id`',
+    )
+    await expectVerificationUriRejected(
       'https://wallet.example/auth?code=opaque',
       'verification_uri origin does not match host auth_url_origin',
       'https://auth.wallet.example',
