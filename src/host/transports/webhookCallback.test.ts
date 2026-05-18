@@ -173,7 +173,7 @@ function pair(options: PairOptions = {}) {
     return await hostTransport.fetch(
       new Request(`${hostOrigin}${hostPath}/verify?code=${encodeURIComponent(code)}`, {
         body,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', origin: hostOrigin },
         method: 'POST',
       }),
     )
@@ -341,7 +341,10 @@ describe('webhookCallback end-to-end', () => {
     const response = await hostTransport.fetch(
       new Request(`${setup.hostOrigin}${setup.hostPath}/verify`, {
         body: new URLSearchParams({ decision: 'approve', code: code }),
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          origin: setup.hostOrigin,
+        },
         method: 'POST',
       }),
     )
@@ -593,6 +596,48 @@ describe('webhookCallback end-to-end', () => {
       {
         "error": "forbidden",
         "error_description": "approval origin does not match host origin",
+      }
+    `)
+    expect(record.status).toBe('pending')
+  })
+
+  test('rejects approval submissions without origin metadata', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostOrigin,
+      hostPath,
+      hostStore,
+      hostTransport,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const response = await hostTransport.fetch(
+      new Request(`${hostOrigin}${hostPath}/verify?code=${encodeURIComponent(code)}`, {
+        body: JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      }),
+    )
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "forbidden",
+        "error_description": "approval submission must include a same-origin \`Origin\` or \`Referer\`",
       }
     `)
     expect(record.status).toBe('pending')

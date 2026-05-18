@@ -1003,7 +1003,8 @@ function approvalMetadataError(request: Request, expectedOrigin: string): string
   if (origin && origin !== expectedOrigin) return 'approval origin does not match host origin'
 
   const referer = request.headers.get('referer')
-  if (!origin && referer) {
+  if (!origin) {
+    if (!referer) return 'approval submission must include a same-origin `Origin` or `Referer`'
     const refererOrigin = (() => {
       try {
         return new URL(referer).origin
