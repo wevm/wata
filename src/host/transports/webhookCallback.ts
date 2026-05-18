@@ -688,8 +688,7 @@ export function webhookCallback(options: Options): WebhookCallback {
         { status: 401 },
       )
 
-    record.status = 'cancelled'
-    await persist(record)
+    await cancelPendingRecord(record)
     return new Response(null, { status: 204 })
   })
 
@@ -920,13 +919,33 @@ export function webhookCallback(options: Options): WebhookCallback {
   }
 
   async function persist(record: PendingRecord): Promise<void> {
+    const ttl = ttlFor(record)
+    await store.set(codeKey(record.code), record, { ttl })
+    await store.set(authReqIdKey(record.authReqId), record, { ttl })
+  }
+
+  async function persistAuthRecord(record: PendingRecord): Promise<void> {
+    await store.set(authReqIdKey(record.authReqId), record, { ttl: ttlFor(record) })
+  }
+
+  function ttlFor(record: PendingRecord): number {
     const retentionUntil =
       record.status === 'pending'
         ? record.expiresAt + record.retrySeconds * 1000
         : (record.settledAt ?? Date.now()) + record.retrySeconds * 1000
-    const ttl = Math.ceil(Math.max(60, (retentionUntil - Date.now()) / 1000))
-    await store.set(codeKey(record.code), record, { ttl })
-    await store.set(authReqIdKey(record.authReqId), record, { ttl })
+    return Math.ceil(Math.max(60, (retentionUntil - Date.now()) / 1000))
+  }
+
+  async function cancelPendingRecord(record: PendingRecord): Promise<void> {
+    const current = await take<PendingRecord>(codeKey(record.code))
+    if (!current) return
+    if (current.authReqId !== record.authReqId || current.status !== 'pending') {
+      await persist(current)
+      return
+    }
+    current.message = Envelope.rpcRequests([])
+    current.status = 'cancelled'
+    await persistAuthRecord(current)
   }
 
   async function completeDelivery(

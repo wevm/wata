@@ -1336,6 +1336,58 @@ describe('webhookCallback end-to-end', () => {
       `webhook:authReqId:${record.authReqId}`,
     )) as HostWebhookCallback.PendingRecord
     expect(after.status).toBe('cancelled')
+    expect(after.message).toMatchInlineSnapshot(`
+      {
+        "payload": [],
+        "type": "rpc-requests",
+      }
+    `)
+    expect(await hostStore.get(`webhook:code:${code}`)).toBeUndefined()
+  })
+
+  test('cancel does not overwrite an already-settled approval transition', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostKeypair,
+      hostStore,
+      hostTransport,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    const approvedBody = JSON.stringify(
+      Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]),
+    )
+    const approvedRecord = {
+      ...record,
+      response: Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]),
+      responseBody: approvedBody,
+      settledAt: Date.now(),
+      status: 'approved' as const,
+    } satisfies HostWebhookCallback.PendingRecord
+    await hostStore.set(`webhook:code:${code}`, approvedRecord)
+
+    await consumerTransport.cancel()
+
+    const after = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:authReqId:${record.authReqId}`,
+    )) as HostWebhookCallback.PendingRecord
+    expect(after.status).toBe('approved')
+    expect(after.responseBody).toBe(approvedBody)
   })
 
   test('rejects cancel without a signature nonce', async () => {
