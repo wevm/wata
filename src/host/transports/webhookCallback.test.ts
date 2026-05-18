@@ -812,6 +812,29 @@ describe('webhookCallback end-to-end', () => {
     `)
   })
 
+  test('consumer treats unknown encoded webhook delivery as idempotent', async () => {
+    const { consumerTransport } = pair()
+
+    const response = await consumerTransport.fetch(
+      new Request('https://acme.dev/cb', {
+        body: 'not-json',
+        headers: {
+          'content-encoding': 'gzip',
+          'urpc-auth-req-id': 'unknown',
+        },
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "idempotent": true,
+        "ok": true,
+      }
+    `)
+  })
+
   test('consumer keeps nonce replay markers for the replay window', async () => {
     const {
       consumerKeypair,

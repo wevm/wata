@@ -362,17 +362,17 @@ export function webhookCallback(options: Options): WebhookCallback {
   const app = new Hono()
   app.post(webhookPath, async (c) => {
     const request = c.req.raw
-    const contentEncoding = request.headers.get('content-encoding')
-    if (contentEncoding && contentEncoding.toLowerCase() !== 'identity')
-      return c.json({ error: 'unsupported `Content-Encoding`' }, { status: 400 })
-
-    const bodyText = await request.text()
     const authReqId = request.headers.get('urpc-auth-req-id')
     if (!authReqId) return c.json({ error: 'missing `uRPC-Auth-Req-Id`' }, { status: 400 })
     // §3.4.2 step 1: not the active intent → idempotent 200.
     if (state.activeAuthReqId !== authReqId)
       return c.json({ idempotent: true, ok: true }, { status: 200 })
 
+    const contentEncoding = request.headers.get('content-encoding')
+    if (contentEncoding && contentEncoding.toLowerCase() !== 'identity')
+      return c.json({ error: 'unsupported `Content-Encoding`' }, { status: 400 })
+
+    const bodyText = await request.text()
     const declaredPubkey = request.headers.get('urpc-public-key')
     const pinned = state.activeHostPubkey
     if (!pinned)
