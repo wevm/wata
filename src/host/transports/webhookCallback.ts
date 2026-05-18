@@ -327,13 +327,19 @@ export function webhookCallback(options: Options): WebhookCallback {
 
   const app = path ? new Hono().basePath(path) : new Hono()
 
-  // Spec §3.3.1.1 — approval-surface hardening. We can't enforce
-  // CSP / SameSite cookies from inside the transport (those belong
-  // to the wallet's full app shell), but `Cache-Control: no-store`
-  // is universally applicable.
+  // Approval-surface hardening that is safe for the transport to
+  // apply centrally. Session cookies and CSRF remain the wallet app's
+  // responsibility, but URL leakage and framing protections are
+  // universal for this endpoint family.
   app.use('*', async (c, next) => {
     await next()
-    c.res.headers.set('Cache-Control', 'no-store')
+    if (!c.res.headers.has('Cache-Control')) c.res.headers.set('Cache-Control', 'no-store')
+    if (!c.res.headers.has('Content-Security-Policy'))
+      c.res.headers.set('Content-Security-Policy', approvalSurfaceCsp)
+    if (!c.res.headers.has('Pragma')) c.res.headers.set('Pragma', 'no-cache')
+    if (!c.res.headers.has('Referrer-Policy'))
+      c.res.headers.set('Referrer-Policy', 'no-referrer')
+    if (!c.res.headers.has('X-Frame-Options')) c.res.headers.set('X-Frame-Options', 'DENY')
   })
 
   app.onError((cause, c) => {
@@ -995,6 +1001,15 @@ function collectHeaders(headers: Headers): Record<string, string> {
   })
   return out
 }
+
+const approvalSurfaceCsp = [
+  "default-src 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "object-src 'none'",
+  "style-src 'self' 'unsafe-inline'",
+].join('; ')
 
 function assertSignatureKeyid(request: Request, expectedKeyid: string): void {
   const parsedInput = MessageSig.parseSignatureInput(request.headers.get('signature-input') ?? '')

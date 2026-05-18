@@ -347,6 +347,51 @@ describe('webhookCallback end-to-end', () => {
     await expect(sendPromise).resolves.toMatchObject({ result: { ok: true } })
   })
 
+  test('sets approval-surface hardening headers', async () => {
+    const { hostOrigin, hostPath, hostTransport } = pair()
+
+    const response = await hostTransport.fetch(
+      new Request(`${hostOrigin}${hostPath}/verify?code=unknown`),
+    )
+
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('content-security-policy')).toBe(
+      [
+        "default-src 'self'",
+        "frame-ancestors 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "object-src 'none'",
+        "style-src 'self' 'unsafe-inline'",
+      ].join('; '),
+    )
+    expect(response.headers.get('pragma')).toBe('no-cache')
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(response.headers.get('x-frame-options')).toBe('DENY')
+  })
+
+  test('preserves host-provided approval-surface hardening headers', async () => {
+    const transport = hostWebhookCallback({
+      html: {
+        render: () =>
+          new Response('ok', {
+            headers: {
+              'content-security-policy': "default-src 'none'",
+              'referrer-policy': 'same-origin',
+            },
+          }),
+      },
+      store: Kv.memory(),
+    })
+
+    const response = await transport.fetch(new Request('https://wallet.example/verify?code=x'))
+
+    expect(response.headers.get('content-security-policy')).toBe("default-src 'none'")
+    expect(response.headers.get('referrer-policy')).toBe('same-origin')
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('x-frame-options')).toBe('DENY')
+  })
+
   test('rejects approval body whose response ids do not match the queued request', async () => {
     const {
       consumerKeypair,
