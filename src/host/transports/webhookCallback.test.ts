@@ -812,6 +812,73 @@ describe('webhookCallback end-to-end', () => {
     `)
   })
 
+  test('consumer keeps nonce replay markers for the replay window', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostKeypair,
+      hostStore,
+      webhookUrl,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    const body = '{"type":"rpc-responses","payload":['
+    const headers = {
+      'content-digest': MessageSig.contentDigest(body),
+      'content-type': 'application/json',
+      'urpc-auth-req-id': record.authReqId,
+      'urpc-public-key': ed25519Pubkey(hostKeypair.publicKey),
+    }
+    const { signature, signatureInput } = MessageSig.sign({
+      components: [
+        '@method',
+        '@target-uri',
+        '@authority',
+        'content-type',
+        'content-digest',
+        'urpc-auth-req-id',
+        'urpc-public-key',
+      ],
+      message: { headers, method: 'POST', url: webhookUrl },
+      parameters: {
+        alg: 'ed25519',
+        created: Math.floor(Date.now() / 1000),
+        keyid: 'https://wallet.example#identity',
+        nonce: 'fixed-nonce',
+      },
+      privateKey: hostKeypair.privateKey,
+    })
+    const post = () =>
+      consumerTransport.fetch(
+        new Request(webhookUrl, {
+          body,
+          headers: { ...headers, signature, 'signature-input': signatureInput },
+          method: 'POST',
+        }),
+      )
+
+    const first = await post()
+    const second = await post()
+    const third = await post()
+
+    expect(first.status).toBe(400)
+    expect(second.status).toBe(401)
+    expect(third.status).toBe(401)
+  })
+
   test('rejects cancel signed by a different consumer identity', async () => {
     const {
       consumerKeypair,

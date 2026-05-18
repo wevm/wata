@@ -427,10 +427,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     const parsedInput = MessageSig.parseSignatureInput(request.headers.get('signature-input') ?? '')
     if (parsedInput.parameters.nonce) {
       const nonceKey = `webhook:nonce:${pinned}:${authReqId}:${parsedInput.parameters.nonce}`
-      const take = store.take ?? store.get
-      // Prefer `take` (atomic read+delete) when available; fall back
-      // to get + set as best-effort.
-      const seen = await take(nonceKey)
+      const seen = await store.get(nonceKey)
       if (seen) return c.json({ error: 'replay detected' }, { status: 401 })
       await store.set(nonceKey, true, { ttl: 86400 })
     }
