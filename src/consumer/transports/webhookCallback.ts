@@ -56,8 +56,6 @@ import * as Uri from '../../internal/Uri.js'
 
 /** Information surfaced to {@link Options.onPrompt} once `/register` succeeds. */
 export type Prompt = {
-  /** Opaque host-issued correlation id for the pending intent. */
-  authReqId: string
   /** Approval-window lifetime (seconds) advertised by the host. */
   expiresIn: number
   /** Retry-budget hint (seconds) advertised by the host. */
@@ -377,7 +375,6 @@ export function webhookCallback(options: Options): WebhookCallback {
 
     if (onPrompt)
       await onPrompt({
-        authReqId: data.auth_req_id,
         expiresIn: data.expires_in,
         retrySeconds: data.retry_seconds,
         verificationUri,

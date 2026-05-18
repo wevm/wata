@@ -853,7 +853,7 @@ describe('webhookCallback end-to-end', () => {
   })
 
   test('host returns distinct auth_req_id and verification code handles', async () => {
-    const prompts: Array<{ authReqId: string; verificationUri: string }> = []
+    const prompts: Array<{ verificationUri: string }> = []
     const setup = pair({
       consumerOnPrompt: (prompt) => {
         prompts.push(prompt)
@@ -871,7 +871,13 @@ describe('webhookCallback end-to-end', () => {
 
     const prompt = prompts[0]
     if (!prompt) throw new Error('prompt missing')
-    expect(new URL(prompt.verificationUri).searchParams.get('code')).not.toBe(prompt.authReqId)
+    const code = new URL(prompt.verificationUri).searchParams.get('code')
+    if (!code) throw new Error('code missing')
+    const record = await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )
+    expect(record?.authReqId).toBeTruthy()
+    expect(code).not.toBe(record?.authReqId)
   })
 
   test('consumer validates the returned verification_uri code shape', async () => {

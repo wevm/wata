@@ -50,4 +50,8 @@ describe('webhookCallback (consumer)', () => {
   test('host accepts string OR pre-parsed HostDocument', () => {
     expectTypeOf<WebhookCallback.Options['host']>().toMatchTypeOf<string | object>()
   })
+
+  test('prompt omits consumer-facing correlation handles', () => {
+    expectTypeOf<WebhookCallback.Prompt>().not.toHaveProperty('authReqId')
+  })
 })
