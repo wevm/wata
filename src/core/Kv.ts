@@ -34,7 +34,7 @@
  * ```ts
  * import { Kv } from 'wata'
  *
- * export { Storage } from 'wata'
+ * export class Storage extends Kv.Storage {}
  *
  * export default {
  *   fetch(request: Request, env: Env) {
@@ -158,7 +158,7 @@ export declare namespace cloudflare {
  * // worker.ts
  * import { Kv } from 'wata'
  *
- * export { Storage } from 'wata'
+ * export class Storage extends Kv.Storage {}
  *
  * export default {
  *   fetch(request: Request, env: Env) {
