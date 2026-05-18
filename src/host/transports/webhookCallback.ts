@@ -94,10 +94,14 @@ export type PendingRecord = {
   code: string
   /** `rpc-responses` envelope submitted at the approval surface. */
   response?: Envelope.Envelope | undefined
+  /** Verbatim approval-surface response body used for webhook retries. */
+  responseBody?: string | undefined
   /** Retry budget (seconds) for outbound webhook delivery. */
   retrySeconds: number
+  /** Epoch-ms approval / denial transition time. Starts the retry budget. */
+  settledAt?: number | undefined
   /** Lifecycle status. */
-  status: 'pending' | 'approved' | 'denied' | 'cancelled' | 'delivered'
+  status: 'pending' | 'approved' | 'denied' | 'cancelled' | 'delivered' | 'undeliverable'
   /** Pre-validated callback URL (byte-equal to a `consumer.json` entry). */
   webhookUrl: string
 }
@@ -224,6 +228,8 @@ export declare namespace html {
 /** `transport.fetch` / `transport.listener`-augmented {@link Transport.Transport}. */
 export type WebhookCallback = Transport.Transport<'host'> & Http.Server
 
+type DeliveryAttempt = { type: 'delivered' } | { error: Error; retryable: boolean; type: 'failed' }
+
 /**
  * Create a host-side `webhook-callback` transport.
  *
@@ -331,6 +337,7 @@ export function webhookCallback(options: Options): WebhookCallback {
         )
       const consumedRecord = await consumePendingRecord(code, record.authReqId)
       consumedRecord.status = 'approved'
+      consumedRecord.settledAt = Date.now()
       await persist(consumedRecord)
       activateDispatch(consumedRecord)
       emitter.emit('message', consumedRecord.message)
@@ -358,8 +365,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     if (!c.res.headers.has('Content-Security-Policy'))
       c.res.headers.set('Content-Security-Policy', approvalSurfaceCsp)
     if (!c.res.headers.has('Pragma')) c.res.headers.set('Pragma', 'no-cache')
-    if (!c.res.headers.has('Referrer-Policy'))
-      c.res.headers.set('Referrer-Policy', 'no-referrer')
+    if (!c.res.headers.has('Referrer-Policy')) c.res.headers.set('Referrer-Policy', 'no-referrer')
     if (!c.res.headers.has('X-Frame-Options')) c.res.headers.set('X-Frame-Options', 'DENY')
   })
 
@@ -691,10 +697,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     const request = c.req.raw
     const metadataError = approvalMetadataError(request, new URL(resolveBaseUrl(c.req.url)).origin)
     if (metadataError)
-      return c.json(
-        { error: 'forbidden', error_description: metadataError },
-        { status: 403 },
-      )
+      return c.json({ error: 'forbidden', error_description: metadataError }, { status: 403 })
 
     const record = code ? await store.get<PendingRecord>(codeKey(code)) : undefined
     const pendingRecord =
@@ -760,10 +763,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       consumedRecord = await consumePendingRecord(code, record.authReqId)
     } catch (cause) {
       if (cause instanceof ApprovalConflictError)
-        return c.json(
-          { error: 'conflict', error_description: cause.message },
-          { status: 409 },
-        )
+        return c.json({ error: 'conflict', error_description: cause.message }, { status: 409 })
       throw cause
     }
 
@@ -779,11 +779,11 @@ export function webhookCallback(options: Options): WebhookCallback {
    * Sign and POST the approval-surface `rpc-responses` body to the
    * consumer's pre-registered `webhook_url` under the host's identity key.
    */
-  async function deliver(
+  async function deliverOnce(
     record: PendingRecord,
     body: string,
     response: Envelope.Envelope,
-  ): Promise<void> {
+  ): Promise<DeliveryAttempt> {
     const digest = MessageSig.contentDigest(body)
     const created = Math.floor(Date.now() / 1000)
     const nonce = generateOpaque(16)
@@ -822,31 +822,96 @@ export function webhookCallback(options: Options): WebhookCallback {
         redirect: 'manual',
       })
     } catch (cause) {
-      emitter.emit(
-        'error',
-        new Transport.TransportError(`webhook delivery failed: ${(cause as Error).message}`, {
-          cause: cause as Error,
-        }),
-      )
-      throw cause
+      return {
+        error: new Transport.TransportError(
+          `webhook delivery failed: ${(cause as Error).message}`,
+          {
+            cause: cause as Error,
+          },
+        ),
+        retryable: true,
+        type: 'failed',
+      }
     }
     // §5.9 / §3.4.3 — never follow 3xx redirects.
     if (httpResponse.status >= 300 && httpResponse.status < 400)
-      throw new Transport.TransportError(
-        `webhook delivery refused — cross-origin / same-origin redirect ${httpResponse.status} forbidden`,
-      )
+      return {
+        error: new Transport.TransportError(
+          `webhook delivery refused — cross-origin / same-origin redirect ${httpResponse.status} forbidden`,
+        ),
+        retryable: true,
+        type: 'failed',
+      }
     if (!httpResponse.ok)
-      throw new Transport.TransportError(
-        `webhook delivery returned non-2xx status ${httpResponse.status}`,
-      )
+      return {
+        error: new Transport.TransportError(
+          `webhook delivery returned non-2xx status ${httpResponse.status}`,
+        ),
+        retryable:
+          httpResponse.status === 408 || httpResponse.status === 429 || httpResponse.status >= 500,
+        type: 'failed',
+      }
     record.status = 'delivered'
     record.response = response
+    record.responseBody = body
     await persist(record)
+    return { type: 'delivered' }
+  }
+
+  async function deliverWithRetry(
+    record: PendingRecord,
+    body: string,
+    response: Envelope.Envelope,
+  ): Promise<void> {
+    const settledAt = record.settledAt ?? Date.now()
+    const deadline = settledAt + record.retrySeconds * 1000
+    let attempt = 0
+    for (;;) {
+      const current = await store.get<PendingRecord>(authReqIdKey(record.authReqId))
+      if (!current || current.status === 'delivered' || current.status === 'undeliverable') return
+      if (current.status !== 'approved' && current.status !== 'denied') return
+      if (Date.now() >= deadline) {
+        current.status = 'undeliverable'
+        await persist(current)
+        return
+      }
+
+      const result = await deliverOnce(current, body, response)
+      if (result.type === 'delivered') return
+      emitter.emit('error', result.error)
+      if (!result.retryable) {
+        current.status = 'undeliverable'
+        await persist(current)
+        return
+      }
+
+      const delay = deliveryRetryDelay(attempt)
+      attempt += 1
+      if (Date.now() + delay >= deadline) {
+        current.status = 'undeliverable'
+        await persist(current)
+        return
+      }
+      await sleep(delay)
+    }
+  }
+
+  function scheduleDelivery(
+    record: PendingRecord,
+    body: string,
+    response: Envelope.Envelope,
+  ): void {
+    void deliverWithRetry(record, body, response).catch((cause) => {
+      emitter.emit('error', cause as Error)
+    })
   }
 
   async function persist(record: PendingRecord): Promise<void> {
-    const ttl =
-      Math.ceil(Math.max(60, (record.expiresAt - Date.now()) / 1000)) + record.retrySeconds
+    const retentionUntil =
+      record.status === 'pending'
+        ? record.expiresAt + record.retrySeconds * 1000
+        : (record.settledAt ?? Date.now()) + record.retrySeconds * 1000
+    const ttl = Math.ceil(Math.max(60, (retentionUntil - Date.now()) / 1000))
     await store.set(codeKey(record.code), record, { ttl })
     await store.set(authReqIdKey(record.authReqId), record, { ttl })
   }
@@ -899,9 +964,12 @@ export function webhookCallback(options: Options): WebhookCallback {
     const { body, envelope } = parseResponseBody(responseBody)
     const correlationError = validateApprovalResponse(record, envelope)
     if (correlationError) throw new Errors.ProtocolError(correlationError)
+    record.response = envelope
+    record.responseBody = body
+    record.settledAt = Date.now()
     record.status = isDeniedResponse(envelope) ? 'denied' : 'approved'
     await persist(record)
-    await deliver(record, body, envelope)
+    scheduleDelivery(record, body, envelope)
   }
 
   function activateDispatch(record: PendingRecord): void {
@@ -976,7 +1044,12 @@ export function webhookCallback(options: Options): WebhookCallback {
           )
         const correlationError = validateApprovalResponse(record, envelope)
         if (correlationError) throw new Errors.ProtocolError(correlationError)
-        await deliver(record, JSON.stringify(envelope), envelope)
+        const body = JSON.stringify(envelope)
+        record.response = envelope
+        record.responseBody = body
+        record.settledAt ??= Date.now()
+        await persist(record)
+        scheduleDelivery(record, body, envelope)
       } finally {
         // `single_exchange` is per `auth_req_id`, not per transport
         // lifetime: the wallet server is long-running and handles
@@ -1006,6 +1079,14 @@ function authReqIdKey(authReqId: string): string {
 
 function generateOpaque(byteCount: number): string {
   return Base64.fromBytes(Bytes.random(byteCount), { pad: false, url: true })
+}
+
+function deliveryRetryDelay(attempt: number): number {
+  return Math.min(1_000, 100 * 2 ** Math.min(attempt, 5))
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function validateApprovalResponse(

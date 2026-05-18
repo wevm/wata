@@ -67,6 +67,12 @@ type PairOptions = {
   hostAuthenticate?:
     | NonNullable<Parameters<typeof hostWebhookCallback>[0]['html']['authenticate']>
     | undefined
+  hostDelivery?:
+    | ((
+        request: Request,
+        next: (request: Request) => Promise<Response>,
+      ) => Promise<Response> | Response)
+    | undefined
   hostExpiresIn?: number | undefined
   hostRetrySeconds?: number | undefined
 }
@@ -113,6 +119,7 @@ function pair(options: PairOptions = {}) {
   let hostTransport!: ReturnType<typeof hostWebhookCallback>
   let consumerTransport!: ReturnType<typeof webhookCallback>
   let deliveryBody: string | undefined
+  let deliveryAttempts = 0
   let deliverySignatureInput: string | undefined
   let registerSignatureInput: string | undefined
 
@@ -121,8 +128,13 @@ function pair(options: PairOptions = {}) {
     const request = input instanceof Request ? input : new Request(url, init)
     if (url.startsWith(consumerOrigin)) {
       if (url.endsWith('/.well-known/urpc/consumer.json')) return consumerWk.fetch(request)
+      deliveryAttempts += 1
       deliveryBody = await request.clone().text()
       deliverySignatureInput = request.headers.get('signature-input') ?? undefined
+      if (options.hostDelivery)
+        return await options.hostDelivery(request, (nextRequest) =>
+          consumerTransport.fetch(nextRequest),
+        )
       return consumerTransport.fetch(request)
     }
     throw new Error(`unexpected host->* fetch to ${url}`)
@@ -236,6 +248,10 @@ function pair(options: PairOptions = {}) {
     return deliveryBody
   }
 
+  function getDeliveryAttempts(): number {
+    return deliveryAttempts
+  }
+
   function getDeliverySignatureInput(): string | undefined {
     return deliverySignatureInput
   }
@@ -253,8 +269,9 @@ function pair(options: PairOptions = {}) {
     consumerWk,
     deny,
     findActiveCode,
-    getDeliverySignatureInput,
+    getDeliveryAttempts,
     getDeliveryBody,
+    getDeliverySignatureInput,
     getRegisterSignatureInput,
     hostKeypair,
     hostOrigin,
@@ -291,6 +308,42 @@ describe('webhookCallback end-to-end', () => {
     expect(result).toMatchInlineSnapshot(`
       {
         "ok": true,
+      }
+    `)
+  })
+
+  test('retries webhook delivery after a transient failure', async () => {
+    let failures = 0
+    const setup = pair({
+      hostDelivery: async (request, next) => {
+        failures += 1
+        if (failures === 1) return new Response('try again', { status: 500 })
+        return await next(request)
+      },
+    })
+    const wata = Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transport: setup.hostTransport })
+
+    const sendPromise = wata.send({ method: 'ping', params: [] })
+    const code = await setup.findActiveCode()
+    const response = await setup.postApproval(
+      code,
+      JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
+    )
+    const result = await sendPromise
+
+    expect(response.status).toBe(200)
+    expect(setup.getDeliveryAttempts()).toBe(2)
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "id": 1,
+        "result": {
+          "ok": true,
+        },
       }
     `)
   })
@@ -546,7 +599,9 @@ describe('webhookCallback end-to-end', () => {
       })
 
       await expect(
-        transport.send(Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])),
+        transport.send(
+          Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+        ),
       ).rejects.toThrow(message)
     }
 
@@ -598,7 +653,9 @@ describe('webhookCallback end-to-end', () => {
       })
 
       await expect(
-        transport.send(Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])),
+        transport.send(
+          Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+        ),
       ).rejects.toThrow(message)
     }
 
@@ -779,7 +836,9 @@ describe('webhookCallback end-to-end', () => {
     })
 
     await expect(
-      consumerTransport.send(Envelope.rpcRequests([Rpc.notification({ method: 'ping', params: [] })])),
+      consumerTransport.send(
+        Envelope.rpcRequests([Rpc.notification({ method: 'ping', params: [] })]),
+      ),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Transport.TransportError: webhook-callback /register returned status 400: {"error":"invalid_request","error_description":"\`message\` must contain at least one JSON-RPC request id"}]`,
     )
@@ -1026,7 +1085,9 @@ describe('webhookCallback end-to-end', () => {
     const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
       `webhook:code:${code}`,
     )) as HostWebhookCallback.PendingRecord
-    const body = JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]))
+    const body = JSON.stringify(
+      Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]),
+    )
     const headers = {
       'content-digest': MessageSig.contentDigest(body),
       'content-encoding': 'gzip',
@@ -1259,7 +1320,9 @@ describe('webhookCallback end-to-end', () => {
     const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
       `webhook:code:${code}`,
     )) as HostWebhookCallback.PendingRecord
-    const body = JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]))
+    const body = JSON.stringify(
+      Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]),
+    )
     const headers = {
       'content-digest': MessageSig.contentDigest(body),
       'content-type': 'application/json',
