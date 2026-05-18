@@ -305,6 +305,7 @@ export function webhookCallback(options: Options): WebhookCallback {
           'urpc-public-key': identity.publicKey,
         },
         method: 'POST',
+        redirect: 'manual',
       })
     } catch (cause) {
       throw new Transport.TransportError(
@@ -527,6 +528,7 @@ export function webhookCallback(options: Options): WebhookCallback {
           'urpc-public-key': identity.publicKey,
         },
         method: 'DELETE',
+        redirect: 'manual',
       })
     } catch (cause) {
       throw new Transport.TransportError(

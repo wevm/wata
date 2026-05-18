@@ -993,6 +993,73 @@ describe('webhookCallback end-to-end', () => {
     ])
   })
 
+  test('consumer disables redirects for register and cancel requests', async () => {
+    const hostKeypair = Ed25519.createKeyPair()
+    const consumerKeypair = Ed25519.createKeyPair()
+    const hostDocument = {
+      id: 'wallet.example',
+      identity_pubkey: ed25519Pubkey(hostKeypair.publicKey),
+      name: 'Example Wallet',
+      origin: 'https://wallet.example',
+      transports: {
+        'webhook-callback': {
+          auth_url_origin: 'https://wallet.example',
+          register_url: 'https://wallet.example/register',
+        },
+      },
+      version: '1.0',
+    } satisfies Discovery.HostDocument
+    const requests: Array<{
+      method: string | undefined
+      redirect: RequestRedirect | undefined
+      url: string
+    }> = []
+    const transport = webhookCallback({
+      fetch: (async (input: Request | string, init?: RequestInit) => {
+        const url = input instanceof Request ? input.url : String(input)
+        requests.push({ method: init?.method, redirect: init?.redirect, url })
+        if (url === 'https://wallet.example/.well-known/urpc/host.json')
+          return Response.json(hostDocument)
+        if (url === 'https://wallet.example/register')
+          return Response.json({
+            auth_req_id: 'auth-1',
+            expires_in: 60,
+            retry_seconds: 300,
+            verification_uri: 'https://wallet.example/auth?code=opaque',
+          })
+        if (url === 'https://wallet.example/register/auth-1')
+          return new Response(null, { status: 204 })
+        throw new Error(`unexpected fetch to ${url}`)
+      }) as typeof fetch,
+      host: 'https://wallet.example',
+      path: '/cb',
+      store: Kv.memory(),
+    })
+    Wata.create({
+      baseUrl: 'https://acme.dev',
+      privateKey: consumerKeypair.privateKey,
+      transport,
+    })
+
+    await transport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    await transport.cancel()
+
+    expect(requests.filter((request) => !request.url.endsWith('/host.json'))).toEqual([
+      {
+        method: 'POST',
+        redirect: 'manual',
+        url: 'https://wallet.example/register',
+      },
+      {
+        method: 'DELETE',
+        redirect: 'manual',
+        url: 'https://wallet.example/register/auth-1',
+      },
+    ])
+  })
+
   test('consumer requires lifetime fields in the /register response', async () => {
     async function expectRegisterResponseRejected(
       responseBody: Record<string, unknown>,
