@@ -23,14 +23,15 @@
  * ```ts
  * import { Wata, deviceCode } from 'wata'
  *
- * const transport = deviceCode({
- *   url: 'https://wallet.example/auth/device',
- *   onPrompt: ({ userCode, verificationUri }) => {
- *     console.log(`Visit ${verificationUri} and enter ${userCode}`)
- *   },
+ * const wata = Wata.create({
+ *   transport: deviceCode({
+ *     url: 'https://wallet.example/auth/device',
+ *     onPrompt: ({ userCode, verificationUri }) => {
+ *       console.log(`Visit ${verificationUri} and enter ${userCode}`)
+ *     },
+ *   }),
  * })
  *
- * const wata = Wata.create({ transport })
  * const { result } = await wata.send({ method: 'ping', params: [] })
  * ```
  */

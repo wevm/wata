@@ -32,16 +32,17 @@
  * import { createServer } from 'node:http'
  * import { Wata, Kv, webhookCallback } from 'wata/host'
  *
- * const transport = webhookCallback({
+ * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
- *   html: {
- *     render: ({ record }) => new Response(`<form>...${record?.message ?? ''}</form>`, { headers: { 'content-type': 'text/html' } }),
- *   },
- *   path: '/auth/webhook',
- *   store: Kv.memory(),
+ *   privateKey,
+ *   transport: webhookCallback({
+ *     html: {
+ *       render: ({ record }) => new Response(`<form>...${record?.message ?? ''}</form>`, { headers: { 'content-type': 'text/html' } }),
+ *     },
+ *     path: '/auth/webhook',
+ *     store: Kv.memory(),
+ *   }),
  * })
- *
- * const wata = Wata.create({ privateKey, transport })
  *
  * createServer(wata.listener).listen(3000)
  * ```
@@ -340,11 +341,14 @@ type RegistrationRateLimit = { max: number; windowSeconds: number }
  * ```ts
  * import { Wata, Kv, webhookCallback } from 'wata/host'
  *
- * const transport = webhookCallback({
+ * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
- *   html: { render, authenticate },
- *   path: '/auth/webhook',
- *   store: Kv.memory(),
+ *   privateKey,
+ *   transport: webhookCallback({
+ *     html: { render, authenticate },
+ *     path: '/auth/webhook',
+ *     store: Kv.memory(),
+ *   }),
  * })
  * ```
  */

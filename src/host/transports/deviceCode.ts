@@ -30,21 +30,21 @@
  * import { createServer } from 'node:http'
  * import { Wata, Kv, deviceCode } from 'wata/host'
  *
- * const transport = deviceCode({
- *   store: Kv.memory(),
+ * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
- *   path: '/auth/device',
- *   html: {
- *     render: ({ userCode }) => new Response(`<form>...code=${userCode ?? ''}</form>`, { headers: { 'content-type': 'text/html' } }),
- *     authenticate: async ({ request, actions }) => {
- *       const body = await request.formData()
- *       await actions.approve(String(body.get('user_code')))
- *       return new Response('approved')
+ *   transport: deviceCode({
+ *     store: Kv.memory(),
+ *     path: '/auth/device',
+ *     html: {
+ *       render: ({ userCode }) => new Response(`<form>...code=${userCode ?? ''}</form>`, { headers: { 'content-type': 'text/html' } }),
+ *       authenticate: async ({ request, actions }) => {
+ *         const body = await request.formData()
+ *         await actions.approve(String(body.get('user_code')))
+ *         return new Response('approved')
+ *       },
  *     },
- *   },
+ *   }),
  * })
- *
- * const wata = Wata.create({ transport })
  * wata.on('request', async (event) => {
  *   await event.respond({ ok: true })
  * })
@@ -240,11 +240,13 @@ export type DeviceCode = Transport.Transport<'host'> & Http.Server
  * ```ts
  * import { Wata, Kv, deviceCode } from 'wata/host'
  *
- * const transport = deviceCode({
- *   store: Kv.memory(),
+ * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
- *   path: '/auth/device',
- *   html: { render, authenticate },
+ *   transport: deviceCode({
+ *     store: Kv.memory(),
+ *     path: '/auth/device',
+ *     html: { render, authenticate },
+ *   }),
  * })
  * ```
  */

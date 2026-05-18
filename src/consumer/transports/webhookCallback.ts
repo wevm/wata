@@ -29,13 +29,17 @@
  * ```ts
  * import { Wata, Kv, webhookCallback } from 'wata'
  *
- * const transport = webhookCallback({
- *   host: 'https://wallet.example',
- *   path: '/cb',
- *   store: Kv.memory(),
+ * const wata = Wata.create({
+ *   baseUrl: 'https://acme.dev',
+ *   meta,
+ *   privateKey,
+ *   transport: webhookCallback({
+ *     host: 'https://wallet.example',
+ *     path: '/cb',
+ *     store: Kv.memory(),
+ *   }),
  * })
  *
- * const wata = Wata.create({ baseUrl: 'https://acme.dev', meta, privateKey, transport })
  * const { result } = await wata.send({ method: 'wallet_connect', params: [] })
  * ```
  */
