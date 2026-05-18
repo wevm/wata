@@ -141,6 +141,9 @@ export type WebhookCallback = Transport.Transport<'consumer'> &
  *
  * const transport = webhookCallback({
  *   host: 'https://wallet.example',
+ *   onPrompt({ verificationUri }) {
+ *     console.log(`Visit ${verificationUri}`)
+ *   },
  *   path: '/cb',
  *   store: Kv.memory(),
  * })
