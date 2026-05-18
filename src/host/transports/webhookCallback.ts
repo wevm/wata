@@ -411,6 +411,14 @@ export function webhookCallback(options: Options): WebhookCallback {
         },
         { status: 400 },
       )
+    if (!envelope.payload.some((entry) => 'id' in entry))
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: '`message` must contain at least one JSON-RPC request id',
+        },
+        { status: 400 },
+      )
 
     // §3.1.2 — validate webhook_url against the consumer's
     // `consumer.json` `callback_urls` allowlist (byte-equal + same-

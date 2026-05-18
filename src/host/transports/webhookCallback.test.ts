@@ -643,6 +643,22 @@ describe('webhookCallback end-to-end', () => {
     expect(record.status).toBe('pending')
   })
 
+  test('rejects /register without a correlatable JSON-RPC request id', async () => {
+    const { consumerKeypair, consumerOrigin, consumerTransport, hostStore } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await expect(
+      consumerTransport.send(Envelope.rpcRequests([Rpc.notification({ method: 'ping', params: [] })])),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Transport.TransportError: webhook-callback /register returned status 400: {"error":"invalid_request","error_description":"\`message\` must contain at least one JSON-RPC request id"}]`,
+    )
+    expect(hostStore.scanKeys('webhook:code:')).toEqual([])
+  })
+
   test('rejects /register when webhook_url is not in consumer.json callback_urls', async () => {
     const { consumerKeypair, consumerOrigin, hostOrigin, hostPath, hostTransport } = pair()
 
