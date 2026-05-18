@@ -361,6 +361,10 @@ export function webhookCallback(options: Options): WebhookCallback {
   const app = new Hono()
   app.post(webhookPath, async (c) => {
     const request = c.req.raw
+    const contentEncoding = request.headers.get('content-encoding')
+    if (contentEncoding && contentEncoding.toLowerCase() !== 'identity')
+      return c.json({ error: 'unsupported `Content-Encoding`' }, { status: 400 })
+
     const bodyText = await request.text()
     const authReqId = request.headers.get('urpc-auth-req-id')
     if (!authReqId) return c.json({ error: 'missing `uRPC-Auth-Req-Id`' }, { status: 400 })

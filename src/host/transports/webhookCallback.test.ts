@@ -744,6 +744,74 @@ describe('webhookCallback end-to-end', () => {
     expect(await cancelled.text()).toBe(await unknown.text())
   })
 
+  test('consumer rejects webhook delivery with non-identity content-encoding', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostKeypair,
+      hostStore,
+      webhookUrl,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    const body = JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]))
+    const headers = {
+      'content-digest': MessageSig.contentDigest(body),
+      'content-encoding': 'gzip',
+      'content-type': 'application/json',
+      'urpc-auth-req-id': record.authReqId,
+      'urpc-idempotency-key': record.authReqId,
+      'urpc-public-key': ed25519Pubkey(hostKeypair.publicKey),
+    }
+    const { signature, signatureInput } = MessageSig.sign({
+      components: [
+        '@method',
+        '@target-uri',
+        '@authority',
+        'content-type',
+        'content-digest',
+        'urpc-auth-req-id',
+        'urpc-public-key',
+      ],
+      message: { headers, method: 'POST', url: webhookUrl },
+      parameters: {
+        alg: 'ed25519',
+        created: Math.floor(Date.now() / 1000),
+        keyid: 'https://wallet.example#identity',
+        nonce: 'n',
+      },
+      privateKey: hostKeypair.privateKey,
+    })
+
+    const response = await consumerTransport.fetch(
+      new Request(webhookUrl, {
+        body,
+        headers: { ...headers, signature, 'signature-input': signatureInput },
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "unsupported \`Content-Encoding\`",
+      }
+    `)
+  })
+
   test('rejects cancel signed by a different consumer identity', async () => {
     const {
       consumerKeypair,
