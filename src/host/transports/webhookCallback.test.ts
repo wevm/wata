@@ -865,6 +865,18 @@ describe('webhookCallback end-to-end', () => {
       { ...baseResponse, expires_in: 60, retry_seconds: undefined },
       'host /register response missing `retry_seconds`',
     )
+    await expectRegisterResponseRejected(
+      { ...baseResponse, expires_in: 0 },
+      'host /register response returned invalid `expires_in`',
+    )
+    await expectRegisterResponseRejected(
+      { ...baseResponse, expires_in: 60, retry_seconds: 299 },
+      'host /register response returned invalid `retry_seconds`',
+    )
+    await expectRegisterResponseRejected(
+      { ...baseResponse, expires_in: 60, retry_seconds: 86401 },
+      'host /register response returned invalid `retry_seconds`',
+    )
   })
 
   test('rejects approval body whose response ids do not match the queued request', async () => {

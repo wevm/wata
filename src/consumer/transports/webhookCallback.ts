@@ -330,6 +330,10 @@ export function webhookCallback(options: Options): WebhookCallback {
       throw new Transport.TransportError('host /register response missing `retry_seconds`')
     if (typeof data.verification_uri !== 'string')
       throw new Transport.TransportError('host /register response missing `verification_uri`')
+    if (data.expires_in <= 0)
+      throw new Errors.ProtocolError('host /register response returned invalid `expires_in`')
+    if (data.retry_seconds < 300 || data.retry_seconds > 86400)
+      throw new Errors.ProtocolError('host /register response returned invalid `retry_seconds`')
 
     const verificationUri = data.verification_uri
     const verificationUrl = (() => {
