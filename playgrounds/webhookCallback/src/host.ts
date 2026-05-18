@@ -57,27 +57,24 @@ const wata = Wata.create({
     baseUrl,
     expiresIn: 300,
     html: {
-      authenticate: async ({ actions, request }) => {
+      async authenticate({ request, actions }) {
         const form = await request.formData()
-        const req = String(form.get('req') ?? '')
-        const action = String(form.get('action') ?? '')
-        if (!req) return html('<p>missing <code>req</code></p>', 400)
-        const record = await actions.get(req)
-        if (!record) return html('<p>unknown <code>req</code></p>', 404)
-        if (action === 'approve') {
-          await actions.approve(req)
-          return html('<h1>Approved ✅</h1><p>You may close this tab.</p>')
+        const code = String(form.get('code') ?? '')
+        const decision = String(form.get('decision') ?? '')
+        if (decision === 'approve') {
+          await actions.approve(code)
+          return html('<p>Approved. You may close this tab.</p>')
         }
-        await actions.deny(req)
-        return html('<h1>Denied ❌</h1><p>You may close this tab.</p>')
+        await actions.deny(code)
+        return html('<p>Denied. You may close this tab.</p>')
       },
-      render({ record, req }) {
+      render({ record, code }) {
         if (!record)
           return html(
             `<h1>No pending request</h1><p>Open this URL from the consumer's approval link.</p>`,
           )
 
-        const requests =
+        const requestItems =
           record.message.type === 'rpc-requests'
             ? record.message.payload
                 .map((m) => {
@@ -91,7 +88,7 @@ const wata = Wata.create({
         const display = consumerMeta
           ? `<p>
               ${consumerMeta.icon ? `<img src="${escape(consumerMeta.icon)}" alt="${escape(consumerMeta.name)} icon" width="32" height="32" /> ` : ''}
-              App: <strong>${escape(consumerMeta.name)}</strong>${consumerMeta.description ? ` — ${escape(consumerMeta.description)}` : ''}
+              App: <strong>${escape(consumerMeta.name)}</strong>${consumerMeta.description ? ` -- ${escape(consumerMeta.description)}` : ''}
             </p>`
           : `<p>App: <strong>${escape(consumer.id)}</strong></p>`
         return html(`
@@ -99,11 +96,11 @@ const wata = Wata.create({
         ${display}
         <p>Origin: <code>${escape(consumer.origin)}</code></p>
         <p>Pending JSON-RPC requests:</p>
-        <ul>${requests}</ul>
+        <ul>${requestItems}</ul>
         <form method="post" action="/auth/webhook/verify">
-          <input type="hidden" name="req" value="${escape(req ?? '')}" />
-          <button type="submit" name="action" value="approve">Approve</button>
-          <button type="submit" name="action" value="deny">Deny</button>
+          <input type="hidden" name="code" value="${escape(code ?? '')}" />
+          <button type="submit" name="decision" value="approve">Approve</button>
+          <button type="submit" name="decision" value="deny">Deny</button>
         </form>
       `)
       },

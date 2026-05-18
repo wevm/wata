@@ -32,12 +32,12 @@ describe('webhookCallback (host)', () => {
     expectTypeOf(wata.role).toEqualTypeOf<'host'>()
   })
 
-  test('html.render receives `record`, `request`, `req`', () => {
+  test('html.render receives `record`, `request`, `code`', () => {
     webhookCallback({
       html: {
         authenticate: () => new Response('ok'),
         render: (options) => {
-          expectTypeOf(options.req).toEqualTypeOf<string | undefined>()
+          expectTypeOf(options.code).toEqualTypeOf<string | undefined>()
           expectTypeOf(options.record).toEqualTypeOf<WebhookCallback.PendingRecord | undefined>()
           expectTypeOf(options.request).toEqualTypeOf<Request>()
           return new Response('ok')
@@ -47,18 +47,39 @@ describe('webhookCallback (host)', () => {
     })
   })
 
-  test('html.authenticate receives `request` and `actions`', () => {
+  test('html.authenticate receives `actions`, `record`, `code`, and `request`', () => {
     webhookCallback({
       html: {
         authenticate: (options) => {
-          expectTypeOf(options.request).toEqualTypeOf<Request>()
-          expectTypeOf(options.actions.approve).toEqualTypeOf<(req: string) => Promise<void>>()
-          expectTypeOf(options.actions.deny).toEqualTypeOf<(req: string) => Promise<void>>()
-          expectTypeOf(options.actions.get).toEqualTypeOf<
-            (req: string) => Promise<WebhookCallback.PendingRecord | undefined>
+          expectTypeOf(options.actions.approve).toEqualTypeOf<
+            (
+              code: string,
+              responseBody?: WebhookCallback.html.ResponseBody | undefined,
+            ) => Promise<void>
           >()
+          expectTypeOf(options.actions.deny).toEqualTypeOf<
+            (
+              code: string,
+              responseBody?: WebhookCallback.html.ResponseBody | undefined,
+            ) => Promise<void>
+          >()
+          expectTypeOf(options.actions.get).toEqualTypeOf<
+            (code: string) => Promise<WebhookCallback.PendingRecord | undefined>
+          >()
+          expectTypeOf(options.record).toEqualTypeOf<WebhookCallback.PendingRecord | undefined>()
+          expectTypeOf(options.code).toEqualTypeOf<string | undefined>()
+          expectTypeOf(options.request).toEqualTypeOf<Request>()
           return new Response('ok')
         },
+        render: () => new Response('ok'),
+      },
+      store: Kv.memory(),
+    })
+  })
+
+  test('html.authenticate is optional', () => {
+    webhookCallback({
+      html: {
         render: () => new Response('ok'),
       },
       store: Kv.memory(),

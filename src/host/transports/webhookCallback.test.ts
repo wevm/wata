@@ -12,7 +12,7 @@
 
 import { Base64, Bytes, Ed25519, Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
-import { Envelope, Kv, MessageSig, Wata, webhookCallback } from 'wata'
+import { Envelope, Kv, MessageSig, Rpc, Wata, webhookCallback } from 'wata'
 import {
   Wata as HostWata,
   WebhookCallback as HostWebhookCallback,
@@ -26,7 +26,7 @@ function ed25519Pubkey(publicKey: Hex.Hex): string {
 
 /**
  * In-memory store with key iteration. Lets the test harness find the
- * pending intent's opaque `req` handle without going through the
+ * pending intent's opaque code without going through the
  * browser-facing /verify UI.
  */
 function memoryWithScan(): Kv.Kv & { scanKeys: (prefix: string) => string[] } {
@@ -61,7 +61,14 @@ function memoryWithScan(): Kv.Kv & { scanKeys: (prefix: string) => string[] } {
   }
 }
 
-function pair() {
+type PairOptions = {
+  consumerDiscoveryPublicKey?: string | null | undefined
+  hostAuthenticate?:
+    | NonNullable<Parameters<typeof hostWebhookCallback>[0]['html']['authenticate']>
+    | undefined
+}
+
+function pair(options: PairOptions = {}) {
   const hostOrigin = 'https://wallet.example'
   const consumerOrigin = 'https://acme.dev'
   const hostPath = '/auth/webhook'
@@ -69,6 +76,10 @@ function pair() {
 
   const hostKeypair = Ed25519.createKeyPair()
   const consumerKeypair = Ed25519.createKeyPair()
+  const consumerDiscoveryPublicKey =
+    options.consumerDiscoveryPublicKey === null
+      ? undefined
+      : (options.consumerDiscoveryPublicKey ?? ed25519Pubkey(consumerKeypair.publicKey))
   const hostStore = memoryWithScan()
   const consumerStore = Kv.memory()
 
@@ -76,10 +87,10 @@ function pair() {
     document: {
       callback_urls: [webhookUrl],
       id: 'acme.dev',
-      identity_pubkey: ed25519Pubkey(consumerKeypair.publicKey),
       name: 'Acme CLI',
       origin: consumerOrigin,
       version: '1.0',
+      ...(consumerDiscoveryPublicKey ? { identity_pubkey: consumerDiscoveryPublicKey } : {}),
     },
   })
 
@@ -98,27 +109,29 @@ function pair() {
   // each other.
   let hostTransport!: ReturnType<typeof hostWebhookCallback>
   let consumerTransport!: ReturnType<typeof webhookCallback>
+  let deliveryBody: string | undefined
   let deliverySignatureInput: string | undefined
   let registerSignatureInput: string | undefined
 
   const hostFetchOverride = (async (input: Request | string, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input)
-    const req = input instanceof Request ? input : new Request(url, init)
+    const request = input instanceof Request ? input : new Request(url, init)
     if (url.startsWith(consumerOrigin)) {
-      if (url.endsWith('/.well-known/urpc/consumer.json')) return consumerWk.fetch(req)
-      deliverySignatureInput = req.headers.get('signature-input') ?? undefined
-      return consumerTransport.fetch(req)
+      if (url.endsWith('/.well-known/urpc/consumer.json')) return consumerWk.fetch(request)
+      deliveryBody = await request.clone().text()
+      deliverySignatureInput = request.headers.get('signature-input') ?? undefined
+      return consumerTransport.fetch(request)
     }
     throw new Error(`unexpected host->* fetch to ${url}`)
   }) as typeof fetch
 
   const consumerFetchOverride = (async (input: Request | string, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input)
-    const req = input instanceof Request ? input : new Request(url, init)
+    const request = input instanceof Request ? input : new Request(url, init)
     if (url.startsWith(hostOrigin)) {
-      if (url.endsWith('/.well-known/urpc/host.json')) return hostWk.fetch(req)
-      registerSignatureInput = req.headers.get('signature-input') ?? undefined
-      return hostTransport.fetch(req)
+      if (url.endsWith('/.well-known/urpc/host.json')) return hostWk.fetch(request)
+      registerSignatureInput = request.headers.get('signature-input') ?? undefined
+      return hostTransport.fetch(request)
     }
     throw new Error(`unexpected consumer->* fetch to ${url}`)
   }) as typeof fetch
@@ -128,15 +141,8 @@ function pair() {
     expiresIn: 60,
     fetch: hostFetchOverride,
     html: {
-      authenticate: async ({ actions, request }) => {
-        const form = await request.formData()
-        const req = String(form.get('req') ?? '')
-        const action = String(form.get('action') ?? 'approve')
-        if (action === 'deny') await actions.deny(req)
-        else await actions.approve(req)
-        return new Response('ok')
-      },
       render: () => new Response('ok'),
+      ...(options.hostAuthenticate ? { authenticate: options.hostAuthenticate } : {}),
     },
     path: hostPath,
     store: hostStore,
@@ -149,34 +155,80 @@ function pair() {
     store: consumerStore,
   })
 
-  async function findActiveReq(): Promise<string> {
+  async function findActiveCode(): Promise<string> {
     const start = Date.now()
     while (Date.now() - start < 2000) {
-      const keys = hostStore.scanKeys('webhook:req:')
-      if (keys.length > 0) return keys[0]!.slice('webhook:req:'.length)
+      const keys = hostStore.scanKeys('webhook:code:')
+      if (keys.length > 0) return keys[0]!.slice('webhook:code:'.length)
       await new Promise((r) => setTimeout(r, 5))
     }
-    throw new Error('timed out waiting for pending req')
+    throw new Error('timed out waiting for pending code')
   }
 
-  async function approve(): Promise<void> {
-    const req = await findActiveReq()
-    const form = new FormData()
-    form.set('req', req)
-    form.set('action', 'approve')
-    await hostTransport.fetch(
-      new Request(`${hostOrigin}${hostPath}/verify`, { body: form, method: 'POST' }),
+  async function postApproval(code: string, body: string): Promise<Response> {
+    return await hostTransport.fetch(
+      new Request(`${hostOrigin}${hostPath}/verify?code=${encodeURIComponent(code)}`, {
+        body,
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      }),
+    )
+  }
+
+  async function submitApproval(code: string, body: string): Promise<void> {
+    const response = await postApproval(code, body)
+    if (!response.ok)
+      throw new Error(`approval POST failed: ${response.status} ${await response.text()}`)
+  }
+
+  async function approvalBody(
+    code: string,
+    responseFor: (id: Rpc.Id) => Rpc.Response,
+  ): Promise<string> {
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    return JSON.stringify(
+      Envelope.rpcResponses(
+        record.message.type === 'rpc-requests'
+          ? record.message.payload.flatMap((entry) =>
+              'id' in entry ? [responseFor(entry.id)] : [],
+            )
+          : [],
+      ),
+    )
+  }
+
+  async function approve(body?: string): Promise<void> {
+    const code = await findActiveCode()
+    await submitApproval(
+      code,
+      body ??
+        (await approvalBody(code, (id) =>
+          Rpc.success({
+            id,
+            result: { ok: true },
+          }),
+        )),
     )
   }
 
   async function deny(): Promise<void> {
-    const req = await findActiveReq()
-    const form = new FormData()
-    form.set('req', req)
-    form.set('action', 'deny')
-    await hostTransport.fetch(
-      new Request(`${hostOrigin}${hostPath}/verify`, { body: form, method: 'POST' }),
+    const code = await findActiveCode()
+    await submitApproval(
+      code,
+      await approvalBody(code, (id) =>
+        Rpc.error({
+          code: -32000,
+          id,
+          message: 'denied by user',
+        }),
+      ),
     )
+  }
+
+  function getDeliveryBody(): string | undefined {
+    return deliveryBody
   }
 
   function getDeliverySignatureInput(): string | undefined {
@@ -195,8 +247,9 @@ function pair() {
     consumerTransport,
     consumerWk,
     deny,
-    findActiveReq,
+    findActiveCode,
     getDeliverySignatureInput,
+    getDeliveryBody,
     getRegisterSignatureInput,
     hostKeypair,
     hostOrigin,
@@ -204,6 +257,7 @@ function pair() {
     hostStore,
     hostTransport,
     hostWk,
+    postApproval,
     webhookUrl,
   }
 }
@@ -217,21 +271,18 @@ describe('webhookCallback end-to-end', () => {
       privateKey: setup.consumerKeypair.privateKey,
       transport: consumerTransport,
     })
-    const hostWata = HostWata.create({
-      privateKey: setup.hostKeypair.privateKey,
-      transport: hostTransport,
-    })
-    hostWata.on('request', (event) => {
-      if (event.method === 'ping') event.respond({ ok: true })
-    })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transport: hostTransport })
 
     const sendPromise = wata.send({ method: 'ping', params: [] })
-    await approve()
+    const approvalBody =
+      '{\n  "payload": [\n    { "jsonrpc": "2.0", "result": { "ok": true }, "id": 1 }\n  ],\n  "type": "rpc-responses"\n}'
+    await approve(approvalBody)
     const { result } = await sendPromise
     const register = MessageSig.parseSignatureInput(setup.getRegisterSignatureInput() ?? '')
     const delivery = MessageSig.parseSignatureInput(setup.getDeliverySignatureInput() ?? '')
     expect(register.parameters.keyid).toMatchInlineSnapshot(`"https://acme.dev#identity"`)
     expect(delivery.parameters.keyid).toMatchInlineSnapshot(`"https://wallet.example#identity"`)
+    expect(setup.getDeliveryBody()).toBe(approvalBody)
     expect(result).toMatchInlineSnapshot(`
       {
         "ok": true,
@@ -255,6 +306,82 @@ describe('webhookCallback end-to-end', () => {
     await expect(sendPromise).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Rpc.RpcError: denied by user]`,
     )
+  })
+
+  test('form authenticate actions can approve through the host request listener', async () => {
+    const setup = pair({
+      hostAuthenticate: async ({ actions, request }) => {
+        const form = await request.formData()
+        const code = String(form.get('code') ?? '')
+        const decision = String(form.get('decision') ?? '')
+        if (decision === 'approve') {
+          await actions.approve(code)
+          return new Response('Approved')
+        }
+        await actions.deny(code)
+        return new Response('Denied')
+      },
+    })
+    const { consumerKeypair, consumerOrigin, consumerTransport, hostKeypair, hostTransport } = setup
+    const consumer = Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+    const host = HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
+    host.on('request', (event) => event.respond({ ok: true }))
+    await host.start()
+
+    const sendPromise = consumer.send({ method: 'ping', params: [] })
+    const code = await setup.findActiveCode()
+    const response = await hostTransport.fetch(
+      new Request(`${setup.hostOrigin}${setup.hostPath}/verify`, {
+        body: new URLSearchParams({ decision: 'approve', code: code }),
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toBe('Approved')
+    await expect(sendPromise).resolves.toMatchObject({ result: { ok: true } })
+  })
+
+  test('rejects approval body whose response ids do not match the queued request', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostStore,
+      postApproval,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const response = await postApproval(
+      code,
+      JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 2, result: { ok: true } })])),
+    )
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "invalid_request",
+        "error_description": "response id 2 is not queued",
+      }
+    `)
+    expect(record.status).toBe('pending')
   })
 
   test('rejects /register when webhook_url is not in consumer.json callback_urls', async () => {
@@ -288,7 +415,7 @@ describe('webhookCallback end-to-end', () => {
       parameters: {
         alg: 'ed25519',
         created: Math.floor(Date.now() / 1000),
-        keyid: 'k',
+        keyid: 'https://acme.dev#identity',
         nonce: 'n',
       },
       privateKey: consumerKeypair.privateKey,
@@ -338,7 +465,11 @@ describe('webhookCallback end-to-end', () => {
         method: 'POST',
         url: registerUrl,
       },
-      parameters: { alg: 'ed25519', created: Math.floor(Date.now() / 1000), keyid: 'k' },
+      parameters: {
+        alg: 'ed25519',
+        created: Math.floor(Date.now() / 1000),
+        keyid: 'https://acme.dev#identity',
+      },
       privateKey: wrongKey.privateKey,
     })
     const response = await hostTransport.fetch(
@@ -357,12 +488,31 @@ describe('webhookCallback end-to-end', () => {
     expect(response.status).toBe(401)
   })
 
+  test('rejects /register when consumer.json omits identity_pubkey', async () => {
+    const { consumerKeypair, consumerOrigin, consumerTransport } = pair({
+      consumerDiscoveryPublicKey: null,
+    })
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await expect(
+      consumerTransport.send(
+        Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+      ),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Transport.TransportError: webhook-callback /register returned status 401: {"error":"unauthorized","error_description":"consumer.json missing \`identity_pubkey\` for webhook-callback"}]`,
+    )
+  })
+
   test('cancel before approval marks the intent cancelled (idempotent 204)', async () => {
     const {
       consumerKeypair,
       consumerOrigin,
       consumerTransport,
-      findActiveReq,
+      findActiveCode,
       hostKeypair,
       hostStore,
       hostTransport,
@@ -378,9 +528,9 @@ describe('webhookCallback end-to-end', () => {
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
     )
     await sendPromise // resolves after register
-    const req = await findActiveReq()
+    const code = await findActiveCode()
     const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
-      `webhook:req:${req}`,
+      `webhook:code:${code}`,
     )) as HostWebhookCallback.PendingRecord
     await consumerTransport.cancel()
     const after = (await hostStore.get<HostWebhookCallback.PendingRecord>(
@@ -389,13 +539,71 @@ describe('webhookCallback end-to-end', () => {
     expect(after.status).toBe('cancelled')
   })
 
+  test('rejects cancel signed by a different consumer identity', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostStore,
+      hostTransport,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    const wrongKeypair = Ed25519.createKeyPair()
+    const wrongPublicKey = ed25519Pubkey(wrongKeypair.publicKey)
+    const url = `https://wallet.example/auth/webhook/register/${encodeURIComponent(record.authReqId)}`
+    const { signature, signatureInput } = MessageSig.sign({
+      components: ['@method', '@target-uri', '@authority', 'urpc-public-key'],
+      message: {
+        headers: { 'urpc-public-key': wrongPublicKey },
+        method: 'DELETE',
+        url,
+      },
+      parameters: {
+        alg: 'ed25519',
+        created: Math.floor(Date.now() / 1000),
+        keyid: 'https://acme.dev#identity',
+        nonce: 'n',
+      },
+      privateKey: wrongKeypair.privateKey,
+    })
+
+    const response = await hostTransport.fetch(
+      new Request(url, {
+        headers: {
+          signature,
+          'signature-input': signatureInput,
+          'urpc-public-key': wrongPublicKey,
+        },
+        method: 'DELETE',
+      }),
+    )
+    const after = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:authReqId:${record.authReqId}`,
+    )) as HostWebhookCallback.PendingRecord
+    expect(response.status).toBe(401)
+    expect(after.status).toBe('pending')
+  })
+
   test('replay of the same webhook delivery is rejected', async () => {
     const {
       approve,
       consumerKeypair,
       consumerOrigin,
       consumerTransport,
-      findActiveReq,
+      findActiveCode,
       hostKeypair,
       hostStore,
       hostTransport,
@@ -405,20 +613,14 @@ describe('webhookCallback end-to-end', () => {
       privateKey: consumerKeypair.privateKey,
       transport: consumerTransport,
     })
-    const hostWata = HostWata.create({
-      privateKey: hostKeypair.privateKey,
-      transport: hostTransport,
-    })
-    hostWata.on('request', (event) => {
-      if (event.method === 'ping') event.respond({ ok: true })
-    })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
 
     const sendPromise = wata.send({ method: 'ping', params: [] })
-    // Wait until the consumer has registered + we have a req handle,
+    // Wait until the consumer has registered + we have a code,
     // so we can extract the auth_req_id for the replay payload below.
-    const req = await findActiveReq()
+    const code = await findActiveCode()
     const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
-      `webhook:req:${req}`,
+      `webhook:code:${code}`,
     )) as HostWebhookCallback.PendingRecord
     await approve()
     await sendPromise

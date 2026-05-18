@@ -21,24 +21,24 @@ const wata = Wata.create({
   transport: webhookCallback({
     baseUrl,
     html: {
-      async authenticate({ actions, request }) {
+      async authenticate({ request, actions }) {
         const form = await request.formData()
-        const req = String(form.get('req') ?? '')
+        const code = String(form.get('code') ?? '')
         const decision = String(form.get('decision') ?? '')
         if (decision === 'approve') {
-          await actions.approve(req)
+          await actions.approve(code)
           return html('<p>Approved</p>')
         }
-        await actions.deny(req)
+        await actions.deny(code)
         return html('<p>Denied</p>')
       },
-      render({ record, req }) {
+      render({ record, code }) {
         if (!record) return html('<h1>No pending request</h1>')
         return html(`
           <h1>Approve request?</h1>
           <p>Consumer: <code>${escape(record.consumer.origin)}</code></p>
           <form method="post" action="/auth/webhook/verify">
-            <input type="hidden" name="req" value="${escape(req ?? '')}" />
+            <input type="hidden" name="code" value="${escape(code ?? '')}" />
             <button type="submit" name="decision" value="approve">Approve</button>
             <button type="submit" name="decision" value="deny">Deny</button>
           </form>

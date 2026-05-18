@@ -14,13 +14,13 @@
  * - `DELETE <path>/register/:auth_req_id` — RFC 9421-signed
  *   cancellation. Effective only before approval. Idempotent.
  * - `GET <path>/verify` — bring-your-own approval UI. The host's
- *   {@link html.Hooks.render} hook renders the page; {@link html.Hooks.authenticate}
- *   handles the POST submission and calls `actions.approve` /
- *   `actions.deny` to settle the intent.
- * - On approval, the wrapping `Wata` runs the consumer's queued
- *   `rpc-requests` and replies via `transport.send(envelope)`, which
- *   triggers the outbound `POST <webhook_url>` driver (RFC 9421-signed
- *   under the host's long-term `identity` keypair).
+ *   {@link html.Hooks.render} hook renders the page.
+ * - `POST <path>/verify` — optionally calls
+ *   {@link html.Hooks.authenticate} so hosts can handle form posts
+ *   through {@link html.Actions}. Without a hook, or when the hook
+ *   returns nothing, validates the browser-submitted `rpc-responses`
+ *   body and forwards those exact bytes to the consumer's webhook
+ *   (RFC 9421-signed under the host's long-term `identity` keypair).
  *
  * The verify UI is intentionally bring-your-own — the host owns
  * branding, sign-in state, CSP / `SameSite` / `Origin` enforcement,
@@ -35,11 +35,6 @@
  * const transport = webhookCallback({
  *   baseUrl: 'https://wallet.example',
  *   html: {
- *     authenticate: async ({ request, actions }) => {
- *       const body = await request.formData()
- *       await actions.approve(String(body.get('req')))
- *       return new Response('approved')
- *     },
  *     render: ({ record }) => new Response(`<form>...${record?.message ?? ''}</form>`, { headers: { 'content-type': 'text/html' } }),
  *   },
  *   path: '/auth/webhook',
@@ -47,7 +42,6 @@
  * })
  *
  * const wata = Wata.create({ privateKey, transport })
- * wata.on('request', (event) => event.respond({ ok: true }))
  *
  * createServer(transport.listener).listen(3000)
  * ```
@@ -63,6 +57,7 @@ import * as Events from '../../core/Events.js'
 import * as Http from '../../core/Http.js'
 import * as Kv from '../../core/Kv.js'
 import * as MessageSig from '../../core/MessageSig.js'
+import * as Rpc from '../../core/Rpc.js'
 import * as Transport from '../../core/Transport.js'
 import * as Uri from '../../internal/Uri.js'
 
@@ -87,7 +82,7 @@ export type PendingRecord = {
      * not directly used after registration but persisted so audit
      * logs can correlate.
      */
-    publicKey?: string | undefined
+    publicKey: string
   }
   /** Epoch-ms creation. */
   createdAt: number
@@ -95,13 +90,9 @@ export type PendingRecord = {
   expiresAt: number
   /** Consumer's `rpc-requests` envelope, queued for delivery on approval. */
   message: Envelope.Envelope
-  /** Opaque single-use handle visible in `verification_uri`. */
-  req: string
-  /**
-   * `rpc-responses` envelope produced by the wrapping `Wata` once the
-   * user approves and the host-side `'request'` listener fires.
-   * `undefined` until delivery.
-   */
+  /** Opaque single-use handle carried by `verification_uri` as `?code=...`. */
+  code: string
+  /** `rpc-responses` envelope submitted at the approval surface. */
   response?: Envelope.Envelope | undefined
   /** Retry budget (seconds) for outbound webhook delivery. */
   retrySeconds: number
@@ -157,17 +148,22 @@ export declare namespace html {
   /** Bring-your-own approval UI hooks. */
   type Hooks = {
     /**
-     * Called for `POST /verify`. Inspect the `request` (form POST
-     * with `req` handle plus your own auth fields), then call
-     * `actions.approve(req)` / `actions.deny(req)` with a Core
-     * `rpc-responses` envelope or none (the wrapping `Wata` will
-     * compute it). Return a `Response` describing what to show.
+     * Called for `POST /verify`. Hosts can inspect form submissions,
+     * enforce session / CSRF checks, then settle with
+     * `actions.approve(code, responseBody)` or
+     * `actions.deny(code)`.
+     * Return a `Response` to show the user the result; return nothing
+     * to let the transport validate and deliver an `application/json`
+     * `rpc-responses` request body verbatim.
      */
-    authenticate: (options: authenticate.Options) => Response | Promise<Response>
+    authenticate?:
+      | ((options: authenticate.Options) => Response | void | Promise<Response | void>)
+      | undefined
     /**
-     * Called for `GET /verify`. Receive the `req` query handle, the
-     * resolved {@link PendingRecord} (when present and pending), and
-     * return the HTML form / page describing the queued requests.
+     * Called for `GET /verify`. Receive the opaque code
+     * from the URL's `?code=` query parameter, the resolved
+     * {@link PendingRecord} (when present and pending), and return the
+     * HTML form / page describing the queued requests.
      */
     render: (options: render.Options) => Response | Promise<Response>
   }
@@ -175,10 +171,10 @@ export declare namespace html {
   namespace render {
     /** Argument passed to {@link html.Hooks.render}. */
     type Options = {
-      /** Pending {@link PendingRecord} for `req`, if found. */
+      /** Pending {@link PendingRecord} for the `code`, if found. */
       record: PendingRecord | undefined
-      /** `req` from the URL query (`?req=...`), if any. */
-      req: string | undefined
+      /** Opaque code from the URL query (`?code=...`), if any. */
+      code: string | undefined
       /** The original `Request` passed to `transport.fetch`. */
       request: Request
     }
@@ -187,30 +183,40 @@ export declare namespace html {
   namespace authenticate {
     /** Argument passed to {@link html.Hooks.authenticate}. */
     type Options = {
-      /** Approve / deny / look up actions exposed to the host's auth handler. */
+      /** Approve / deny / look up actions for form-based approval. */
       actions: Actions
-      /** The form-POST `Request` from the user-agent. */
+      /**
+       * Pending {@link PendingRecord} for the `code`, if present
+       * in the URL query and still pending.
+       */
+      record: PendingRecord | undefined
+      /** Opaque code from the verification URI query (`?code=...`), if any. */
+      code: string | undefined
+      /** The `POST /verify` request from the user-agent. */
       request: Request
     }
   }
 
+  /** Body accepted by {@link Actions.approve} / {@link Actions.deny}. */
+  type ResponseBody = Extract<Envelope.Envelope, { type: 'rpc-responses' }> | string
+
   /** Actions exposed inside {@link html.Hooks.authenticate}. */
   type Actions = {
     /**
-     * Mark the intent as approved by `req` handle. The transport
-     * then emits the queued `rpc-requests` envelope as a `'message'`
-     * event so the wrapping `Wata` dispatches it and produces a
-     * response; the response triggers outbound delivery.
+     * Approve a pending request. Passing a `responseBody` validates
+     * and delivers that body immediately. Omitting it dispatches the
+     * queued request through the host `Wata` request listener, which
+     * is suitable for simple server-side approval flows.
      */
-    approve: (req: string) => Promise<void>
+    approve: (code: string, responseBody?: ResponseBody | undefined) => Promise<void>
     /**
-     * Mark the intent as denied. The transport emits a JSON-RPC
-     * `-32000` error response back to the consumer for every queued
-     * request and triggers outbound delivery.
+     * Deny a pending request. When `responseBody` is omitted, the
+     * transport creates `-32000 denied by user` responses for every
+     * queued JSON-RPC request id and delivers them.
      */
-    deny: (req: string) => Promise<void>
-    /** Look up the {@link PendingRecord} associated with a `req` handle. */
-    get: (req: string) => Promise<PendingRecord | undefined>
+    deny: (code: string, responseBody?: ResponseBody | undefined) => Promise<void>
+    /** Look up the {@link PendingRecord} associated with a code. */
+    get: (code: string) => Promise<PendingRecord | undefined>
   }
 }
 
@@ -269,54 +275,53 @@ export function webhookCallback(options: Options): WebhookCallback {
     )
   }
 
-  function verificationUriFor(requestUrl: string, req: string): string {
+  function verificationUriFor(requestUrl: string, code: string): string {
     const url = new URL(`${resolveBaseUrl(requestUrl)}${path ?? ''}/verify`)
-    url.searchParams.set('req', req)
+    url.searchParams.set('code', code)
     return url.toString()
   }
 
   const emitter = Events.create<Transport.EventMap>()
 
-  // Single-exchange transport: tracks the in-flight auth_req_id so the
-  // user-supplied `'request'` listener's response is keyed back to the
-  // correct pending record on `transport.send()`.
-  type State = { activeAuthReqId: string | undefined; closed: boolean; started: boolean }
+  // Single-exchange transport. Direct approval delivery goes through
+  // POST /verify and raw body forwarding. Form-based
+  // `actions.approve(code)` dispatches into Wata, so response
+  // ids are temporarily mapped back to their pending auth_req_id for
+  // the generic `transport.send`.
+  type State = {
+    activeAuthReqIds: Map<string, string>
+    closed: boolean
+    started: boolean
+  }
   const state: State = {
-    activeAuthReqId: undefined,
+    activeAuthReqIds: new Map(),
     closed: false,
     started: false,
   }
 
   const actions: html.Actions = {
-    async approve(req) {
-      const record = await store.get<PendingRecord>(reqKey(req))
-      if (!record) throw new UnknownReqError(req)
-      if (record.status !== 'pending') return
+    async approve(code, responseBody?) {
+      const record = await requirePendingRecord(code)
+      if (responseBody !== undefined) {
+        await settleWithResponse(record, responseBody)
+        return
+      }
+      const ids = requestIdsFor(record)
+      if (ids.length !== 1)
+        throw new Transport.TransportError(
+          '`actions.approve(code)` without a response body requires exactly one queued JSON-RPC request',
+        )
       record.status = 'approved'
       await persist(record)
-      state.activeAuthReqId = record.authReqId
+      activateDispatch(record)
       emitter.emit('message', record.message)
     },
-    async deny(req) {
-      const record = await store.get<PendingRecord>(reqKey(req))
-      if (!record) throw new UnknownReqError(req)
-      if (record.status !== 'pending') return
-      record.status = 'denied'
-      await persist(record)
-      // Synthesize a JSON-RPC error response for every queued request.
-      const denials = (record.message.type === 'rpc-requests' ? record.message.payload : []).map(
-        (entry) => ({
-          error: { code: -32000, message: 'denied by user' },
-          id: 'id' in entry ? entry.id : null,
-          jsonrpc: '2.0' as const,
-        }),
-      )
-      state.activeAuthReqId = record.authReqId
-      // Skip Wata dispatch — drive the outbound webhook directly.
-      await deliver(record, Envelope.rpcResponses(denials))
+    async deny(code, responseBody) {
+      const record = await requirePendingRecord(code)
+      await settleWithResponse(record, responseBody ?? deniedResponseFor(record))
     },
-    async get(req) {
-      return await store.get<PendingRecord>(reqKey(req))
+    async get(code) {
+      return await store.get<PendingRecord>(codeKey(code))
     },
   }
 
@@ -357,50 +362,6 @@ export function webhookCallback(options: Options): WebhookCallback {
       return c.json(
         { error: 'invalid_request', error_description: 'Content-Digest mismatch' },
         { status: 400 },
-      )
-
-    let consumerKeyHex: Hex.Hex
-    try {
-      consumerKeyHex = base64urlToHex(declaredPubkey)
-    } catch (cause) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: `invalid uRPC-Public-Key: ${(cause as Error).message}`,
-        },
-        { status: 400 },
-      )
-    }
-
-    const httpMessage: MessageSig.HttpMessage = {
-      headers: collectHeaders(request.headers),
-      method: 'POST',
-      url: c.req.url,
-    }
-    let verified: boolean
-    try {
-      verified = MessageSig.verify({
-        message: httpMessage,
-        publicKey: consumerKeyHex,
-        requiredComponents: [
-          '@method',
-          '@target-uri',
-          '@authority',
-          'content-type',
-          'content-digest',
-          'urpc-public-key',
-        ],
-      })
-    } catch (cause) {
-      return c.json(
-        { error: 'unauthorized', error_description: (cause as Error).message },
-        { status: 401 },
-      )
-    }
-    if (!verified)
-      return c.json(
-        { error: 'unauthorized', error_description: 'signature verification failed' },
-        { status: 401 },
       )
 
     let body: { consumer_url?: unknown; expiry?: unknown; message?: unknown; webhook_url?: unknown }
@@ -495,11 +456,69 @@ export function webhookCallback(options: Options): WebhookCallback {
         { status: 403 },
       )
 
+    if (!consumerDoc.identity_pubkey)
+      return c.json(
+        {
+          error: 'unauthorized',
+          error_description: 'consumer.json missing `identity_pubkey` for webhook-callback',
+        },
+        { status: 401 },
+      )
+    if (consumerDoc.identity_pubkey !== declaredPubkey)
+      return c.json(
+        {
+          error: 'unauthorized',
+          error_description: 'uRPC-Public-Key does not match consumer.json identity_pubkey',
+        },
+        { status: 401 },
+      )
+
+    const expectedKeyid = identityKeyid(consumerDoc.origin)
+    try {
+      assertSignatureKeyid(request, expectedKeyid)
+    } catch (cause) {
+      return c.json(
+        { error: 'unauthorized', error_description: (cause as Error).message },
+        { status: 401 },
+      )
+    }
+
+    const httpMessage: MessageSig.HttpMessage = {
+      headers: collectHeaders(request.headers),
+      method: 'POST',
+      url: c.req.url,
+    }
+    let verified: boolean
+    try {
+      verified = MessageSig.verify({
+        message: httpMessage,
+        publicKey: base64urlToHex(consumerDoc.identity_pubkey),
+        requiredComponents: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-public-key',
+        ],
+      })
+    } catch (cause) {
+      return c.json(
+        { error: 'unauthorized', error_description: (cause as Error).message },
+        { status: 401 },
+      )
+    }
+    if (!verified)
+      return c.json(
+        { error: 'unauthorized', error_description: 'signature verification failed' },
+        { status: 401 },
+      )
+
     // Mint fresh opaque identifiers. Spec §3.1.3 — `auth_req_id` and
-    // `req` MUST each carry ≥128 bits of CSPRNG entropy and MUST NOT
-    // be the same value.
+    // the `?code=` handle MUST each carry ≥128 bits of CSPRNG entropy
+    // and MUST NOT be the same value.
     const authReqId = generateOpaque(16)
-    const req = generateOpaque(16)
+    const code = generateOpaque(16)
     const now = Date.now()
     const requestedExpiry =
       typeof body.expiry === 'number' && Number.isFinite(body.expiry) ? body.expiry : expiresIn
@@ -510,6 +529,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       consumer: {
         id: consumerDoc.id,
         origin: consumerDoc.origin,
+        publicKey: consumerDoc.identity_pubkey,
         ...(consumerDoc.name ||
         consumerDoc.icon ||
         consumerDoc.description ||
@@ -523,30 +543,35 @@ export function webhookCallback(options: Options): WebhookCallback {
               },
             }
           : {}),
-        ...(consumerDoc.identity_pubkey ? { publicKey: consumerDoc.identity_pubkey } : {}),
       },
       createdAt: now,
       expiresAt: now + effectiveExpiry * 1000,
       message: envelope,
-      req,
+      code,
       retrySeconds,
       status: 'pending',
       webhookUrl: body.webhook_url,
     }
-    await store.set(reqKey(req), record, { ttl: effectiveExpiry + retrySeconds })
+    await store.set(codeKey(code), record, {
+      ttl: effectiveExpiry + retrySeconds,
+    })
     await store.set(authReqIdKey(authReqId), record, { ttl: effectiveExpiry + retrySeconds })
 
     return c.json({
       auth_req_id: authReqId,
       expires_in: effectiveExpiry,
       retry_seconds: retrySeconds,
-      verification_uri: verificationUriFor(c.req.url, req),
+      verification_uri: verificationUriFor(c.req.url, code),
     })
   })
 
   app.delete('/register/:authReqId', async (c) => {
     const authReqId = c.req.param('authReqId')
-    // Verify signature first.
+    const record = await store.get<PendingRecord>(authReqIdKey(authReqId))
+    // §3.5 — idempotent. Unknown / already-cancelled / already-approved
+    // all collapse into 204 No Content without revealing which case applied.
+    if (!record || record.status !== 'pending') return new Response(null, { status: 204 })
+
     const request = c.req.raw
     const declaredPubkey = request.headers.get('urpc-public-key')
     if (!declaredPubkey)
@@ -554,18 +579,26 @@ export function webhookCallback(options: Options): WebhookCallback {
         { error: 'invalid_request', error_description: 'missing `uRPC-Public-Key`' },
         { status: 400 },
       )
-    let consumerKeyHex: Hex.Hex
-    try {
-      consumerKeyHex = base64urlToHex(declaredPubkey)
-    } catch (cause) {
+
+    if (declaredPubkey !== record.consumer.publicKey)
       return c.json(
         {
-          error: 'invalid_request',
-          error_description: `invalid uRPC-Public-Key: ${(cause as Error).message}`,
+          error: 'unauthorized',
+          error_description: 'uRPC-Public-Key does not match registered consumer identity_pubkey',
         },
-        { status: 400 },
+        { status: 401 },
+      )
+
+    const expectedKeyid = identityKeyid(record.consumer.origin)
+    try {
+      assertSignatureKeyid(request, expectedKeyid)
+    } catch (cause) {
+      return c.json(
+        { error: 'unauthorized', error_description: (cause as Error).message },
+        { status: 401 },
       )
     }
+
     let verified: boolean
     try {
       verified = MessageSig.verify({
@@ -574,7 +607,7 @@ export function webhookCallback(options: Options): WebhookCallback {
           method: 'DELETE',
           url: c.req.url,
         },
-        publicKey: consumerKeyHex,
+        publicKey: base64urlToHex(record.consumer.publicKey),
         requiredComponents: ['@method', '@target-uri', '@authority', 'urpc-public-key'],
       })
     } catch (cause) {
@@ -589,36 +622,97 @@ export function webhookCallback(options: Options): WebhookCallback {
         { status: 401 },
       )
 
-    const record = await store.get<PendingRecord>(authReqIdKey(authReqId))
-    // §3.5 — idempotent. Unknown / already-cancelled / already-approved
-    // all collapse into 204 No Content.
-    if (!record) return new Response(null, { status: 204 })
-    if (record.status === 'pending') {
-      record.status = 'cancelled'
-      await persist(record)
-    }
+    record.status = 'cancelled'
+    await persist(record)
     return new Response(null, { status: 204 })
   })
 
   app.get('/verify', async (c) => {
-    const req = c.req.query('req') ?? undefined
-    const record = req ? await store.get<PendingRecord>(reqKey(req)) : undefined
+    const code = c.req.query('code') ?? undefined
+    const record = code ? await store.get<PendingRecord>(codeKey(code)) : undefined
     const pendingRecord = record && record.status === 'pending' ? record : undefined
-    return await html.render({ record: pendingRecord, req, request: c.req.raw })
+    return await html.render({ record: pendingRecord, request: c.req.raw, code })
   })
 
-  app.post('/verify', (c) => html.authenticate({ actions, request: c.req.raw }))
+  app.post('/verify', async (c) => {
+    const code = c.req.query('code') ?? undefined
+    const request = c.req.raw
+    const record = code ? await store.get<PendingRecord>(codeKey(code)) : undefined
+    const pendingRecord =
+      record && record.status === 'pending' && Date.now() < record.expiresAt ? record : undefined
+
+    if (html.authenticate) {
+      const authResponse = await html.authenticate({
+        actions,
+        record: pendingRecord,
+        request: request.clone(),
+        code,
+      })
+      if (authResponse) return authResponse
+    }
+
+    if (!code)
+      return c.json(
+        { error: 'invalid_request', error_description: 'missing `code` query parameter' },
+        { status: 400 },
+      )
+    if (!record)
+      return c.json(
+        { error: 'not_found', error_description: 'unknown or expired approval request' },
+        { status: 404 },
+      )
+    if (record.status !== 'pending')
+      return c.json(
+        { error: 'conflict', error_description: 'approval request is no longer pending' },
+        { status: 409 },
+      )
+    if (Date.now() >= record.expiresAt) {
+      record.status = 'cancelled'
+      await persist(record)
+      return c.json(
+        { error: 'conflict', error_description: 'approval request expired' },
+        { status: 409 },
+      )
+    }
+
+    const bodyText = await request.text()
+    let responseEnvelope: Extract<Envelope.Envelope, { type: 'rpc-responses' }>
+    try {
+      const envelope = Envelope.parse(JSON.parse(bodyText))
+      if (envelope.type !== 'rpc-responses')
+        throw new Errors.ProtocolError('approval body must be an `rpc-responses` envelope')
+      responseEnvelope = envelope
+    } catch (cause) {
+      return c.json(
+        { error: 'invalid_request', error_description: (cause as Error).message },
+        { status: 400 },
+      )
+    }
+
+    const correlationError = validateApprovalResponse(record, responseEnvelope)
+    if (correlationError)
+      return c.json(
+        { error: 'invalid_request', error_description: correlationError },
+        { status: 400 },
+      )
+
+    await settleWithResponse(record, bodyText)
+    return c.json({ closeTab: true })
+  })
 
   const { fetch, listener } = Http.fromHono(app)
 
   // ── outbound webhook delivery ───────────────────────────────────────
 
   /**
-   * Sign and POST the `rpc-responses` envelope to the consumer's
-   * pre-registered `webhook_url` under the host's identity key.
+   * Sign and POST the approval-surface `rpc-responses` body to the
+   * consumer's pre-registered `webhook_url` under the host's identity key.
    */
-  async function deliver(record: PendingRecord, response: Envelope.Envelope): Promise<void> {
-    const body = JSON.stringify(response)
+  async function deliver(
+    record: PendingRecord,
+    body: string,
+    response: Envelope.Envelope,
+  ): Promise<void> {
     const digest = MessageSig.contentDigest(body)
     const created = Math.floor(Date.now() / 1000)
     const nonce = generateOpaque(16)
@@ -682,15 +776,65 @@ export function webhookCallback(options: Options): WebhookCallback {
   async function persist(record: PendingRecord): Promise<void> {
     const ttl =
       Math.ceil(Math.max(60, (record.expiresAt - Date.now()) / 1000)) + record.retrySeconds
-    await store.set(reqKey(record.req), record, { ttl })
+    await store.set(codeKey(record.code), record, { ttl })
     await store.set(authReqIdKey(record.authReqId), record, { ttl })
+  }
+
+  async function requirePendingRecord(code: string): Promise<PendingRecord> {
+    const record = await store.get<PendingRecord>(codeKey(code))
+    if (!record) throw new UnknownCodeError(code)
+    if (record.status !== 'pending')
+      throw new Transport.TransportError('approval request is no longer pending')
+    if (Date.now() >= record.expiresAt) {
+      record.status = 'cancelled'
+      await persist(record)
+      throw new Transport.TransportError('approval request expired')
+    }
+    return record
+  }
+
+  async function settleWithResponse(
+    record: PendingRecord,
+    responseBody: html.ResponseBody,
+  ): Promise<void> {
+    const { body, envelope } = parseResponseBody(responseBody)
+    const correlationError = validateApprovalResponse(record, envelope)
+    if (correlationError) throw new Errors.ProtocolError(correlationError)
+    record.status = isDeniedResponse(envelope) ? 'denied' : 'approved'
+    await persist(record)
+    await deliver(record, body, envelope)
+  }
+
+  function activateDispatch(record: PendingRecord): void {
+    for (const id of requestIdsFor(record))
+      state.activeAuthReqIds.set(rpcIdKey(id), record.authReqId)
+  }
+
+  function deactivateDispatch(record: PendingRecord): void {
+    for (const id of requestIdsFor(record)) {
+      const key = rpcIdKey(id)
+      if (state.activeAuthReqIds.get(key) === record.authReqId) state.activeAuthReqIds.delete(key)
+    }
+  }
+
+  function resolveActiveAuthReqId(envelope: Envelope.Envelope): string | undefined {
+    if (envelope.type !== 'rpc-responses') return undefined
+    let authReqId: string | undefined
+    for (const response of envelope.payload) {
+      if (response.id === null) continue
+      const next = state.activeAuthReqIds.get(rpcIdKey(response.id))
+      if (!next) continue
+      if (authReqId && authReqId !== next)
+        throw new Transport.TransportError('response envelope spans multiple auth_req_id values')
+      authReqId = next
+    }
+    return authReqId
   }
 
   return {
     bind(binding) {
       const { baseUrl, identity } = binding
-      if (baseUrl && !baseUrl_ctor && !baseUrl_bound)
-        baseUrl_bound = Uri.trimTrailingSlash(baseUrl)
+      if (baseUrl && !baseUrl_ctor && !baseUrl_bound) baseUrl_bound = Uri.trimTrailingSlash(baseUrl)
       if (identity && !identity_bound) identity_bound = identity
     },
     async close(cause) {
@@ -716,10 +860,10 @@ export function webhookCallback(options: Options): WebhookCallback {
     async send(envelope) {
       if (state.closed) throw new Transport.ClosedError('webhook-callback transport already closed')
       if (!state.started) throw new Transport.ClosedError('webhook-callback transport not started')
-      const authReqId = state.activeAuthReqId
+      const authReqId = resolveActiveAuthReqId(envelope)
       if (!authReqId)
         throw new Transport.TransportError(
-          'no active auth_req_id; `transport.send` was called before any approval',
+          'no active auth_req_id for response; `transport.send` was called before any approval',
         )
       const record = await store.get<PendingRecord>(authReqIdKey(authReqId))
       if (!record)
@@ -727,13 +871,19 @@ export function webhookCallback(options: Options): WebhookCallback {
           'pending intent disappeared from store before response delivery',
         )
       try {
-        await deliver(record, envelope)
+        if (envelope.type !== 'rpc-responses')
+          throw new Transport.TransportError(
+            `webhook-callback transport only sends rpc-responses envelopes; received \`${envelope.type}\``,
+          )
+        const correlationError = validateApprovalResponse(record, envelope)
+        if (correlationError) throw new Errors.ProtocolError(correlationError)
+        await deliver(record, JSON.stringify(envelope), envelope)
       } finally {
         // `single_exchange` is per `auth_req_id`, not per transport
         // lifetime: the wallet server is long-running and handles
         // many sequential intents. Clear the slot so the next
         // approval can dispatch through, but keep the transport open.
-        state.activeAuthReqId = undefined
+        deactivateDispatch(record)
       }
     },
     async start() {
@@ -747,8 +897,8 @@ function identityKeyid(url: string): string {
   return `${new URL(url).origin}#identity`
 }
 
-function reqKey(req: string): string {
-  return `webhook:req:${req}`
+function codeKey(code: string): string {
+  return `webhook:code:${code}`
 }
 
 function authReqIdKey(authReqId: string): string {
@@ -759,6 +909,85 @@ function generateOpaque(byteCount: number): string {
   return Base64.fromBytes(Bytes.random(byteCount), { pad: false, url: true })
 }
 
+function validateApprovalResponse(
+  record: PendingRecord,
+  response: Extract<Envelope.Envelope, { type: 'rpc-responses' }>,
+): string | undefined {
+  if (record.message.type !== 'rpc-requests')
+    return 'pending intent is not an `rpc-requests` envelope'
+
+  const expected = new Map<string, Rpc.Id>()
+  for (const request of record.message.payload) {
+    if (!('id' in request)) continue
+    expected.set(rpcIdKey(request.id), request.id)
+  }
+  if (expected.size === 0) return 'pending intent contains no JSON-RPC requests to correlate'
+
+  const seen = new Set<string>()
+  for (const item of response.payload) {
+    if (item.id === null) return 'response id `null` does not correlate to a queued request'
+    const key = rpcIdKey(item.id)
+    if (!expected.has(key)) return `response id ${formatRpcId(item.id)} is not queued`
+    if (seen.has(key)) return `response id ${formatRpcId(item.id)} appears more than once`
+    seen.add(key)
+  }
+  for (const [key, id] of expected) {
+    if (!seen.has(key)) return `missing response for request id ${formatRpcId(id)}`
+  }
+  return undefined
+}
+
+function parseResponseBody(responseBody: html.ResponseBody): {
+  body: string
+  envelope: Extract<Envelope.Envelope, { type: 'rpc-responses' }>
+} {
+  const body = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody)
+  const envelope = Envelope.parse(
+    typeof responseBody === 'string' ? JSON.parse(body) : responseBody,
+  )
+  if (envelope.type !== 'rpc-responses')
+    throw new Errors.ProtocolError('approval body must be an `rpc-responses` envelope')
+  return { body, envelope }
+}
+
+function deniedResponseFor(
+  record: PendingRecord,
+): Extract<Envelope.Envelope, { type: 'rpc-responses' }> {
+  return Envelope.rpcResponses(
+    requestIdsFor(record).map((id) =>
+      Rpc.error({
+        code: -32000,
+        id,
+        message: 'denied by user',
+      }),
+    ),
+  )
+}
+
+function requestIdsFor(record: PendingRecord): Rpc.Id[] {
+  if (record.message.type !== 'rpc-requests') return []
+  const ids: Rpc.Id[] = []
+  for (const request of record.message.payload) if ('id' in request) ids.push(request.id)
+  return ids
+}
+
+function isDeniedResponse(
+  response: Extract<Envelope.Envelope, { type: 'rpc-responses' }>,
+): boolean {
+  return response.payload.every(
+    (item) =>
+      'error' in item && item.error.code === -32000 && item.error.message === 'denied by user',
+  )
+}
+
+function rpcIdKey(id: Rpc.Id): string {
+  return `${typeof id}:${String(id)}`
+}
+
+function formatRpcId(id: Rpc.Id): string {
+  return typeof id === 'string' ? JSON.stringify(id) : String(id)
+}
+
 function collectHeaders(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {}
   headers.forEach((value, key) => {
@@ -767,20 +996,25 @@ function collectHeaders(headers: Headers): Record<string, string> {
   return out
 }
 
+function assertSignatureKeyid(request: Request, expectedKeyid: string): void {
+  const parsedInput = MessageSig.parseSignatureInput(request.headers.get('signature-input') ?? '')
+  if (parsedInput.parameters.keyid !== expectedKeyid)
+    throw new MessageSig.InvalidSignatureError(
+      `signature keyid mismatch: expected \`${expectedKeyid}\`, received \`${parsedInput.parameters.keyid ?? '<missing>'}\``,
+    )
+}
+
 function base64urlToHex(value: string): Hex.Hex {
   return Hex.fromBytes(Base64.toBytes(value))
 }
 
-/**
- * Thrown by {@link html.Actions} when the supplied `req` handle
- * doesn't match any pending record.
- */
-export class UnknownReqError<
+/** Thrown when a supplied code does not match any pending record. */
+export class UnknownCodeError<
   cause extends Error | undefined = Error | undefined,
 > extends Errors.BaseError<cause> {
-  override name = 'WebhookCallback.UnknownReqError'
+  override name = 'WebhookCallback.UnknownCodeError'
 
-  constructor(req: string, options: Errors.BaseError.Options<cause> = {} as never) {
-    super(`no pending intent for req \`${req}\``, options)
+  constructor(code: string, options: Errors.BaseError.Options<cause> = {} as never) {
+    super(`no pending intent for code \`${code}\``, options)
   }
 }
