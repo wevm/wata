@@ -992,6 +992,81 @@ describe('webhookCallback end-to-end', () => {
     expect(third.status).toBe(401)
   })
 
+  test('consumer does not consume idempotency keys for invalid webhook bodies', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostKeypair,
+      hostStore,
+      webhookUrl,
+    } = pair()
+    const consumer = Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    const sendPromise = consumer.send({ method: 'ping', params: [] })
+    const code = await findActiveCode()
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    async function postWebhook(body: string, nonce: string) {
+      const headers = {
+        'content-digest': MessageSig.contentDigest(body),
+        'content-type': 'application/json',
+        'urpc-auth-req-id': record.authReqId,
+        'urpc-idempotency-key': record.authReqId,
+        'urpc-public-key': ed25519Pubkey(hostKeypair.publicKey),
+      }
+      const { signature, signatureInput } = MessageSig.sign({
+        components: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-auth-req-id',
+          'urpc-public-key',
+        ],
+        message: { headers, method: 'POST', url: webhookUrl },
+        parameters: {
+          alg: 'ed25519',
+          created: Math.floor(Date.now() / 1000),
+          keyid: 'https://wallet.example#identity',
+          nonce,
+        },
+        privateKey: hostKeypair.privateKey,
+      })
+      return await consumerTransport.fetch(
+        new Request(webhookUrl, {
+          body,
+          headers: { ...headers, signature, 'signature-input': signatureInput },
+          method: 'POST',
+        }),
+      )
+    }
+
+    const invalid = await postWebhook('{"type":"rpc-responses","payload":[', 'invalid-body')
+    const validBody = JSON.stringify(
+      Envelope.rpcResponses(
+        record.message.type === 'rpc-requests'
+          ? record.message.payload.flatMap((entry) =>
+              'id' in entry ? [Rpc.success({ id: entry.id, result: { ok: true } })] : [],
+            )
+          : [],
+      ),
+    )
+    const valid = await postWebhook(validBody, 'valid-body')
+
+    expect(invalid.status).toBe(400)
+    expect(valid.status).toBe(200)
+    await expect(sendPromise).resolves.toMatchObject({ result: { ok: true } })
+  })
+
   test('consumer rejects webhook delivery without a signature nonce', async () => {
     const {
       consumerKeypair,
