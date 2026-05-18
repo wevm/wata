@@ -446,7 +446,9 @@ export function webhookCallback(options: Options): WebhookCallback {
     },
     async get(code) {
       const record = await store.get<PendingRecord>(codeKey(code))
-      return record ? approvalRecord(record, consumerIconPath(record)) : undefined
+      if (!record || record.status !== 'pending') return undefined
+      if (Date.now() >= record.expiresAt) return undefined
+      return approvalRecord(record, consumerIconPath(record))
     },
   }
 

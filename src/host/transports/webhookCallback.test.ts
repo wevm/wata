@@ -964,6 +964,67 @@ describe('webhookCallback end-to-end', () => {
     expect(fetches).toBe(1)
   })
 
+  test('approval actions only expose live pending records', async () => {
+    const store = memoryWithScan()
+    const now = Date.now()
+    await store.set('webhook:code:delivered-code', {
+      authReqId: 'auth-1',
+      code: 'delivered-code',
+      consumer: {
+        id: 'acme.dev',
+        origin: 'https://acme.dev',
+        publicKey: 'A'.repeat(43),
+      },
+      createdAt: now,
+      expiresAt: now + 60_000,
+      message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+      retrySeconds: 300,
+      status: 'delivered',
+      webhookUrl: 'https://acme.dev/cb',
+    } satisfies HostWebhookCallback.PendingRecord)
+    await store.set('webhook:code:expired-code', {
+      authReqId: 'auth-2',
+      code: 'expired-code',
+      consumer: {
+        id: 'acme.dev',
+        origin: 'https://acme.dev',
+        publicKey: 'A'.repeat(43),
+      },
+      createdAt: now - 120_000,
+      expiresAt: now - 60_000,
+      message: Envelope.rpcRequests([{ id: 2, jsonrpc: '2.0', method: 'pong', params: [] }]),
+      retrySeconds: 300,
+      status: 'pending',
+      webhookUrl: 'https://acme.dev/cb',
+    } satisfies HostWebhookCallback.PendingRecord)
+
+    let delivered: HostWebhookCallback.html.ApprovalRecord | undefined
+    let expired: HostWebhookCallback.html.ApprovalRecord | undefined
+    const transport = hostWebhookCallback({
+      html: {
+        async authenticate({ actions }) {
+          delivered = await actions.get('delivered-code')
+          expired = await actions.get('expired-code')
+          return new Response('ok')
+        },
+        render: () => new Response('ok'),
+      },
+      store,
+    })
+
+    const response = await transport.fetch(
+      new Request('https://wallet.example/verify', {
+        body: '',
+        headers: { origin: 'https://wallet.example' },
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(delivered).toBeUndefined()
+    expect(expired).toBeUndefined()
+  })
+
   test('rejects supplied invalid verification codes before rendering', async () => {
     let renders = 0
     const transport = hostWebhookCallback({
