@@ -904,9 +904,87 @@ describe('webhookCallback end-to-end', () => {
     expect(await response.json()).toMatchInlineSnapshot(`
       {
         "error": "forbidden",
-        "error_description": "\`webhook_url\` must use https",
+        "error_description": "\`webhook_url\` must use https (http allowed only for loopback)",
       }
     `)
+  })
+
+  test('allows loopback HTTP webhook_url for local development', async () => {
+    const consumerOrigin = 'http://localhost:4646'
+    const hostOrigin = 'https://wallet.example'
+    const hostPath = '/auth/webhook'
+    const webhookUrl = `${consumerOrigin}/cb`
+    const consumerKeypair = Ed25519.createKeyPair()
+    const consumerPublicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const consumerWk = consumerWellknown({
+      document: {
+        callback_urls: [webhookUrl],
+        id: 'localhost',
+        identity_pubkey: consumerPublicKey,
+        name: 'Local Consumer',
+        origin: consumerOrigin,
+        version: '1.0',
+      },
+    })
+    const hostTransport = hostWebhookCallback({
+      baseUrl: hostOrigin,
+      fetch: (async (input: Request | string, init?: RequestInit) => {
+        const url = input instanceof Request ? input.url : String(input)
+        const request = input instanceof Request ? input : new Request(url, init)
+        if (url === `${consumerOrigin}/.well-known/urpc/consumer.json`)
+          return consumerWk.fetch(request)
+        throw new Error(`unexpected fetch to ${url}`)
+      }) as typeof fetch,
+      html: { render: () => new Response('ok') },
+      path: hostPath,
+      store: Kv.memory(),
+    })
+    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+    const body = JSON.stringify({ message, webhook_url: webhookUrl })
+    const digest = MessageSig.contentDigest(body)
+    const registerUrl = `${hostOrigin}${hostPath}/register`
+    const { signature, signatureInput } = MessageSig.sign({
+      components: [
+        '@method',
+        '@target-uri',
+        '@authority',
+        'content-type',
+        'content-digest',
+        'urpc-public-key',
+      ],
+      message: {
+        headers: {
+          'content-digest': digest,
+          'content-type': 'application/json',
+          'urpc-public-key': consumerPublicKey,
+        },
+        method: 'POST',
+        url: registerUrl,
+      },
+      parameters: {
+        alg: 'ed25519',
+        created: Math.floor(Date.now() / 1000),
+        keyid: `${consumerOrigin}#identity`,
+        nonce: 'n',
+      },
+      privateKey: consumerKeypair.privateKey,
+    })
+
+    const response = await hostTransport.fetch(
+      new Request(registerUrl, {
+        body,
+        headers: {
+          'content-digest': digest,
+          'content-type': 'application/json',
+          signature,
+          'signature-input': signatureInput,
+          'urpc-public-key': consumerPublicKey,
+        },
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(200)
   })
 
   test('rejects /register when webhook_url is not in consumer.json callback_urls', async () => {

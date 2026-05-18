@@ -458,9 +458,12 @@ export function webhookCallback(options: Options): WebhookCallback {
         { error: 'invalid_request', error_description: 'invalid `webhook_url`' },
         { status: 400 },
       )
-    if (webhookUrl.protocol !== 'https:')
+    if (!isAllowedWebhookUrl(webhookUrl))
       return c.json(
-        { error: 'forbidden', error_description: '`webhook_url` must use https' },
+        {
+          error: 'forbidden',
+          error_description: '`webhook_url` must use https (http allowed only for loopback)',
+        },
         { status: 403 },
       )
 
@@ -1067,6 +1070,17 @@ export function webhookCallback(options: Options): WebhookCallback {
 
 function identityKeyid(url: string): string {
   return `${new URL(url).origin}#identity`
+}
+
+function isAllowedWebhookUrl(url: URL): boolean {
+  if (url.protocol === 'https:') return true
+  if (url.protocol !== 'http:') return false
+  return (
+    url.hostname === 'localhost' ||
+    url.hostname === '127.0.0.1' ||
+    url.hostname === '[::1]' ||
+    url.hostname === '::1'
+  )
 }
 
 function codeKey(code: string): string {
