@@ -546,6 +546,59 @@ describe('webhookCallback end-to-end', () => {
     )
   })
 
+  test('consumer requires lifetime fields in the /register response', async () => {
+    async function expectRegisterResponseRejected(
+      responseBody: Record<string, unknown>,
+      message: string,
+    ) {
+      const hostKeypair = Ed25519.createKeyPair()
+      const consumerKeypair = Ed25519.createKeyPair()
+      const hostDocument = {
+        id: 'wallet.example',
+        identity_pubkey: ed25519Pubkey(hostKeypair.publicKey),
+        name: 'Example Wallet',
+        origin: 'https://wallet.example',
+        transports: {
+          'webhook-callback': {
+            auth_url_origin: 'https://wallet.example',
+            register_url: 'https://wallet.example/register',
+          },
+        },
+        version: '1.0',
+      } satisfies Discovery.HostDocument
+      const transport = webhookCallback({
+        fetch: (async () => Response.json(responseBody)) as typeof fetch,
+        host: hostDocument,
+        path: '/cb',
+        store: Kv.memory(),
+      })
+      Wata.create({
+        baseUrl: 'https://acme.dev',
+        privateKey: consumerKeypair.privateKey,
+        transport,
+      })
+
+      await expect(
+        transport.send(Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])),
+      ).rejects.toThrow(message)
+    }
+
+    const baseResponse = {
+      auth_req_id: 'auth-1',
+      retry_seconds: 300,
+      verification_uri: 'https://wallet.example/auth?code=opaque',
+    }
+
+    await expectRegisterResponseRejected(
+      baseResponse,
+      'host /register response missing `expires_in`',
+    )
+    await expectRegisterResponseRejected(
+      { ...baseResponse, expires_in: 60, retry_seconds: undefined },
+      'host /register response missing `retry_seconds`',
+    )
+  })
+
   test('rejects approval body whose response ids do not match the queued request', async () => {
     const {
       consumerKeypair,

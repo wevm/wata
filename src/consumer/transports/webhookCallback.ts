@@ -59,9 +59,9 @@ export type Prompt = {
   /** Opaque host-issued correlation id for the pending intent. */
   authReqId: string
   /** Approval-window lifetime (seconds) advertised by the host. */
-  expiresIn: number | undefined
-  /** Retry-budget hint (seconds) advertised by the host, if any. */
-  retrySeconds: number | undefined
+  expiresIn: number
+  /** Retry-budget hint (seconds) advertised by the host. */
+  retrySeconds: number
   /** Fully-qualified URL the user should open to approve the request. */
   verificationUri: string
 }
@@ -311,6 +311,10 @@ export function webhookCallback(options: Options): WebhookCallback {
       throw new Transport.TransportError('webhook-callback /register returned a non-object body')
     if (typeof data.auth_req_id !== 'string')
       throw new Transport.TransportError('host /register response missing `auth_req_id`')
+    if (typeof data.expires_in !== 'number' || !Number.isFinite(data.expires_in))
+      throw new Transport.TransportError('host /register response missing `expires_in`')
+    if (typeof data.retry_seconds !== 'number' || !Number.isFinite(data.retry_seconds))
+      throw new Transport.TransportError('host /register response missing `retry_seconds`')
     if (typeof data.verification_uri !== 'string')
       throw new Transport.TransportError('host /register response missing `verification_uri`')
 
@@ -346,8 +350,8 @@ export function webhookCallback(options: Options): WebhookCallback {
     if (onPrompt)
       await onPrompt({
         authReqId: data.auth_req_id,
-        expiresIn: typeof data.expires_in === 'number' ? data.expires_in : undefined,
-        retrySeconds: typeof data.retry_seconds === 'number' ? data.retry_seconds : undefined,
+        expiresIn: data.expires_in,
+        retrySeconds: data.retry_seconds,
         verificationUri,
       })
   }
