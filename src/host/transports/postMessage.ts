@@ -17,7 +17,10 @@
  * const wata = Wata.create({
  *   transport: postMessage({ targetOrigin: 'https://app.example' }),
  * })
- * await wata.start()
+ *
+ * wata.on('request', async (event) => {
+ *   if (event.method === 'ping') await event.respond({ ok: true })
+ * })
  * ```
  *
  * @example explicit MessagePort target
