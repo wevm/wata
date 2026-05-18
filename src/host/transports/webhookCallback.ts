@@ -769,7 +769,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     const record = await store.get<PendingRecord>(codeKey(code))
     if (!record || record.status !== 'pending') return invalidVerificationUriResponse()
     if (Date.now() >= record.expiresAt) {
-      record.status = 'cancelled'
+      cancelRecord(record)
       await persist(record)
       return invalidVerificationUriResponse()
     }
@@ -814,7 +814,7 @@ export function webhookCallback(options: Options): WebhookCallback {
         { status: 409 },
       )
     if (Date.now() >= record.expiresAt) {
-      record.status = 'cancelled'
+      cancelRecord(record)
       await persist(record)
       return c.json(
         { error: 'conflict', error_description: 'approval request expired' },
@@ -1023,8 +1023,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       await persist(current)
       return
     }
-    current.message = Envelope.rpcRequests([])
-    current.status = 'cancelled'
+    cancelRecord(current)
     await persistAuthRecord(current)
   }
 
@@ -1087,7 +1086,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     if (record.status !== 'pending')
       throw new Transport.TransportError('approval request is no longer pending')
     if (Date.now() >= record.expiresAt) {
-      record.status = 'cancelled'
+      cancelRecord(record)
       await persist(record)
       throw new Transport.TransportError('approval request expired')
     }
@@ -1109,7 +1108,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       throw new ApprovalConflictError('approval request is no longer pending')
     }
     if (Date.now() >= record.expiresAt) {
-      record.status = 'cancelled'
+      cancelRecord(record)
       await persist(record)
       throw new ApprovalConflictError('approval request expired')
     }
@@ -1345,6 +1344,11 @@ function deliveryRetryDelay(attempt: number): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function cancelRecord(record: PendingRecord): void {
+  record.message = Envelope.rpcRequests([])
+  record.status = 'cancelled'
 }
 
 function validateApprovalResponse(

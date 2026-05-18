@@ -1008,6 +1008,50 @@ describe('webhookCallback end-to-end', () => {
     expect(record.status).toBe('pending')
   })
 
+  test('discards queued messages when an approval request expires', async () => {
+    const setup = pair()
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+
+    await setup.consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await setup.findActiveCode()
+    const record = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    await setup.hostStore.set(`webhook:code:${code}`, {
+      ...record,
+      expiresAt: Date.now() - 1,
+    } satisfies HostWebhookCallback.PendingRecord)
+
+    const response = await setup.postApproval(
+      code,
+      JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
+    )
+    const after = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:authReqId:${record.authReqId}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "conflict",
+        "error_description": "approval request expired",
+      }
+    `)
+    expect(after.status).toBe('cancelled')
+    expect(after.message).toMatchInlineSnapshot(`
+      {
+        "payload": [],
+        "type": "rpc-requests",
+      }
+    `)
+  })
+
   test('rejects a second approval submission for the same code', async () => {
     const setup = pair()
     const consumer = Wata.create({
