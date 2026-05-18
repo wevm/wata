@@ -457,7 +457,7 @@ describe('webhookCallback end-to-end', () => {
       setup.consumerTransport.send(
         Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
       ),
-    ).rejects.toThrow('consumer discovery fetch failed: blocked private address')
+    ).rejects.toThrow('blocked private address')
     expect(setup.hostStore.scanKeys('webhook:code:')).toEqual([])
   })
 

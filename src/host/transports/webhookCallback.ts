@@ -619,11 +619,15 @@ export function webhookCallback(options: Options): WebhookCallback {
 
     let consumerDoc: Discovery.ConsumerDocument | undefined
     try {
-      await validateOutbound({
-        kind: 'consumer-discovery',
-        url: new URL(Discovery.consumerUrl(webhookUrl.origin)),
+      consumerDoc = await Discovery.fetchConsumer(webhookUrl.origin, {
+        fetch: (input, init) => {
+          const url = fetchInputUrl(input)
+          return fetchOutbound(url, fetchInputInit(input, init), {
+            kind: 'consumer-discovery',
+            url,
+          })
+        },
       })
-      consumerDoc = await Discovery.fetchConsumer(webhookUrl.origin, { fetch: fetchImpl })
     } catch (cause) {
       return c.json(
         {
@@ -1066,16 +1070,16 @@ export function webhookCallback(options: Options): WebhookCallback {
 
     let httpResponse: Response
     try {
-      await validateOutbound({
-        authReqId: record.authReqId,
-        kind: 'webhook-delivery',
-        url: new URL(record.webhookUrl),
-      })
-      httpResponse = await fetchImpl(record.webhookUrl, {
+      const webhookUrl = new URL(record.webhookUrl)
+      httpResponse = await fetchOutbound(webhookUrl, {
         body,
         headers,
         method: 'POST',
         redirect: 'manual',
+      }, {
+        authReqId: record.authReqId,
+        kind: 'webhook-delivery',
+        url: webhookUrl,
       })
     } catch (cause) {
       return {
@@ -1159,28 +1163,42 @@ export function webhookCallback(options: Options): WebhookCallback {
     })
   }
 
-  async function validateOutbound(request: Options.OutboundRequest): Promise<void> {
+  async function validateOutbound(
+    request: Options.OutboundRequest,
+  ): Promise<ResolvedAddress | undefined> {
+    let resolved: ResolvedAddress | undefined
     if (!fetch_option && !isLoopbackOutboundAllowed(request.url)) {
       const defaultValidation = await validateDefaultOutboundRequest(request)
       if (defaultValidation === 'unsupported' && !validateOutboundRequest)
         throw new Transport.TransportError(
           'runtime cannot validate public webhook-callback outbound DNS addresses',
         )
+      if (defaultValidation !== 'unsupported') resolved = defaultValidation.address
     }
-    if (!validateOutboundRequest) return
+    if (!validateOutboundRequest) return resolved
     await validateOutboundRequest({ ...request, url: new URL(request.url.toString()) })
+    return resolved
+  }
+
+  async function fetchOutbound(
+    url: URL,
+    init: RequestInit | undefined,
+    request: Options.OutboundRequest,
+  ): Promise<Response> {
+    const resolved = await validateOutbound(request)
+    if (resolved && !fetch_option) return fetchWithResolvedAddress(url, init, resolved)
+    return fetchImpl(url, init)
   }
 
   async function fetchConsumerIcon(
     url: URL,
     record: PendingRecord,
   ): Promise<CachedConsumerIcon> {
-    await validateOutbound({
+    const response = await fetchOutbound(url, { redirect: 'manual' }, {
       authReqId: record.authReqId,
       kind: 'consumer-icon',
       url,
     })
-    const response = await fetchImpl(url, { redirect: 'manual' })
     if (response.status >= 300 && response.status < 400)
       throw new Transport.TransportError('consumer icon redirected')
     if (!response.ok)
@@ -1475,9 +1493,14 @@ export function webhookCallback(options: Options): WebhookCallback {
 
 let nodeDnsLookup: Promise<typeof import('node:dns/promises').lookup> | undefined
 
+type ResolvedAddress = {
+  address: string
+  family: 4 | 6
+}
+
 async function validateDefaultOutboundRequest(
   request: Options.OutboundRequest,
-): Promise<'unsupported' | 'validated'> {
+): Promise<'unsupported' | { address: ResolvedAddress }> {
   const lookup = await loadNodeDnsLookup()
   if (!lookup) return 'unsupported'
   const addresses = await lookup(canonicalHostname(request.url.hostname), {
@@ -1495,7 +1518,7 @@ async function validateDefaultOutboundRequest(
       `outbound ${request.kind} host \`${request.url.hostname}\` resolved to reserved address ${address}`,
     )
   }
-  return 'validated'
+  return { address: addresses[0] as ResolvedAddress }
 }
 
 async function loadNodeDnsLookup(): Promise<
@@ -1504,6 +1527,122 @@ async function loadNodeDnsLookup(): Promise<
   if (!isNodeRuntime()) return undefined
   if (!nodeDnsLookup) nodeDnsLookup = import('node:dns/promises').then(({ lookup }) => lookup)
   return await nodeDnsLookup
+}
+
+function fetchInputUrl(input: RequestInfo | URL): URL {
+  if (input instanceof Request) return new URL(input.url)
+  return new URL(input.toString())
+}
+
+function fetchInputInit(input: RequestInfo | URL, init: RequestInit | undefined): RequestInit {
+  if (!(input instanceof Request)) return init ?? {}
+  return {
+    ...init,
+    body: input.body,
+    headers: input.headers,
+    method: input.method,
+    signal: input.signal,
+  }
+}
+
+async function fetchWithResolvedAddress(
+  url: URL,
+  init: RequestInit | undefined,
+  resolved: ResolvedAddress,
+): Promise<Response> {
+  if (url.protocol !== 'https:' && url.protocol !== 'http:')
+    throw new Transport.TransportError(`unsupported outbound URL protocol \`${url.protocol}\``)
+  const { request } =
+    url.protocol === 'https:' ? await import('node:https') : await import('node:http')
+  const body = await requestBodyBytes(init?.body)
+  return await new Promise<Response>((resolve, reject) => {
+    const headers = new Headers(init?.headers)
+    if (!headers.has('host')) headers.set('host', url.host)
+    const req = request(
+      {
+        headers: nodeHeaders(headers),
+        hostname: resolved.address,
+        method: init?.method ?? 'GET',
+        path: `${url.pathname}${url.search}`,
+        port: url.port ? Number(url.port) : undefined,
+        protocol: url.protocol,
+        servername: canonicalHostname(url.hostname),
+      },
+      (res) => {
+        const chunks: Uint8Array[] = []
+        res.on('data', (chunk: string | Uint8Array) => {
+          chunks.push(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : chunk)
+        })
+        res.on('error', reject)
+        res.on('end', () => {
+          const status = res.statusCode
+          if (!status) {
+            reject(new Transport.TransportError('outbound response missing HTTP status'))
+            return
+          }
+          const bytes = concatBytes(chunks)
+          const init: ResponseInit = {
+            headers: responseHeaders(res.rawHeaders),
+            status,
+            ...(res.statusMessage ? { statusText: res.statusMessage } : {}),
+          }
+          resolve(
+            new Response(bytes.buffer, init),
+          )
+        })
+      },
+    )
+    req.on('error', reject)
+    const signal = init?.signal
+    const abort = () => req.destroy(new Error('outbound request aborted'))
+    if (signal?.aborted) {
+      abort()
+      return
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+    req.on('close', () => signal?.removeEventListener('abort', abort))
+    if (body) req.write(body)
+    req.end()
+  })
+}
+
+async function requestBodyBytes(body: BodyInit | null | undefined): Promise<Uint8Array | undefined> {
+  if (body === undefined || body === null) return undefined
+  if (typeof body === 'string') return new TextEncoder().encode(body)
+  if (body instanceof URLSearchParams) return new TextEncoder().encode(body.toString())
+  if (body instanceof Blob) return new Uint8Array(await body.arrayBuffer())
+  if (body instanceof ArrayBuffer) return new Uint8Array(body)
+  if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength)
+  throw new Transport.TransportError('unsupported outbound request body type')
+}
+
+function nodeHeaders(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {}
+  headers.forEach((value, key) => {
+    out[key] = value
+  })
+  return out
+}
+
+function responseHeaders(rawHeaders: string[]): Headers {
+  const headers = new Headers()
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    const name = rawHeaders[i]
+    const value = rawHeaders[i + 1]
+    if (name && value !== undefined) headers.append(name, value)
+  }
+  return headers
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array<ArrayBuffer> {
+  const length = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
+  const out = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return out
 }
 
 function isNodeRuntime(): boolean {
