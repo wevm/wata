@@ -1156,27 +1156,34 @@ function isReservedHost(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
   if (isLoopbackHost(host)) return true
   const ipv4 = parseIpv4(host)
-  if (ipv4) {
-    const [a, b, c, d] = ipv4
-    if (a === 0) return true
-    if (a === 10) return true
-    if (a === 100 && b >= 64 && b <= 127) return true
-    if (a === 169 && b === 254) return true
-    if (a === 172 && b >= 16 && b <= 31) return true
-    if (a === 192 && b === 168) return true
-    if (a === 192 && b === 0 && c === 2) return true
-    if (a === 198 && b === 51 && c === 100) return true
-    if (a === 203 && b === 0 && c === 113) return true
-    if (a >= 224) return true
-    if (a === 255 && b === 255 && c === 255 && d === 255) return true
-    return false
-  }
+  if (ipv4) return isReservedIpv4(ipv4)
+  const mappedIpv4 = parseIpv4MappedIpv6(host)
+  if (mappedIpv4) return isReservedIpv4(mappedIpv4)
   if (host === '::') return true
-  if (host.startsWith('fe80:')) return true
-  if (host.startsWith('fc') || host.startsWith('fd')) return true
-  if (host.startsWith('ff')) return true
   if (host.startsWith('2001:db8:')) return true
+  const firstHextet = parseIpv6Hextet(host.split(':')[0] ?? '')
+  if (firstHextet === undefined) return host === 'fd00:ec2::254'
+  if ((firstHextet & 0xffc0) === 0xfe80) return true
+  if ((firstHextet & 0xfe00) === 0xfc00) return true
+  if ((firstHextet & 0xff00) === 0xff00) return true
   return host === 'fd00:ec2::254'
+}
+
+function isReservedIpv4(ipv4: [number, number, number, number]): boolean {
+  const [a, b, c, d] = ipv4
+  if (a === 0) return true
+  if (a === 10) return true
+  if (a === 127) return true
+  if (a === 100 && b >= 64 && b <= 127) return true
+  if (a === 169 && b === 254) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 192 && b === 168) return true
+  if (a === 192 && b === 0 && c === 2) return true
+  if (a === 198 && b === 51 && c === 100) return true
+  if (a === 203 && b === 0 && c === 113) return true
+  if (a >= 224) return true
+  if (a === 255 && b === 255 && c === 255 && d === 255) return true
+  return false
 }
 
 function parseIpv4(hostname: string): [number, number, number, number] | undefined {
@@ -1185,6 +1192,21 @@ function parseIpv4(hostname: string): [number, number, number, number] | undefin
   const bytes = parts.map((part) => Number(part))
   if (bytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) return undefined
   return bytes as [number, number, number, number]
+}
+
+function parseIpv4MappedIpv6(hostname: string): [number, number, number, number] | undefined {
+  if (!hostname.startsWith('::ffff:')) return undefined
+  const parts = hostname.slice('::ffff:'.length).split(':')
+  if (parts.length !== 2) return undefined
+  const high = parseIpv6Hextet(parts[0] ?? '')
+  const low = parseIpv6Hextet(parts[1] ?? '')
+  if (high === undefined || low === undefined) return undefined
+  return [(high >> 8) & 255, high & 255, (low >> 8) & 255, low & 255]
+}
+
+function parseIpv6Hextet(value: string): number | undefined {
+  if (!/^[0-9a-f]{1,4}$/i.test(value)) return undefined
+  return Number.parseInt(value, 16)
 }
 
 function codeKey(code: string): string {

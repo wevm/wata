@@ -1090,28 +1090,35 @@ describe('webhookCallback end-to-end', () => {
 
   test('rejects reserved webhook_url hosts from non-loopback hosts', async () => {
     const { consumerKeypair, hostOrigin, hostPath, hostTransport } = pair()
-    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
-    const body = JSON.stringify({ message, webhook_url: 'https://127.0.0.1/cb' })
-    const digest = MessageSig.contentDigest(body)
-    const response = await hostTransport.fetch(
-      new Request(`${hostOrigin}${hostPath}/register`, {
-        body,
-        headers: {
-          'content-digest': digest,
-          'content-type': 'application/json',
-          'urpc-public-key': ed25519Pubkey(consumerKeypair.publicKey),
-        },
-        method: 'POST',
-      }),
-    )
+    const urls = [
+      'https://127.0.0.1/cb',
+      'https://[::ffff:127.0.0.1]/cb',
+      'https://[fea0::1]/cb',
+    ]
 
-    expect(response.status).toBe(403)
-    expect(await response.json()).toMatchInlineSnapshot(`
-      {
-        "error": "forbidden",
-        "error_description": "\`webhook_url\` must use a public https URL (http allowed only for loopback development)",
-      }
-    `)
+    for (const webhookUrl of urls) {
+      const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+      const body = JSON.stringify({ message, webhook_url: webhookUrl })
+      const digest = MessageSig.contentDigest(body)
+      const response = await hostTransport.fetch(
+        new Request(`${hostOrigin}${hostPath}/register`, {
+          body,
+          headers: {
+            'content-digest': digest,
+            'content-type': 'application/json',
+            'urpc-public-key': ed25519Pubkey(consumerKeypair.publicKey),
+          },
+          method: 'POST',
+        }),
+      )
+
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({
+        error: 'forbidden',
+        error_description:
+          '`webhook_url` must use a public https URL (http allowed only for loopback development)',
+      })
+    }
   })
 
   test('rejects /register when webhook_url is not in consumer.json callback_urls', async () => {
