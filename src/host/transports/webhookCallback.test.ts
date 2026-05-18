@@ -24,6 +24,15 @@ function ed25519Pubkey(publicKey: Hex.Hex): string {
   return Base64.fromBytes(Bytes.from(publicKey), { pad: false, url: true })
 }
 
+const expectedApprovalSurfaceCsp = [
+  "default-src 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "object-src 'none'",
+  "style-src 'self' 'unsafe-inline'",
+].join('; ')
+
 /**
  * In-memory store with key iteration. Lets the test harness find the
  * pending intent's opaque code without going through the
@@ -777,16 +786,7 @@ describe('webhookCallback end-to-end', () => {
     )
 
     expect(response.headers.get('cache-control')).toBe('no-store')
-    expect(response.headers.get('content-security-policy')).toBe(
-      [
-        "default-src 'self'",
-        "frame-ancestors 'none'",
-        "base-uri 'none'",
-        "form-action 'self'",
-        "object-src 'none'",
-        "style-src 'self' 'unsafe-inline'",
-      ].join('; '),
-    )
+    expect(response.headers.get('content-security-policy')).toBe(expectedApprovalSurfaceCsp)
     expect(response.headers.get('pragma')).toBe('no-cache')
     expect(response.headers.get('referrer-policy')).toBe('no-referrer')
     expect(response.headers.get('x-frame-options')).toBe('DENY')
@@ -934,7 +934,7 @@ describe('webhookCallback end-to-end', () => {
           new Response('ok', {
             headers: {
               'cache-control': 'public, max-age=3600',
-              'content-security-policy': "default-src 'none'",
+              'content-security-policy': "default-src *; frame-ancestors *; base-uri *",
               'referrer-policy': 'same-origin',
               'x-frame-options': 'SAMEORIGIN',
             },
@@ -945,7 +945,9 @@ describe('webhookCallback end-to-end', () => {
 
     const response = await transport.fetch(new Request('https://wallet.example/verify'))
 
-    expect(response.headers.get('content-security-policy')).toBe("default-src 'none'")
+    expect(response.headers.get('content-security-policy')).toBe(
+      `default-src *; frame-ancestors *; base-uri *, ${expectedApprovalSurfaceCsp}`,
+    )
     expect(response.headers.get('referrer-policy')).toBe('no-referrer')
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('x-frame-options')).toBe('DENY')

@@ -442,8 +442,13 @@ export function webhookCallback(options: Options): WebhookCallback {
   app.use('*', async (c, next) => {
     await next()
     c.res.headers.set('Cache-Control', 'no-store')
-    if (!c.res.headers.has('Content-Security-Policy'))
-      c.res.headers.set('Content-Security-Policy', approvalSurfaceCsp)
+    const contentSecurityPolicy = c.res.headers.get('Content-Security-Policy')
+    c.res.headers.set(
+      'Content-Security-Policy',
+      contentSecurityPolicy
+        ? `${contentSecurityPolicy}, ${approvalSurfaceCsp}`
+        : approvalSurfaceCsp,
+    )
     c.res.headers.set('Pragma', 'no-cache')
     c.res.headers.set('Referrer-Policy', 'no-referrer')
     c.res.headers.set('X-Frame-Options', 'DENY')
