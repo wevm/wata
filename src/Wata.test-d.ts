@@ -1,7 +1,7 @@
 import type { Hex } from 'ox'
 import { describe, expectTypeOf, test } from 'vp/test'
 import { Discovery, Rpc, Schema, Wata, loopback } from 'wata'
-import { Wata as HostWata } from 'wata/host'
+import { Schema as HostSchema, Wata as HostWata } from 'wata/host'
 import { z } from 'zod/mini'
 
 const privateKey = '0x' as Hex.Hex
@@ -13,6 +13,15 @@ const schema = Schema.create({
       result: z.string(),
     }),
     ping: Schema.method({
+      params: z.tuple([]),
+      result: z.object({ ok: z.literal(true) }),
+    }),
+  },
+})
+
+const hostSchema = HostSchema.create({
+  methods: {
+    ping: HostSchema.method({
       params: z.tuple([]),
       result: z.object({ ok: z.literal(true) }),
     }),
@@ -35,6 +44,17 @@ describe('create', () => {
     expectTypeOf(wata.role).toEqualTypeOf<'host'>()
     expectTypeOf(wata).toMatchTypeOf<{ start: () => Promise<void> }>()
     expectTypeOf(wata).toMatchTypeOf<{ on: Function }>()
+  })
+
+  test('accepts Schema imported from the host entrypoint', () => {
+    const { host } = loopback()
+    const wata = HostWata.create({ transport: host, schema: hostSchema })
+    wata.on('request', (event) => {
+      expectTypeOf(event.method).toEqualTypeOf<'ping'>()
+      event.respond({ ok: true })
+      // @ts-expect-error wrong shape for ping
+      event.respond('not the ping result')
+    })
   })
 })
 

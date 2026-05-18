@@ -5,6 +5,7 @@
 
 export * as Wata from './Wata.js'
 export * as Kv from '../core/Kv.js'
+export * as Schema from '../core/Schema.js'
 export * as Transport from '../core/Transport.js'
 
 export { postMessage } from './transports/postMessage.js'
