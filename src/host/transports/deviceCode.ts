@@ -49,7 +49,7 @@
  *   await event.respond({ ok: true })
  * })
  *
- * createServer(transport.listener).listen(3000)
+ * createServer(wata.listener).listen(3000)
  * ```
  */
 

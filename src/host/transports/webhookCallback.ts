@@ -43,7 +43,7 @@
  *
  * const wata = Wata.create({ privateKey, transport })
  *
- * createServer(transport.listener).listen(3000)
+ * createServer(wata.listener).listen(3000)
  * ```
  */
 
