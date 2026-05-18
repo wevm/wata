@@ -53,9 +53,9 @@ export type Options<target extends ConsumerPostMessage.Target = Window> = {
    */
   source?: ConsumerPostMessage.WindowLike | undefined
   /**
-   * Called lazily on `start()` to acquire the postMessage target —
-   * the consumer `Window` / `MessagePort` to talk back to. Defaults
-   * to `window.opener ?? window.parent` when omitted, throwing
+   * Called lazily when the transport starts to acquire the consumer
+   * `Window` / `MessagePort` to talk back to. Defaults to
+   * `window.opener ?? window.parent` when omitted, throwing
    * {@link NoPeerError} if neither is present.
    */
   target?: (() => target | Promise<target>) | undefined

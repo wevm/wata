@@ -97,10 +97,10 @@ export type Options<target extends Target> = {
    */
   source?: WindowLike | undefined
   /**
-   * Called lazily on `start()` to acquire the postMessage target.
-   * Lazy so popup-blocker-sensitive callers can wire `start()` to a
-   * user-gesture handler (button click). Receives the caller's `host`
-   * value (or `undefined` for `MessagePort` targets that omitted it).
+   * Called lazily when the transport starts to acquire the postMessage
+   * target. For popup-blocker-sensitive flows, call `wata.send` or
+   * `wata.start` from the user-gesture handler. Receives the caller's
+   * `host` value (or `undefined` for `MessagePort` targets that omitted it).
    */
   target: (parameters: { host: string | undefined }) => target | Promise<target>
 }

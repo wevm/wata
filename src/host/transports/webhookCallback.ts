@@ -37,7 +37,11 @@
  *   privateKey,
  *   transport: webhookCallback({
  *     html: {
- *       render: ({ record }) => new Response(`<form>...${record?.message ?? ''}</form>`, { headers: { 'content-type': 'text/html' } }),
+ *       render: ({ code }) =>
+ *         new Response(
+ *           `<form method="post"><input name="code" value="${code ?? ''}" /><button>Approve</button></form>`,
+ *           { headers: { 'content-type': 'text/html' } },
+ *         ),
  *     },
  *     path: '/auth/webhook',
  *     store: Kv.memory(),

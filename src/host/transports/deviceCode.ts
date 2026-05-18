@@ -36,7 +36,11 @@
  *     store: Kv.memory(),
  *     path: '/auth/device',
  *     html: {
- *       render: ({ userCode }) => new Response(`<form>...code=${userCode ?? ''}</form>`, { headers: { 'content-type': 'text/html' } }),
+ *       render: ({ userCode }) =>
+ *         new Response(
+ *           `<form method="post"><input name="user_code" value="${userCode ?? ''}" /><button>Approve</button></form>`,
+ *           { headers: { 'content-type': 'text/html' } },
+ *         ),
  *       authenticate: async ({ request, actions }) => {
  *         const body = await request.formData()
  *         await actions.approve(String(body.get('user_code')))
