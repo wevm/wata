@@ -6,12 +6,17 @@ import {
   Kv,
   Rpc,
   Schema,
+  Transport,
   Wata,
   deviceCode,
   loopback,
   webhookCallback,
 } from 'wata'
-import { Wata as HostWata, deviceCode as hostDeviceCode } from 'wata/host'
+import {
+  Wata as HostWata,
+  deviceCode as hostDeviceCode,
+  webhookCallback as hostWebhookCallback,
+} from 'wata/host'
 import { z } from 'zod/mini'
 
 const privateKey = `0x${'11'.repeat(32)}` as Hex.Hex
@@ -33,15 +38,62 @@ const schema = Schema.create({
 
 function pair() {
   const { consumer: cTransport, host: hTransport } = loopback()
-  const consumer = Wata.create({ transport: cTransport, schema })
-  const host = HostWata.create({ transport: hTransport, schema })
+  const consumer = Wata.create({ transports: [cTransport], schema })
+  const host = HostWata.create({ transports: [hTransport], schema })
   return { consumer, host }
+}
+
+function namedPair<const name extends string>(name: name) {
+  const { consumer, host } = loopback()
+  return {
+    consumer: { ...consumer, name } as Transport.Transport<'consumer', name>,
+    host: { ...host, name } as Transport.Transport<'host', name>,
+  }
+}
+
+function httpTransport<const name extends string>(options: {
+  discoveryId?: string | undefined
+  name: name
+  routes?: readonly string[] | undefined
+}): Transport.Transport<'host', name> & {
+  fetch: (request: Request) => Promise<Response>
+  listener: (req: unknown, res: unknown) => void
+} {
+  const { discoveryId, name, routes } = options
+  return {
+    async close() {},
+    ...(discoveryId
+      ? {
+          discovery: {
+            binding: (baseUrl: string) => ({ url: `${baseUrl}/${name}` }),
+            id: discoveryId,
+          },
+        }
+      : {}),
+    exchange: 'single_exchange',
+    fetch: async () => new Response(name),
+    listener() {},
+    name,
+    on() {},
+    role: 'host',
+    routes,
+    async send() {},
+    async start() {},
+  }
+}
+
+async function waitFor(predicate: () => boolean, timeout = 1000): Promise<void> {
+  const deadline = Date.now() + timeout
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('waitFor timed out')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
 }
 
 describe('create', () => {
   test('wata Wata.create returns a consumer', () => {
     const { consumer } = loopback()
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     expect(wata.role).toMatchInlineSnapshot(`"consumer"`)
     expect(typeof wata.start).toMatchInlineSnapshot(`"function"`)
     expect(typeof wata.send).toMatchInlineSnapshot(`"function"`)
@@ -49,10 +101,67 @@ describe('create', () => {
 
   test('wata/host Wata.create returns a host', () => {
     const { host } = loopback()
-    const wata = HostWata.create({ transport: host })
+    const wata = HostWata.create({ transports: [host] })
     expect(wata.role).toMatchInlineSnapshot(`"host"`)
     expect(typeof wata.start).toMatchInlineSnapshot(`"function"`)
     expect(typeof wata.on).toMatchInlineSnapshot(`"function"`)
+  })
+
+  test('multiple consumer transports expose named child sessions', async () => {
+    const device = namedPair('deviceCode')
+    const webhook = namedPair('webhookCallback')
+    const consumer = Wata.create({
+      transports: [device.consumer, webhook.consumer],
+    })
+    const host = HostWata.create({
+      transports: [device.host, webhook.host],
+    })
+    const events: string[] = []
+
+    host.on('request', (event) => {
+      events.push(event.transport)
+      if (event.transport === 'deviceCode') return { via: 'device' }
+      return { via: 'webhook' }
+    })
+
+    const fromDevice = await consumer.deviceCode.send({ method: 'ping', params: [] })
+    const fromWebhook = await consumer.webhookCallback.send({ method: 'ping', params: [] })
+
+    expect('send' in consumer).toMatchInlineSnapshot(`false`)
+    expect({ events, fromDevice, fromWebhook }).toMatchInlineSnapshot(`
+      {
+        "events": [
+          "deviceCode",
+          "webhookCallback",
+        ],
+        "fromDevice": {
+          "id": 1,
+          "result": {
+            "via": "device",
+          },
+        },
+        "fromWebhook": {
+          "id": 1,
+          "result": {
+            "via": "webhook",
+          },
+        },
+      }
+    `)
+
+    await consumer.close()
+    await host.close()
+  })
+
+  test('rejects duplicate transport names', () => {
+    const a = namedPair('same')
+    const b = namedPair('same')
+
+    expect(() =>
+      Wata.create({
+        transports: [a.consumer, b.consumer],
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(`[BaseError: duplicate transport name \`same\`]`)
   })
 })
 
@@ -217,6 +326,36 @@ describe('send', () => {
     await expect(host.respond(999, 'nope')).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Wata.UnknownRequestError: no pending request with id \`999\`]`,
     )
+  })
+
+  test('wata.respond throws Wata.AmbiguousRequestError for duplicate pending ids across transports', async () => {
+    const alpha = namedPair('alpha')
+    const beta = namedPair('beta')
+    const consumer = Wata.create({
+      transports: [alpha.consumer, beta.consumer],
+    })
+    const host = HostWata.create({
+      transports: [alpha.host, beta.host],
+    })
+    const events: string[] = []
+
+    host.on('request', (event) => {
+      events.push(event.transport)
+    })
+
+    const a = consumer.alpha.send({ id: 1, method: 'ping', params: [] }).catch(() => undefined)
+    const b = consumer.beta.send({ id: 1, method: 'ping', params: [] }).catch(() => undefined)
+
+    await waitFor(() => events.length === 2)
+
+    await expect(host.respond(1, { ok: true })).rejects.toThrowErrorMatchingInlineSnapshot(`
+      [Wata.AmbiguousRequestError: multiple pending requests with id \`1\`
+      Details: matching transports: alpha, beta]
+    `)
+
+    await consumer.close()
+    await host.close()
+    await Promise.all([a, b])
   })
 
   test('wata.respond is a no-op double-call once event.respond settled', async () => {
@@ -406,7 +545,7 @@ describe('on', () => {
 describe('mode discipline', () => {
   test('host rejects a pre-key encrypted frame with -32600 and tears down', async () => {
     const { consumer: cTransport, host: hTransport } = loopback()
-    const host = HostWata.create({ transport: hTransport })
+    const host = HostWata.create({ transports: [hTransport] })
     await cTransport.start()
     await host.start()
 
@@ -456,7 +595,7 @@ describe('mode discipline', () => {
 
   test('consumer rejects a pre-key encrypted frame with -32600 and tears down', async () => {
     const { consumer: cTransport, host: hTransport } = loopback()
-    const consumer = Wata.create({ transport: cTransport })
+    const consumer = Wata.create({ transports: [cTransport] })
     await consumer.start()
     await hTransport.start()
 
@@ -507,14 +646,16 @@ describe('baseUrl + meta auto-publishing', () => {
       baseUrl: 'https://wallet.example',
       meta: { icon: 'https://wallet.example/icon.png', name: 'Example Wallet' },
       privateKey,
-      transport: hostDeviceCode({
-        html: {
-          authenticate: async () => new Response('ok'),
-          render: () => new Response('ok'),
-        },
-        path: '/auth/device',
-        store: Kv.memory(),
-      }),
+      transports: [
+        hostDeviceCode({
+          html: {
+            authenticate: async () => new Response('ok'),
+            render: () => new Response('ok'),
+          },
+          path: '/auth/device',
+          store: Kv.memory(),
+        }),
+      ],
     })
 
     const response = await host.fetch!(
@@ -547,22 +688,138 @@ describe('baseUrl + meta auto-publishing', () => {
     `)
   })
 
+  test('host `Wata.create({ baseUrl, meta })` publishes and routes multiple HTTP transports', async () => {
+    const host = HostWata.create({
+      baseUrl: 'https://wallet.example',
+      meta: { name: 'Example Wallet' },
+      privateKey,
+      transports: [
+        hostDeviceCode({
+          html: {
+            authenticate: async () => new Response('device auth'),
+            render: () => new Response('device route'),
+          },
+          path: '/auth/device',
+          store: Kv.memory(),
+        }),
+        hostWebhookCallback({
+          html: {
+            render: () => new Response('webhook route'),
+          },
+          path: '/auth/webhook',
+          store: Kv.memory(),
+        }),
+      ],
+    })
+
+    const documentResponse = await host.fetch(
+      new Request('https://wallet.example/.well-known/urpc/host.json'),
+    )
+    const deviceResponse = await host.fetch(
+      new Request('https://wallet.example/auth/device/verify?user_code=AAAA-BBBB'),
+    )
+    const webhookResponse = await host.fetch(
+      new Request('https://wallet.example/auth/webhook/verify'),
+    )
+    const missingResponse = await host.fetch(new Request('https://wallet.example/auth/unknown'))
+
+    expect({
+      device: await deviceResponse.text(),
+      document: await documentResponse.json(),
+      missing: missingResponse.status,
+      webhook: await webhookResponse.text(),
+    }).toMatchInlineSnapshot(`
+      {
+        "device": "device route",
+        "document": {
+          "id": "wallet.example",
+          "identity_pubkey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+          "name": "Example Wallet",
+          "origin": "https://wallet.example",
+          "transports": {
+            "device-code": {
+              "register_url": "https://wallet.example/auth/device/register",
+              "token_url": "https://wallet.example/auth/device/token",
+            },
+            "webhook-callback": {
+              "auth_url_origin": "https://wallet.example",
+              "register_url": "https://wallet.example/auth/webhook/register",
+            },
+          },
+          "version": "1.0",
+        },
+        "missing": 404,
+        "webhook": "webhook route",
+      }
+    `)
+  })
+
+  test('host `Wata.create` rejects overlapping HTTP transport routes', () => {
+    expect(() =>
+      HostWata.create({
+        transports: [
+          hostDeviceCode({
+            html: {
+              authenticate: async () => new Response('ok'),
+              render: () => new Response('ok'),
+            },
+            path: '/auth',
+            store: Kv.memory(),
+          }),
+          hostWebhookCallback({
+            html: {
+              render: () => new Response('ok'),
+            },
+            path: '/auth/webhook',
+            store: Kv.memory(),
+          }),
+        ],
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `[BaseError: transport route \`/auth/webhook\` overlaps \`/auth\` from \`deviceCode\`]`,
+    )
+  })
+
+  test('host `Wata.create` rejects HTTP transports without route metadata', () => {
+    expect(() =>
+      HostWata.create({
+        transports: [httpTransport({ name: 'http' })],
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(`[BaseError: transport \`http\` must declare HTTP routes]`)
+  })
+
+  test('host `Wata.create({ baseUrl, meta })` rejects duplicate discovery ids', () => {
+    expect(() =>
+      HostWata.create({
+        baseUrl: 'https://wallet.example',
+        meta: { name: 'Example Wallet' },
+        privateKey,
+        transports: [
+          httpTransport({ discoveryId: 'same', name: 'alpha', routes: ['/alpha'] }),
+          httpTransport({ discoveryId: 'same', name: 'beta', routes: ['/beta'] }),
+        ],
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(`[BaseError: duplicate discovery transport \`same\`]`)
+  })
+
   test('host `Wata.create({ baseUrl, meta })` still routes transport requests for non-well-known paths', async () => {
     const host = HostWata.create({
       baseUrl: 'https://wallet.example',
       meta: { name: 'Example Wallet' },
       privateKey,
-      transport: hostDeviceCode({
-        html: {
-          authenticate: async () => new Response('ok'),
-          render: ({ userCode }) =>
-            new Response(`<form>code=${userCode ?? ''}</form>`, {
-              headers: { 'content-type': 'text/html' },
-            }),
-        },
-        path: '/auth/device',
-        store: Kv.memory(),
-      }),
+      transports: [
+        hostDeviceCode({
+          html: {
+            authenticate: async () => new Response('ok'),
+            render: ({ userCode }) =>
+              new Response(`<form>code=${userCode ?? ''}</form>`, {
+                headers: { 'content-type': 'text/html' },
+              }),
+          },
+          path: '/auth/device',
+          store: Kv.memory(),
+        }),
+      ],
     })
 
     const response = await host.fetch!(
@@ -585,13 +842,15 @@ describe('baseUrl + meta auto-publishing', () => {
     expect(() =>
       HostWata.create({
         meta: { name: 'X' },
-        transport: hostDeviceCode({
-          html: {
-            authenticate: async () => new Response('ok'),
-            render: () => new Response('ok'),
-          },
-          store: Kv.memory(),
-        }),
+        transports: [
+          hostDeviceCode({
+            html: {
+              authenticate: async () => new Response('ok'),
+              render: () => new Response('ok'),
+            },
+            store: Kv.memory(),
+          }),
+        ],
       }),
     ).toThrowErrorMatchingInlineSnapshot(
       `
@@ -606,13 +865,15 @@ describe('baseUrl + meta auto-publishing', () => {
       HostWata.create({
         baseUrl: 'https://wallet.example',
         meta: { name: 'X' },
-        transport: hostDeviceCode({
-          html: {
-            authenticate: async () => new Response('ok'),
-            render: () => new Response('ok'),
-          },
-          store: Kv.memory(),
-        }),
+        transports: [
+          hostDeviceCode({
+            html: {
+              authenticate: async () => new Response('ok'),
+              render: () => new Response('ok'),
+            },
+            store: Kv.memory(),
+          }),
+        ],
       }),
     ).toThrowErrorMatchingInlineSnapshot(
       `
@@ -624,15 +885,17 @@ describe('baseUrl + meta auto-publishing', () => {
 
   test('host `Wata.create({})` without meta behaves identically to today (no well-known served)', async () => {
     const host = HostWata.create({
-      transport: hostDeviceCode({
-        baseUrl: 'https://wallet.example',
-        html: {
-          authenticate: async () => new Response('ok'),
-          render: () => new Response('ok'),
-        },
-        path: '/auth/device',
-        store: Kv.memory(),
-      }),
+      transports: [
+        hostDeviceCode({
+          baseUrl: 'https://wallet.example',
+          html: {
+            authenticate: async () => new Response('ok'),
+            render: () => new Response('ok'),
+          },
+          path: '/auth/device',
+          store: Kv.memory(),
+        }),
+      ],
     })
     // No well-known route mounted by the wrapper — falls through to the
     // device-code Hono app, which returns 404 for unrecognized routes.
@@ -671,7 +934,7 @@ describe('baseUrl + meta auto-publishing', () => {
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',
       meta: { icon: 'https://acme.dev/icon.png', name: 'Acme CLI' },
-      transport: consumer,
+      transports: [consumer],
     })
 
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
@@ -725,7 +988,7 @@ describe('baseUrl + meta auto-publishing', () => {
       baseUrl: 'https://acme.dev',
       meta: { name: 'Acme CLI' },
       privateKey,
-      transport: consumer,
+      transports: [consumer],
     })
 
     const response = await wata.fetch!(
@@ -775,7 +1038,7 @@ describe('baseUrl + meta auto-publishing', () => {
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',
       meta: { name: 'Wata Parent' },
-      transport: consumer,
+      transports: [consumer],
     })
 
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)

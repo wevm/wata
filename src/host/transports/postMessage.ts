@@ -15,7 +15,7 @@
  * import { Wata, postMessage } from 'wata/host'
  *
  * const wata = Wata.create({
- *   transport: postMessage({ targetOrigin: 'https://app.example' }),
+ *   transports: [postMessage({ targetOrigin: 'https://app.example' })],
  * })
  *
  * wata.on('request', async (event) => {
@@ -33,10 +33,12 @@
  * })
  *
  * const wata = Wata.create({
- *   transport: postMessage({
- *     target: () => port,
- *     targetOrigin: 'https://app.example',
- *   }),
+ *   transports: [
+ *     postMessage({
+ *       target: () => port,
+ *       targetOrigin: 'https://app.example',
+ *     }),
+ *   ],
  * })
  * ```
  */
@@ -87,13 +89,13 @@ export type Options<target extends ConsumerPostMessage.Target = Window> = {
  * import { Wata, postMessage } from 'wata/host'
  *
  * const wata = Wata.create({
- *   transport: postMessage({ targetOrigin: 'https://app.example' }),
+ *   transports: [postMessage({ targetOrigin: 'https://app.example' })],
  * })
  * ```
  */
 export function postMessage<const target extends ConsumerPostMessage.Target = Window>(
   options: Options<target> = {} as Options<target>,
-): Transport.Transport<'host'> {
+): Transport.Transport<'host', 'postMessage'> {
   const target_resolved =
     options.target ??
     ((() => {

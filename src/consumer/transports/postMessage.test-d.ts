@@ -10,7 +10,7 @@ describe('postMessage (consumer)', () => {
       host: 'https://wallet.example',
       target: () => popupHandle,
     })
-    expectTypeOf(transport).toEqualTypeOf<Transport.Transport<'consumer'>>()
+    expectTypeOf(transport).toEqualTypeOf<Transport.Transport<'consumer', 'postMessage'>>()
     expectTypeOf(transport.role).toEqualTypeOf<'consumer'>()
   })
 

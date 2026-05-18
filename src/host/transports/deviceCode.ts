@@ -32,22 +32,24 @@
  *
  * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
- *   transport: deviceCode({
- *     store: Kv.memory(),
- *     path: '/auth/device',
- *     html: {
- *       render: ({ userCode }) =>
- *         new Response(
- *           `<form method="post"><input name="user_code" value="${userCode ?? ''}" /><button>Approve</button></form>`,
- *           { headers: { 'content-type': 'text/html' } },
- *         ),
- *       authenticate: async ({ request, actions }) => {
- *         const body = await request.formData()
- *         await actions.approve(String(body.get('user_code')))
- *         return new Response('approved')
+ *   transports: [
+ *     deviceCode({
+ *       store: Kv.memory(),
+ *       path: '/auth/device',
+ *       html: {
+ *         render: ({ userCode }) =>
+ *           new Response(
+ *             `<form method="post"><input name="user_code" value="${userCode ?? ''}" /><button>Approve</button></form>`,
+ *             { headers: { 'content-type': 'text/html' } },
+ *           ),
+ *         authenticate: async ({ request, actions }) => {
+ *           const body = await request.formData()
+ *           await actions.approve(String(body.get('user_code')))
+ *           return new Response('approved')
+ *         },
  *       },
- *     },
- *   }),
+ *     }),
+ *   ],
  * })
  * wata.on('request', async (event) => {
  *   await event.respond({ ok: true })
@@ -235,7 +237,7 @@ export declare namespace html {
 }
 
 /** `transport.fetch` / `transport.listener`-augmented {@link Transport.Transport}. */
-export type DeviceCode = Transport.Transport<'host'> & Http.Server
+export type DeviceCode = Transport.Transport<'host', 'deviceCode'> & Http.Server
 
 /**
  * Create a host-side `device-code` transport.
@@ -246,11 +248,13 @@ export type DeviceCode = Transport.Transport<'host'> & Http.Server
  *
  * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
- *   transport: deviceCode({
- *     store: Kv.memory(),
- *     path: '/auth/device',
- *     html: { render, authenticate },
- *   }),
+ *   transports: [
+ *     deviceCode({
+ *       store: Kv.memory(),
+ *       path: '/auth/device',
+ *       html: { render, authenticate },
+ *     }),
+ *   ],
  * })
  * ```
  */
@@ -639,8 +643,10 @@ export function deviceCode(options: Options): DeviceCode {
     exchange: 'single_exchange',
     fetch,
     listener,
+    name: 'deviceCode',
     on: emitter.on,
     role: 'host',
+    routes: [path ?? '/'],
     async send(envelope) {
       if (state.closed) throw new Transport.ClosedError('device-code transport already closed')
       if (!state.started) throw new Transport.ClosedError('device-code transport not started')

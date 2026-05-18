@@ -31,7 +31,7 @@ describe('deviceCode (host)', () => {
       path: '/auth/device',
       store,
     })
-    const wata = Wata.create({ transport })
+    const wata = Wata.create({ transports: [transport] })
     expectTypeOf(wata.role).toEqualTypeOf<'host'>()
   })
 

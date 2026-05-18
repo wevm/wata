@@ -28,7 +28,7 @@ describe('webhookCallback (consumer)', () => {
       baseUrl: 'https://acme.dev',
       meta: { name: 'Acme CLI' },
       privateKey: '0x' as Hex.Hex,
-      transport,
+      transports: [transport],
     })
     expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
   })

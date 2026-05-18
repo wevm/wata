@@ -51,14 +51,16 @@ const wata = Wata.create({
     name: 'Acme CLI',
   },
   privateKey,
-  transport: webhookCallback({
-    host: hostUrl,
-    onPrompt({ verificationUri }) {
-      Clack.note(verificationUri, 'Open this URL in your browser to approve')
-    },
-    path: webhookPath,
-    store: Kv.memory(),
-  }),
+  transports: [
+    webhookCallback({
+      host: hostUrl,
+      onPrompt({ verificationUri }) {
+        Clack.note(verificationUri, 'Open this URL in your browser to approve')
+      },
+      path: webhookPath,
+      store: Kv.memory(),
+    }),
+  ],
 })
 
 // Boot the listener. `wata.fetch` serves both

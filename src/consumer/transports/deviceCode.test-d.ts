@@ -15,7 +15,7 @@ describe('deviceCode (consumer)', () => {
     const transport = deviceCode({
       url: 'https://wallet.example/auth/device',
     })
-    const wata = Wata.create({ transport })
+    const wata = Wata.create({ transports: [transport] })
     expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
   })
 

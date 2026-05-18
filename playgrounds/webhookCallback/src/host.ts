@@ -53,44 +53,45 @@ const wata = Wata.create({
     websiteUrl: baseUrl,
   },
   privateKey,
-  transport: webhookCallback({
-    baseUrl,
-    expiresIn: 300,
-    html: {
-      async authenticate({ request, actions }) {
-        const form = await request.formData()
-        const code = String(form.get('code') ?? '')
-        const decision = String(form.get('decision') ?? '')
-        if (decision === 'approve') {
-          await actions.approve(code)
-          return html('<p>Approved. You may close this tab.</p>')
-        }
-        await actions.deny(code)
-        return html('<p>Denied. You may close this tab.</p>')
-      },
-      render({ approvalToken, record, code }) {
-        if (!record)
-          return html(
-            `<h1>No pending request</h1><p>Open this URL from the consumer's approval link.</p>`,
-          )
+  transports: [
+    webhookCallback({
+      baseUrl,
+      expiresIn: 300,
+      html: {
+        async authenticate({ request, actions }) {
+          const form = await request.formData()
+          const code = String(form.get('code') ?? '')
+          const decision = String(form.get('decision') ?? '')
+          if (decision === 'approve') {
+            await actions.approve(code)
+            return html('<p>Approved. You may close this tab.</p>')
+          }
+          await actions.deny(code)
+          return html('<p>Denied. You may close this tab.</p>')
+        },
+        render({ approvalToken, record, code }) {
+          if (!record)
+            return html(
+              `<h1>No pending request</h1><p>Open this URL from the consumer's approval link.</p>`,
+            )
 
-        const requestItems =
-          record.message.type === 'rpc-requests'
-            ? record.message.payload
-                .map((m) => {
-                  const id = 'id' in m ? `#${String(m.id)}` : '(notification)'
-                  return `<li><code>${m.method}</code> ${id} ${escape(JSON.stringify(m.params))}</li>`
-                })
-                .join('')
-            : '<li>(unknown payload)</li>'
-        const consumer = record.consumer
-        const consumerMeta = consumer.meta
-        const display = consumerMeta
-          ? `<p>
+          const requestItems =
+            record.message.type === 'rpc-requests'
+              ? record.message.payload
+                  .map((m) => {
+                    const id = 'id' in m ? `#${String(m.id)}` : '(notification)'
+                    return `<li><code>${m.method}</code> ${id} ${escape(JSON.stringify(m.params))}</li>`
+                  })
+                  .join('')
+              : '<li>(unknown payload)</li>'
+          const consumer = record.consumer
+          const consumerMeta = consumer.meta
+          const display = consumerMeta
+            ? `<p>
               App: <strong>${escape(consumerMeta.name)}</strong>${consumerMeta.description ? ` -- ${escape(consumerMeta.description)}` : ''}
             </p>`
-          : `<p>App: <strong>${escape(consumer.id)}</strong></p>`
-        return html(`
+            : `<p>App: <strong>${escape(consumer.id)}</strong></p>`
+          return html(`
         <h1>Approve request?</h1>
         ${display}
         <p>Origin: <code>${escape(consumer.origin)}</code></p>
@@ -103,11 +104,12 @@ const wata = Wata.create({
           <button type="submit" name="decision" value="deny">Deny</button>
         </form>
       `)
+        },
       },
-    },
-    path: '/auth/webhook',
-    store: Kv.memory(),
-  }),
+      path: '/auth/webhook',
+      store: Kv.memory(),
+    }),
+  ],
 })
 
 wata.on('request', (event) => {

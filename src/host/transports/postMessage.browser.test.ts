@@ -115,8 +115,8 @@ describe('postMessage (host)', () => {
 describe('Wata.respond / Wata.reject (postMessage)', () => {
   function pair() {
     const { port1, port2 } = new MessageChannel()
-    const consumer = Wata.create({ transport: postMessage_consumer({ target: () => port1 }) })
-    const host = HostWata.create({ transport: postMessage({ target: () => port2 }) })
+    const consumer = Wata.create({ transports: [postMessage_consumer({ target: () => port1 })] })
+    const host = HostWata.create({ transports: [postMessage({ target: () => port2 })] })
     return { consumer, host }
   }
 

@@ -33,11 +33,13 @@
  *   baseUrl: 'https://acme.dev',
  *   meta,
  *   privateKey,
- *   transport: webhookCallback({
- *     host: 'https://wallet.example',
- *     path: '/cb',
- *     store: Kv.memory(),
- *   }),
+ *   transports: [
+ *     webhookCallback({
+ *       host: 'https://wallet.example',
+ *       path: '/cb',
+ *       store: Kv.memory(),
+ *     }),
+ *   ],
  * })
  *
  * const { result } = await wata.send({ method: 'wallet_connect', params: [] })
@@ -122,7 +124,7 @@ export type Options = {
  * plus the `.fetch` / `.listener` pair the consumer needs to serve
  * incoming webhook deliveries, plus an explicit {@link cancel} hook.
  */
-export type WebhookCallback = Transport.Transport<'consumer'> &
+export type WebhookCallback = Transport.Transport<'consumer', 'webhookCallback'> &
   Http.Server & {
     /**
      * RFC 9421-signed cancellation of the in-flight `auth_req_id`
@@ -355,16 +357,22 @@ export function webhookCallback(options: Options): WebhookCallback {
       try {
         return new URL(verificationUri)
       } catch (cause) {
-        throw new Errors.ProtocolError('host /register response returned invalid `verification_uri`', {
-          cause: cause as Error,
-        })
+        throw new Errors.ProtocolError(
+          'host /register response returned invalid `verification_uri`',
+          {
+            cause: cause as Error,
+          },
+        )
       }
     })()
     const authUrlOrigin = new URL(binding?.auth_url_origin ?? hostDoc.origin).origin
     if (verificationUrl.origin !== authUrlOrigin)
-      throw new Errors.ProtocolError('verification_uri origin does not match host auth_url_origin', {
-        details: `expected ${authUrlOrigin}, host returned ${verificationUrl.origin}`,
-      })
+      throw new Errors.ProtocolError(
+        'verification_uri origin does not match host auth_url_origin',
+        {
+          details: `expected ${authUrlOrigin}, host returned ${verificationUrl.origin}`,
+        },
+      )
     const codeValues = verificationUrl.searchParams.getAll('code')
     const hasOnlyCode = Array.from(verificationUrl.searchParams.keys()).every(
       (key) => key === 'code',
@@ -484,8 +492,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     // Look up before parsing, but only mark the key after the
     // delivery has been accepted as a valid `rpc-responses` message.
     const dedupKey = `webhook:idem:${authReqId}:${idemKey}`
-    if (await store.get(dedupKey))
-      return c.json({ idempotent: true, ok: true }, { status: 200 })
+    if (await store.get(dedupKey)) return c.json({ idempotent: true, ok: true }, { status: 200 })
 
     // Parse the body as an `rpc-responses` envelope and emit.
     let envelope: Envelope.Envelope
@@ -552,8 +559,7 @@ export function webhookCallback(options: Options): WebhookCallback {
   return {
     bind(binding) {
       const { baseUrl, identity } = binding
-      if (baseUrl && !baseUrl_bound)
-        baseUrl_bound = Uri.trimTrailingSlash(baseUrl)
+      if (baseUrl && !baseUrl_bound) baseUrl_bound = Uri.trimTrailingSlash(baseUrl)
       if (identity && !identity_bound) identity_bound = identity
     },
     get callbackUrls() {
@@ -569,11 +575,13 @@ export function webhookCallback(options: Options): WebhookCallback {
     exchange: 'single_exchange',
     fetch,
     listener,
+    name: 'webhookCallback',
     on: emitter.on,
     get publicKey() {
       return identity_bound?.publicKey
     },
     role: 'consumer',
+    routes: [webhookPath],
     async send(envelope) {
       if (state.closed) throw new Transport.ClosedError('webhook-callback transport already closed')
       if (state.inFlight)
@@ -635,9 +643,7 @@ function isJsonRequest(request: Request): boolean {
   return contentType === 'application/json' || contentType?.startsWith('application/json;') === true
 }
 
-function signatureMetadataError(
-  parsedInput: MessageSig.ParsedSignatureInput,
-): string | undefined {
+function signatureMetadataError(parsedInput: MessageSig.ParsedSignatureInput): string | undefined {
   const { alg, created } = parsedInput.parameters
   if (alg !== 'ed25519') return 'signature alg must be `ed25519`'
   if (created === undefined) return 'missing signature created'

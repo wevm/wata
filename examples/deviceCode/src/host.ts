@@ -15,22 +15,23 @@ const baseUrl = `http://localhost:${port}`
 
 const wata = Wata.create({
   baseUrl,
-  transport: deviceCode({
-    html: {
-      async authenticate({ request, actions }) {
-        const form = await request.formData()
-        const userCode = String(form.get('user_code') ?? '')
-        const decision = String(form.get('decision') ?? '')
-        if (decision === 'approve') {
-          await actions.approve(userCode)
-          return html('<p>Approved</p>')
-        }
-        await actions.deny(userCode)
-        return html('<p>Denied</p>')
-      },
-      render({ userCode, record }) {
-        if (!userCode || !record)
-          return html(`
+  transports: [
+    deviceCode({
+      html: {
+        async authenticate({ request, actions }) {
+          const form = await request.formData()
+          const userCode = String(form.get('user_code') ?? '')
+          const decision = String(form.get('decision') ?? '')
+          if (decision === 'approve') {
+            await actions.approve(userCode)
+            return html('<p>Approved</p>')
+          }
+          await actions.deny(userCode)
+          return html('<p>Denied</p>')
+        },
+        render({ userCode, record }) {
+          if (!userCode || !record)
+            return html(`
             <h1>Enter your device code</h1>
             <form method="get" action="/auth/device/verify">
               <input name="user_code" placeholder="ABCD-EFGH" autofocus required />
@@ -38,7 +39,7 @@ const wata = Wata.create({
             </form>
           `)
 
-        return html(`
+          return html(`
           <h1>Approve request?</h1>
           <p>Code: <code>${escape(userCode)}</code></p>
           <form method="post" action="/auth/device/verify">
@@ -47,12 +48,13 @@ const wata = Wata.create({
             <button type="submit" name="decision" value="deny">Deny</button>
           </form>
         `)
+        },
       },
-    },
-    path: '/auth/device',
-    pollingInterval: 1000,
-    store: Kv.memory(),
-  }),
+      path: '/auth/device',
+      pollingInterval: 1000,
+      store: Kv.memory(),
+    }),
+  ],
 })
 
 wata.on('request', async (event) => {

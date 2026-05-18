@@ -218,8 +218,8 @@ const integrationSchema = Schema.create({
 describe('wata + loopback integration', () => {
   test('round-trips a single typed request', async () => {
     const { consumer: cT, host: hT } = Loopback.loopback()
-    const consumer = Wata.create({ transport: cT, schema: integrationSchema })
-    const host = HostWata.create({ transport: hT, schema: integrationSchema })
+    const consumer = Wata.create({ transports: [cT], schema: integrationSchema })
+    const host = HostWata.create({ transports: [hT], schema: integrationSchema })
 
     await consumer.start()
     await host.start()
@@ -239,8 +239,8 @@ describe('wata + loopback integration', () => {
 
   test('correlates concurrent requests by id', async () => {
     const { consumer: cT, host: hT } = Loopback.loopback()
-    const consumer = Wata.create({ transport: cT, schema: integrationSchema })
-    const host = HostWata.create({ transport: hT, schema: integrationSchema })
+    const consumer = Wata.create({ transports: [cT], schema: integrationSchema })
+    const host = HostWata.create({ transports: [hT], schema: integrationSchema })
 
     await consumer.start()
     await host.start()
@@ -272,8 +272,8 @@ describe('wata + loopback integration', () => {
 
   test('host listener throwing surfaces as Rpc.RpcError on consumer', async () => {
     const { consumer: cT, host: hT } = Loopback.loopback()
-    const consumer = Wata.create({ transport: cT, schema: integrationSchema })
-    const host = HostWata.create({ transport: hT, schema: integrationSchema })
+    const consumer = Wata.create({ transports: [cT], schema: integrationSchema })
+    const host = HostWata.create({ transports: [hT], schema: integrationSchema })
 
     await consumer.start()
     await host.start()
@@ -289,8 +289,8 @@ describe('wata + loopback integration', () => {
 
   test('cascading close rejects in-flight requests on both sides', async () => {
     const { consumer: cT, host: hT } = Loopback.loopback()
-    const consumer = Wata.create({ transport: cT, schema: integrationSchema })
-    const host = HostWata.create({ transport: hT, schema: integrationSchema })
+    const consumer = Wata.create({ transports: [cT], schema: integrationSchema })
+    const host = HostWata.create({ transports: [hT], schema: integrationSchema })
 
     await consumer.start()
     await host.start()

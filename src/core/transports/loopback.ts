@@ -54,16 +54,16 @@ export declare namespace loopback {
   /** Result of {@link loopback}. */
   type ReturnType = {
     /** Consumer-side transport. */
-    consumer: Transport.Transport<'consumer'>
+    consumer: Transport.Transport<'consumer', 'loopback'>
     /** Host-side transport. */
-    host: Transport.Transport<'host'>
+    host: Transport.Transport<'host', 'loopback'>
   }
 }
 
 type Peer = {
   deliver: (envelope: Envelope.Envelope) => void
   state: { closed: boolean; started: boolean }
-  transport: Transport.Transport
+  transport: Transport.Transport<Transport.Role, 'loopback'>
 }
 
 function createSide<role extends 'consumer' | 'host'>(role: role) {
@@ -86,7 +86,7 @@ function createSide<role extends 'consumer' | 'host'>(role: role) {
     emitter.emit('message', envelope)
   }
 
-  const transport: Transport.Transport<role> = {
+  const transport: Transport.Transport<role, 'loopback'> = {
     async close(cause) {
       if (state.closed) return
       state.closed = true
@@ -95,6 +95,7 @@ function createSide<role extends 'consumer' | 'host'>(role: role) {
       if (peer && !peer.state.closed) await peer.transport.close(cause)
     },
     exchange: 'ongoing',
+    name: 'loopback',
     on(type, listener, options) {
       emitter.on(type, listener, options)
       // Drain any frames queued before the first `message` listener

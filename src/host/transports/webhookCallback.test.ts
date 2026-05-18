@@ -380,9 +380,9 @@ describe('webhookCallback end-to-end', () => {
     const wata = Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transport: hostTransport })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [hostTransport] })
 
     const sendPromise = wata.send({ method: 'ping', params: [] })
     const approvalBody =
@@ -416,9 +416,9 @@ describe('webhookCallback end-to-end', () => {
     const wata = Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transport: setup.hostTransport })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
 
     const sendPromise = wata.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
@@ -452,7 +452,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
 
     await expect(
@@ -472,7 +472,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
 
     await expect(
@@ -495,7 +495,7 @@ describe('webhookCallback end-to-end', () => {
       path: hostPath,
       store: hostStore,
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
     const consumerOrigin = 'https://acme.dev'
     const consumerPublicKey = ed25519Pubkey(consumerKeypair.publicKey)
     const registerUrl = `${hostOrigin}${hostPath}/register`
@@ -544,7 +544,7 @@ describe('webhookCallback end-to-end', () => {
       store: memoryWithScan(),
       validateOutboundRequest: () => {},
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transport })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [transport] })
     const consumerKeypair = Ed25519.createKeyPair()
     const consumerOrigin = 'https://acme.dev'
     const consumerPublicKey = ed25519Pubkey(consumerKeypair.publicKey)
@@ -595,9 +595,9 @@ describe('webhookCallback end-to-end', () => {
     const wata = Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transport: setup.hostTransport })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
 
     const sendPromise = wata.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
@@ -626,9 +626,9 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transport: setup.hostTransport })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
 
     await setup.consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
@@ -680,9 +680,9 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transport: setup.hostTransport })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
 
     await setup.consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
@@ -719,9 +719,9 @@ describe('webhookCallback end-to-end', () => {
     const wata = Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
 
     const sendPromise = wata.send({ method: 'ping', params: [] })
     await deny()
@@ -749,9 +749,12 @@ describe('webhookCallback end-to-end', () => {
     const consumer = Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
-    const host = HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
+    const host = HostWata.create({
+      privateKey: hostKeypair.privateKey,
+      transports: [hostTransport],
+    })
     host.on('request', (event) => event.respond({ ok: true }))
     await host.start()
 
@@ -770,6 +773,53 @@ describe('webhookCallback end-to-end', () => {
           'content-type': 'application/x-www-form-urlencoded',
           cookie: session.cookie,
           origin: setup.hostOrigin,
+        },
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toBe('Approved')
+    await expect(sendPromise).resolves.toMatchObject({ result: { ok: true } })
+  })
+
+  test('form authenticate actions accept opaque-origin approval submissions', async () => {
+    const setup = pair({
+      hostAuthenticate: async ({ actions, request }) => {
+        const form = await request.formData()
+        const code = String(form.get('code') ?? '')
+        await actions.approve(code)
+        return new Response('Approved')
+      },
+    })
+    const { consumerKeypair, consumerOrigin, consumerTransport, hostKeypair, hostTransport } = setup
+    const consumer = Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transports: [consumerTransport],
+    })
+    const host = HostWata.create({
+      privateKey: hostKeypair.privateKey,
+      transports: [hostTransport],
+    })
+    host.on('request', (event) => event.respond({ ok: true }))
+    await host.start()
+
+    const sendPromise = consumer.send({ method: 'ping', params: [] })
+    const code = await setup.findActiveCode()
+    const session = await setup.getApprovalSession(code)
+    if (!session) throw new Error('approval session missing')
+    const response = await hostTransport.fetch(
+      new Request(`${setup.hostOrigin}${setup.hostPath}/verify`, {
+        body: new URLSearchParams({
+          approval_token: session.token,
+          code,
+          decision: 'approve',
+        }),
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: session.cookie,
+          origin: 'null',
         },
         method: 'POST',
       }),
@@ -1060,7 +1110,7 @@ describe('webhookCallback end-to-end', () => {
           new Response('ok', {
             headers: {
               'cache-control': 'public, max-age=3600',
-              'content-security-policy': "default-src *; frame-ancestors *; base-uri *",
+              'content-security-policy': 'default-src *; frame-ancestors *; base-uri *',
               'referrer-policy': 'same-origin',
               'x-frame-options': 'SAMEORIGIN',
             },
@@ -1110,7 +1160,7 @@ describe('webhookCallback end-to-end', () => {
       Wata.create({
         baseUrl: setup.consumerOrigin,
         privateKey: setup.consumerKeypair.privateKey,
-        transport: setup.consumerTransport,
+        transports: [setup.consumerTransport],
       })
 
       await setup.consumerTransport.send(
@@ -1144,7 +1194,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
 
     await setup.consumerTransport.send(
@@ -1169,7 +1219,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
 
     await setup.consumerTransport.send(
@@ -1223,7 +1273,7 @@ describe('webhookCallback end-to-end', () => {
       Wata.create({
         baseUrl: 'https://acme.dev',
         privateKey: consumerKeypair.privateKey,
-        transport,
+        transports: [transport],
       })
 
       await expect(
@@ -1279,7 +1329,7 @@ describe('webhookCallback end-to-end', () => {
       Wata.create({
         baseUrl: 'https://acme.dev',
         privateKey: consumerKeypair.privateKey,
-        transport,
+        transports: [transport],
       })
 
       await expect(
@@ -1346,7 +1396,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: 'https://acme.dev',
       privateKey: consumerKeypair.privateKey,
-      transport,
+      transports: [transport],
     })
     expect(fetches).toEqual([])
 
@@ -1405,7 +1455,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: 'https://acme.dev',
       privateKey: consumerKeypair.privateKey,
-      transport,
+      transports: [transport],
     })
 
     await transport.send(
@@ -1456,7 +1506,7 @@ describe('webhookCallback end-to-end', () => {
       Wata.create({
         baseUrl: 'https://acme.dev',
         privateKey: consumerKeypair.privateKey,
-        transport,
+        transports: [transport],
       })
 
       await expect(
@@ -1510,7 +1560,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -1540,7 +1590,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
 
     await setup.consumerTransport.send(
@@ -1590,9 +1640,9 @@ describe('webhookCallback end-to-end', () => {
     const consumer = Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transport: setup.hostTransport })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
 
     const sendPromise = consumer.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
@@ -1627,7 +1677,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -1672,7 +1722,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -1705,7 +1755,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
 
     await setup.consumerTransport.send(
@@ -1747,7 +1797,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
 
     await setup.consumerTransport.send(
@@ -1826,7 +1876,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
 
     await setup.consumerTransport.send(
@@ -1870,7 +1920,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
 
     await setup.consumerTransport.send(
@@ -1910,7 +1960,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
 
     await setup.consumerTransport.send(
@@ -1951,7 +2001,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
-      transport: setup.consumerTransport,
+      transports: [setup.consumerTransport],
     })
 
     await setup.consumerTransport.send(
@@ -1992,7 +2042,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await expect(
@@ -2551,7 +2601,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await expect(
@@ -2576,9 +2626,9 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
 
     const sendPromise = consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
@@ -2614,7 +2664,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -2664,7 +2714,7 @@ describe('webhookCallback end-to-end', () => {
     const consumer = Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     const sendPromise = consumer.send({ method: 'ping', params: [] })
@@ -2707,9 +2757,9 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
 
     await consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
@@ -2751,7 +2801,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -2842,7 +2892,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -2879,9 +2929,9 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
 
     await consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
@@ -2914,7 +2964,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -3007,7 +3057,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -3075,7 +3125,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -3144,7 +3194,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -3213,7 +3263,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -3281,7 +3331,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -3350,7 +3400,7 @@ describe('webhookCallback end-to-end', () => {
     const consumer = Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     const sendPromise = consumer.send({ method: 'ping', params: [] })
@@ -3425,7 +3475,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -3492,7 +3542,7 @@ describe('webhookCallback end-to-end', () => {
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
 
     await consumerTransport.send(
@@ -3552,9 +3602,9 @@ describe('webhookCallback end-to-end', () => {
     const wata = Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,
-      transport: consumerTransport,
+      transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
 
     const sendPromise = wata.send({ method: 'ping', params: [] })
     // Wait until the consumer has registered + we have a code,

@@ -35,22 +35,24 @@
  * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
  *   privateKey,
- *   transport: webhookCallback({
- *     html: {
- *       authenticate: async ({ actions, request }) => {
- *         const body = await request.formData()
- *         await actions.approve(String(body.get('code')))
- *         return new Response('approved')
+ *   transports: [
+ *     webhookCallback({
+ *       html: {
+ *         authenticate: async ({ actions, request }) => {
+ *           const body = await request.formData()
+ *           await actions.approve(String(body.get('code')))
+ *           return new Response('approved')
+ *         },
+ *         render: ({ approvalToken, code }) =>
+ *           new Response(
+ *             `<form method="post"><input type="hidden" name="approval_token" value="${approvalToken ?? ''}" /><input type="hidden" name="code" value="${code ?? ''}" /><button>Approve</button></form>`,
+ *             { headers: { 'content-type': 'text/html' } },
+ *           ),
  *       },
- *       render: ({ approvalToken, code }) =>
- *         new Response(
- *           `<form method="post"><input type="hidden" name="approval_token" value="${approvalToken ?? ''}" /><input type="hidden" name="code" value="${code ?? ''}" /><button>Approve</button></form>`,
- *           { headers: { 'content-type': 'text/html' } },
- *         ),
- *     },
- *     path: '/auth/webhook',
- *     store: Kv.memory(),
- *   }),
+ *       path: '/auth/webhook',
+ *       store: Kv.memory(),
+ *     }),
+ *   ],
  * })
  *
  * createServer(wata.listener).listen(3000)
@@ -335,7 +337,7 @@ export declare namespace html {
 }
 
 /** `transport.fetch` / `transport.listener`-augmented {@link Transport.Transport}. */
-export type WebhookCallback = Transport.Transport<'host'> & Http.Server
+export type WebhookCallback = Transport.Transport<'host', 'webhookCallback'> & Http.Server
 
 type DeliveryAttempt = { type: 'delivered' } | { error: Error; retryable: boolean; type: 'failed' }
 type ApprovalSession = { session: string }
@@ -353,11 +355,13 @@ type RegistrationRateLimit = { max: number; windowSeconds: number }
  * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
  *   privateKey,
- *   transport: webhookCallback({
- *     html: { render, authenticate },
- *     path: '/auth/webhook',
- *     store: Kv.memory(),
- *   }),
+ *   transports: [
+ *     webhookCallback({
+ *       html: { render, authenticate },
+ *       path: '/auth/webhook',
+ *       store: Kv.memory(),
+ *     }),
+ *   ],
  * })
  * ```
  */
@@ -572,11 +576,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       )
     let requestedExpiry = effectiveExpiresIn
     if (body.expiry !== undefined) {
-      if (
-        typeof body.expiry !== 'number' ||
-        !Number.isFinite(body.expiry) ||
-        body.expiry <= 0
-      )
+      if (typeof body.expiry !== 'number' || !Number.isFinite(body.expiry) || body.expiry <= 0)
         return c.json(
           {
             error: 'invalid_request',
@@ -968,10 +968,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     const request = c.req.raw
     const approvalCode = await approvalCodeFromRequest(c.req.query('code') ?? undefined, request)
     if (approvalCode.error)
-      return c.json(
-        { error: 'forbidden', error_description: approvalCode.error },
-        { status: 403 },
-      )
+      return c.json({ error: 'forbidden', error_description: approvalCode.error }, { status: 403 })
     const code = approvalCode.code
     const metadataError = approvalMetadataError(request, new URL(resolveBaseUrl(c.req.url)).origin)
     if (metadataError)
@@ -1119,16 +1116,20 @@ export function webhookCallback(options: Options): WebhookCallback {
     let httpResponse: Response
     try {
       const webhookUrl = new URL(record.webhookUrl)
-      httpResponse = await fetchOutbound(webhookUrl, {
-        body,
-        headers,
-        method: 'POST',
-        redirect: 'manual',
-      }, {
-        authReqId: record.authReqId,
-        kind: 'webhook-delivery',
-        url: webhookUrl,
-      })
+      httpResponse = await fetchOutbound(
+        webhookUrl,
+        {
+          body,
+          headers,
+          method: 'POST',
+          redirect: 'manual',
+        },
+        {
+          authReqId: record.authReqId,
+          kind: 'webhook-delivery',
+          url: webhookUrl,
+        },
+      )
     } catch (cause) {
       return {
         error: new Transport.TransportError(
@@ -1238,15 +1239,16 @@ export function webhookCallback(options: Options): WebhookCallback {
     return fetchImpl(url, init)
   }
 
-  async function fetchConsumerIcon(
-    url: URL,
-    record: PendingRecord,
-  ): Promise<CachedConsumerIcon> {
-    const response = await fetchOutbound(url, { redirect: 'manual' }, {
-      authReqId: record.authReqId,
-      kind: 'consumer-icon',
+  async function fetchConsumerIcon(url: URL, record: PendingRecord): Promise<CachedConsumerIcon> {
+    const response = await fetchOutbound(
       url,
-    })
+      { redirect: 'manual' },
+      {
+        authReqId: record.authReqId,
+        kind: 'consumer-icon',
+        url,
+      },
+    )
     if (response.status >= 300 && response.status < 400)
       throw new Transport.TransportError('consumer icon redirected')
     if (!response.ok)
@@ -1524,8 +1526,10 @@ export function webhookCallback(options: Options): WebhookCallback {
     exchange: 'single_exchange',
     fetch,
     listener,
+    name: 'webhookCallback',
     on: emitter.on,
     role: 'host',
+    routes: [path ?? '/'],
     async send(envelope) {
       if (state.closed) throw new Transport.ClosedError('webhook-callback transport already closed')
       if (!state.started) throw new Transport.ClosedError('webhook-callback transport not started')
@@ -1597,9 +1601,7 @@ async function validateDefaultOutboundRequest(
   return { address: addresses[0] as ResolvedAddress }
 }
 
-async function loadNodeDnsLookup(): Promise<
-  typeof import('node:dns/promises').lookup | undefined
-> {
+async function loadNodeDnsLookup(): Promise<typeof import('node:dns/promises').lookup | undefined> {
   if (!isNodeRuntime()) return undefined
   if (!nodeDnsLookup) nodeDnsLookup = import('node:dns/promises').then(({ lookup }) => lookup)
   return await nodeDnsLookup
@@ -1662,9 +1664,7 @@ async function fetchWithResolvedAddress(
             status,
             ...(res.statusMessage ? { statusText: res.statusMessage } : {}),
           }
-          resolve(
-            new Response(bytes.buffer, init),
-          )
+          resolve(new Response(bytes.buffer, init))
         })
       },
     )
@@ -1682,7 +1682,9 @@ async function fetchWithResolvedAddress(
   })
 }
 
-async function requestBodyBytes(body: BodyInit | null | undefined): Promise<Uint8Array | undefined> {
+async function requestBodyBytes(
+  body: BodyInit | null | undefined,
+): Promise<Uint8Array | undefined> {
   if (body === undefined || body === null) return undefined
   if (typeof body === 'string') return new TextEncoder().encode(body)
   if (body instanceof URLSearchParams) return new TextEncoder().encode(body.toString())
@@ -1765,7 +1767,10 @@ function isReservedHost(hostname: string): boolean {
 }
 
 function canonicalHostname(hostname: string): string {
-  return hostname.replace(/^\[|\]$/g, '').replace(/\.+$/g, '').toLowerCase()
+  return hostname
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.+$/g, '')
+    .toLowerCase()
 }
 
 function isReservedIpv4(ipv4: [number, number, number, number]): boolean {
@@ -2028,7 +2033,8 @@ async function approvalCodeFromRequest(
 
 function approvalMetadataError(request: Request, expectedOrigin: string): string | undefined {
   const origin = request.headers.get('origin')
-  if (origin && origin !== expectedOrigin) return 'approval origin does not match host origin'
+  if (origin && origin !== 'null' && origin !== expectedOrigin)
+    return 'approval origin does not match host origin'
 
   const referer = request.headers.get('referer')
   if (!origin) {

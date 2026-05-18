@@ -33,26 +33,27 @@ const wata = Wata.create({
     websiteUrl: baseUrl,
   },
   privateKey,
-  transport: deviceCode({
-    baseUrl,
-    html: {
-      async authenticate({ request, actions }) {
-        const form = await request.formData()
-        const userCode = String(form.get('user_code') ?? '')
-        const decision = String(form.get('decision') ?? '')
-        if (!userCode) return html('<p>missing <code>user_code</code></p>', 400)
-        const record = await actions.get(userCode)
-        if (!record) return html('<p>unknown <code>user_code</code></p>', 404)
-        if (decision === 'approve') {
-          await actions.approve(userCode)
-          return html('<h1>Approved ✅</h1><p>You may close this tab.</p>')
-        }
-        await actions.deny(userCode)
-        return html('<h1>Denied ❌</h1><p>You may close this tab.</p>')
-      },
-      render({ userCode, record, meta }) {
-        if (!userCode || !record)
-          return html(`
+  transports: [
+    deviceCode({
+      baseUrl,
+      html: {
+        async authenticate({ request, actions }) {
+          const form = await request.formData()
+          const userCode = String(form.get('user_code') ?? '')
+          const decision = String(form.get('decision') ?? '')
+          if (!userCode) return html('<p>missing <code>user_code</code></p>', 400)
+          const record = await actions.get(userCode)
+          if (!record) return html('<p>unknown <code>user_code</code></p>', 404)
+          if (decision === 'approve') {
+            await actions.approve(userCode)
+            return html('<h1>Approved ✅</h1><p>You may close this tab.</p>')
+          }
+          await actions.deny(userCode)
+          return html('<h1>Denied ❌</h1><p>You may close this tab.</p>')
+        },
+        render({ userCode, record, meta }) {
+          if (!userCode || !record)
+            return html(`
           <h1>Enter your device code</h1>
           <form method="get" action="/auth/device/verify">
             <input name="user_code" placeholder="ABCD-EFGH" autofocus required />
@@ -60,22 +61,22 @@ const wata = Wata.create({
           </form>
         `)
 
-        const requests =
-          record.message.type === 'rpc-requests'
-            ? record.message.payload
-                .map((m) => {
-                  const id = 'id' in m ? `#${String(m.id)}` : '(notification)'
-                  return `<li><code>${m.method}</code> ${id} ${escape(JSON.stringify(m.params))}</li>`
-                })
-                .join('')
-            : '<li>(unknown payload)</li>'
-        const consumer = meta
-          ? `<p>
+          const requests =
+            record.message.type === 'rpc-requests'
+              ? record.message.payload
+                  .map((m) => {
+                    const id = 'id' in m ? `#${String(m.id)}` : '(notification)'
+                    return `<li><code>${m.method}</code> ${id} ${escape(JSON.stringify(m.params))}</li>`
+                  })
+                  .join('')
+              : '<li>(unknown payload)</li>'
+          const consumer = meta
+            ? `<p>
               ${meta.icon ? `<img src="${escape(meta.icon)}" alt="${escape(meta.name)} icon" width="32" height="32" /> ` : ''}
               App: <strong>${escape(meta.name)}</strong>${meta.description ? ` — ${escape(meta.description)}` : ''}
             </p>`
-          : ''
-        return html(`
+            : ''
+          return html(`
         <h1>Approve request?</h1>
         ${consumer}
         <p>Code: <code>${userCode}</code></p>
@@ -87,12 +88,13 @@ const wata = Wata.create({
           <button type="submit" name="decision" value="deny">Deny</button>
         </form>
       `)
+        },
       },
-    },
-    path: '/auth/device',
-    pollingInterval: 1000,
-    store: Kv.memory(),
-  }),
+      path: '/auth/device',
+      pollingInterval: 1000,
+      store: Kv.memory(),
+    }),
+  ],
 })
 
 wata.on('request', (event) => {

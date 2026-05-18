@@ -391,11 +391,11 @@ describe('wata + postMessage (MessageChannel) integration', () => {
     const { port1, port2 } = new MessageChannel()
 
     const consumer = Wata.create({
-      transport: postMessage_consumer({ target: () => port1 }),
+      transports: [postMessage_consumer({ target: () => port1 })],
       schema: integrationSchema,
     })
     const host = HostWata.create({
-      transport: postMessage_host({ target: () => port2 }),
+      transports: [postMessage_host({ target: () => port2 })],
       schema: integrationSchema,
     })
 
@@ -431,11 +431,11 @@ describe('wata + postMessage (MessageChannel) integration', () => {
     const { port1, port2 } = new MessageChannel()
 
     const consumer = Wata.create({
-      transport: postMessage_consumer({ target: () => port1 }),
+      transports: [postMessage_consumer({ target: () => port1 })],
       schema: integrationSchema,
     })
     const host = HostWata.create({
-      transport: postMessage_host({ target: () => port2 }),
+      transports: [postMessage_host({ target: () => port2 })],
       schema: integrationSchema,
     })
 
@@ -465,11 +465,11 @@ describe('wata + postMessage (MessageChannel) integration', () => {
     const { port1, port2 } = new MessageChannel()
 
     const consumer = Wata.create({
-      transport: postMessage_consumer({ target: () => port1 }),
+      transports: [postMessage_consumer({ target: () => port1 })],
       schema: integrationSchema,
     })
     const host = HostWata.create({
-      transport: postMessage_host({ target: () => port2 }),
+      transports: [postMessage_host({ target: () => port2 })],
       schema: integrationSchema,
     })
 
@@ -490,10 +490,12 @@ describe('wata + postMessage (MessageChannel) integration', () => {
 
   test('rejects target() returning null with PopupBlockedError', async () => {
     const consumer = Wata.create({
-      transport: postMessage_consumer({
-        target: () => null as unknown as Window,
-        host: 'https://wallet.example',
-      }),
+      transports: [
+        postMessage_consumer({
+          target: () => null as unknown as Window,
+          host: 'https://wallet.example',
+        }),
+      ],
     })
 
     await expect(consumer.start()).rejects.toThrowErrorMatchingInlineSnapshot(

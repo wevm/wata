@@ -141,8 +141,8 @@ describe('wata-device-code', () => {
   test('end-to-end approval delivers the host response', async () => {
     const { approve, consumer, host } = pair()
 
-    const wata = Wata.create({ transport: consumer })
-    const hostWata = HostWata.create({ transport: host })
+    const wata = Wata.create({ transports: [consumer] })
+    const hostWata = HostWata.create({ transports: [host] })
 
     hostWata.on('request', (event) => {
       if (event.method === 'ping') event.respond({ ok: true })
@@ -160,8 +160,8 @@ describe('wata-device-code', () => {
 
   test('user denial surfaces as `UserRejectedError`', async () => {
     const { consumer, deny, host } = pair()
-    const wata = Wata.create({ transport: consumer })
-    HostWata.create({ transport: host })
+    const wata = Wata.create({ transports: [consumer] })
+    HostWata.create({ transports: [host] })
 
     const sendPromise = wata.send({ method: 'ping', params: [] })
     await deny()
@@ -213,8 +213,8 @@ describe('wata-device-code', () => {
 
   test('post-terminal `send()` rejects with `ClosedError`', async () => {
     const { approve, consumer, host } = pair()
-    const wata = Wata.create({ transport: consumer })
-    const hostWata = HostWata.create({ transport: host })
+    const wata = Wata.create({ transports: [consumer] })
+    const hostWata = HostWata.create({ transports: [host] })
     hostWata.on('request', (event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
@@ -232,7 +232,7 @@ describe('wata-device-code', () => {
 
   test('concurrent `send()` on the same single-exchange transport rejects with `TransportError`', async () => {
     const { consumer, host } = pair()
-    HostWata.create({ transport: host })
+    HostWata.create({ transports: [host] })
 
     await consumer.start()
     const first = consumer.send(
@@ -519,8 +519,8 @@ describe('wata-device-code', () => {
       pollingInterval: 50,
       url: baseUrl,
     })
-    HostWata.create({ transport: host })
-    const wata = Wata.create({ transport: consumer })
+    HostWata.create({ transports: [host] })
+    const wata = Wata.create({ transports: [consumer] })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
 
     const start = Date.now()
@@ -585,7 +585,7 @@ describe('wata-device-code', () => {
         pollingInterval: 50,
         url: 'https://example/auth/device',
       })
-      const wata = Wata.create({ transport: consumer })
+      const wata = Wata.create({ transports: [consumer] })
       const { result } = await wata.send({ method: 'ping', params: [] })
       expect({ result, tokenCalls }).toMatchInlineSnapshot(`
         {
@@ -628,7 +628,7 @@ describe('wata-device-code', () => {
         pollingInterval: 50,
         url: 'https://example/auth/device',
       })
-      const wata = Wata.create({ transport: consumer })
+      const wata = Wata.create({ transports: [consumer] })
       await expect(
         wata.send({ method: 'ping', params: [] }),
       ).rejects.toThrowErrorMatchingInlineSnapshot(
@@ -908,7 +908,7 @@ describe('wata-device-code', () => {
       pollingInterval: 5,
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     await expect(
       wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(`[DeviceCode.UserRejectedError: user said no]`)
@@ -939,7 +939,7 @@ describe('wata-device-code', () => {
       pollingInterval: 5,
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     await expect(
       wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
@@ -972,7 +972,7 @@ describe('wata-device-code', () => {
       pollingInterval: 5,
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     await expect(
       wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
@@ -1005,7 +1005,7 @@ describe('wata-device-code', () => {
       pollingInterval: 5,
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     await expect(wata.send({ method: 'ping', params: [] })).rejects
       .toThrowErrorMatchingInlineSnapshot(`
     	[Transport.TransportError: host returned an invalid response envelope: invalid envelope
@@ -1028,7 +1028,7 @@ describe('wata-device-code', () => {
       pollingInterval: 5,
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     await expect(
       wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
@@ -1046,7 +1046,7 @@ describe('wata-device-code', () => {
       pollingInterval: 5,
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     await expect(
       wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
@@ -1064,7 +1064,7 @@ describe('wata-device-code', () => {
       pollingInterval: 5,
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     await expect(
       wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
@@ -1080,7 +1080,7 @@ describe('wata-device-code', () => {
       pollingInterval: 5,
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     await expect(
       wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
@@ -1130,7 +1130,7 @@ describe('wata-device-code', () => {
       pollingInterval: 5,
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
 
     const start = Date.now()
@@ -1183,7 +1183,7 @@ describe('wata-device-code', () => {
       },
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
     const start = Date.now()
     while (!prompt) {
@@ -1225,7 +1225,7 @@ describe('wata-device-code', () => {
       },
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
     const start = Date.now()
     while (!prompt) {
@@ -1244,8 +1244,8 @@ describe('wata-device-code', () => {
     consumer.on('close', (cause) => {
       closed.push(cause)
     })
-    const wata = Wata.create({ transport: consumer })
-    const hostWata = HostWata.create({ transport: host })
+    const wata = Wata.create({ transports: [consumer] })
+    const hostWata = HostWata.create({ transports: [host] })
     hostWata.on('request', (event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
@@ -1276,8 +1276,8 @@ describe('wata-device-code', () => {
     host.on('close', (cause) => {
       closed.push(cause)
     })
-    const wata = Wata.create({ transport: consumer })
-    const hostWata = HostWata.create({ transport: host })
+    const wata = Wata.create({ transports: [consumer] })
+    const hostWata = HostWata.create({ transports: [host] })
     hostWata.on('request', (event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
@@ -1341,7 +1341,7 @@ describe('wata-device-code', () => {
       pollingInterval: 5,
       url: 'https://example/auth/device',
     })
-    const wata = Wata.create({ transport: consumer })
+    const wata = Wata.create({ transports: [consumer] })
     const sendPromise = wata.send({ method: 'ping', params: [] })
 
     // Wait until the in-flight token poll has actually been kicked off.

@@ -16,7 +16,7 @@ const log = document.getElementById('log') as HTMLPreElement
 
 let current: { id: number | string } | undefined
 
-const wata = Wata.create({ transport: postMessage() })
+const wata = Wata.create({ transports: [postMessage()] })
 
 wata.on('open', () => append('open'))
 wata.on('close', (cause) => append(`close${cause ? `: ${cause.message}` : ''}`))

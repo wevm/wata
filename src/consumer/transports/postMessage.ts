@@ -18,10 +18,12 @@
  * import { Wata, postMessage } from 'wata'
  *
  * const wata = Wata.create({
- *   transport: postMessage({
- *     host: 'https://wallet.example',
- *     target: ({ host }) => window.open(host, '_blank', 'popup=1'),
- *   }),
+ *   transports: [
+ *     postMessage({
+ *       host: 'https://wallet.example',
+ *       target: ({ host }) => window.open(host, '_blank', 'popup=1'),
+ *     }),
+ *   ],
  * })
  *
  * const { result } = await wata.send({ method: 'wallet_connect', params: [] })
@@ -30,17 +32,19 @@
  * @example iframe
  * ```ts
  * const wata = Wata.create({
- *   transport: postMessage({
- *     host: 'https://wallet.example/auth',
- *     target: ({ host }) => {
- *       const iframe = document.createElement('iframe')
- *       iframe.src = host
- *       iframe.hidden = true
- *       document.body.appendChild(iframe)
- *       return iframe.contentWindow!
- *     },
- *     close: (handle) => (handle as Window).frameElement?.remove(),
- *   }),
+ *   transports: [
+ *     postMessage({
+ *       host: 'https://wallet.example/auth',
+ *       target: ({ host }) => {
+ *         const iframe = document.createElement('iframe')
+ *         iframe.src = host
+ *         iframe.hidden = true
+ *         document.body.appendChild(iframe)
+ *         return iframe.contentWindow!
+ *       },
+ *       close: (handle) => (handle as Window).frameElement?.remove(),
+ *     }),
+ *   ],
  * })
  * ```
  *
@@ -48,14 +52,16 @@
  * ```ts
  * const host = 'https://wallet.example'
  * const wata = Wata.create({
- *   transport: postMessage({
- *     target: () => {
- *       const popup = window.open(host, '_blank', 'popup=1')!
- *       const { port1, port2 } = new MessageChannel()
- *       popup.postMessage({ type: 'wata.port' }, host, [port2])
- *       return port1
- *     },
- *   }),
+ *   transports: [
+ *     postMessage({
+ *       target: () => {
+ *         const popup = window.open(host, '_blank', 'popup=1')!
+ *         const { port1, port2 } = new MessageChannel()
+ *         popup.postMessage({ type: 'wata.port' }, host, [port2])
+ *         return port1
+ *       },
+ *     }),
+ *   ],
  * })
  * ```
  */
@@ -130,7 +136,7 @@ export type WindowLike = {
  */
 export function postMessage<const target extends Target>(
   options: Options<target>,
-): Transport.Transport<'consumer'> {
+): Transport.Transport<'consumer', 'postMessage'> {
   const { close, host, source, target: acquire } = options
   const targetOrigin = host ? originFrom(host) : undefined
   return createSide<'consumer', target>({
@@ -168,7 +174,7 @@ function originFrom(host: string): string {
  */
 export function createSide<role extends 'consumer' | 'host', target extends Target>(
   parameters: createSide.Options<role, target>,
-): Transport.Transport<role> {
+): Transport.Transport<role, 'postMessage'> {
   const { handshake, options, role } = parameters
   const source = options.source ?? (globalThis as { window?: WindowLike }).window
 
@@ -365,6 +371,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
       }
     },
     exchange: 'ongoing',
+    name: 'postMessage',
     on: emitter.on,
     role,
     async send(envelope) {
