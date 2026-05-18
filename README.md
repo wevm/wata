@@ -16,10 +16,11 @@ bun i wata
 
 ## Transports
 
-| Transport     | Description                                                                                  | Peers                                          |
-| ------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `postMessage` | Same-device browser session over a `Window`, `WindowProxy`, or `MessagePort` (popup, iframe, channel). | Browser ⇄ Browser |
-| `deviceCode`  | OAuth 2.0 Device Authorization Grant (RFC 8628) over HTTP, with PKCE and a bring-your-own approval UI. | CLI ⇄ Browser     |
+| Transport         | Description                                                                                            | Peers             |
+| ----------------- | ------------------------------------------------------------------------------------------------------ | ----------------- |
+| `postMessage`     | Same-device browser session over a `Window`, `WindowProxy`, or `MessagePort` (popup, iframe, channel). | Browser ⇄ Browser |
+| `deviceCode`      | OAuth 2.0 Device Authorization Grant (RFC 8628) over HTTP, with PKCE and a bring-your-own approval UI. | CLI ⇄ Browser     |
+| `webhookCallback` | Signed HTTP registration + callback flow for consumers that can receive webhooks.                      | Server ⇄ Server   |
 
 ## Usage
 
@@ -103,7 +104,7 @@ Mounts the device-code endpoints under `/auth/device`, renders a minimal approva
 import { createServer } from 'node:http'
 import { Wata, Kv, deviceCode } from 'wata/host'
 
-const wata = Wata.create({ 
+const wata = Wata.create({
   transport: deviceCode({
     baseUrl: 'https://wallet.example',
     html: {
@@ -121,7 +122,7 @@ const wata = Wata.create({
     },
     path: '/auth/device',
     store: Kv.memory(),
-  }) 
+  })
 })
 
 wata.on('request', (c) => {
@@ -129,6 +130,78 @@ wata.on('request', (c) => {
 })
 
 createServer(wata.listener).listen(3000)
+```
+
+### `webhookCallback`
+
+Server-to-server session where the consumer registers a signed intent with the host, sends the user to a verification URL, then receives the signed JSON-RPC response at its webhook endpoint.
+
+[See example →](./examples/webhookCallback)
+
+#### Consumer
+
+Publishes `consumer.json`, starts a webhook listener, opens the host's verification URL for the user, then waits for the callback response.
+
+```ts
+import { Kv, Wata, webhookCallback } from 'wata'
+
+const wata = Wata.create({
+  baseUrl: 'https://app.example',
+  meta: { name: 'Example App' },
+  privateKey,
+  transport: webhookCallback({
+    host: 'https://wallet.example',
+    onPrompt({ verificationUri }) {
+      console.log(`Visit ${verificationUri}`)
+    },
+    path: '/callback',
+    store: Kv.memory(),
+  }),
+})
+
+const { result } = await wata.send({
+  method: 'wallet_connect',
+  params: [],
+})
+```
+
+#### Host
+
+Publishes `host.json`, accepts signed registrations, renders an approval form, and responds to approved requests.
+
+```ts
+import { Wata, Kv, webhookCallback } from 'wata/host'
+
+const wata = Wata.create({
+  baseUrl: 'https://wallet.example',
+  meta: { name: 'Example Wallet' },
+  privateKey,
+  transport: webhookCallback({
+    html: {
+      async authenticate({ actions, request }) {
+        const body = await request.formData()
+        await actions.approve(String(body.get('code')))
+        return new Response('approved')
+      },
+      render({ approvalToken, code, record }) {
+        if (!record) return new Response('no pending request')
+        return new Response(`
+          <form method="post">
+            <input type="hidden" name="approval_token" value="${approvalToken ?? ''}" />
+            <input type="hidden" name="code" value="${code ?? ''}" />
+            <button>Approve</button>
+          </form>
+        `)
+      },
+    },
+    path: '/auth/webhook',
+    store: Kv.memory(),
+  }),
+})
+
+wata.on('request', (event) => {
+  if (event.method === 'wallet_connect') event.respond(['0xabc…'])
+})
 ```
 
 ## License
