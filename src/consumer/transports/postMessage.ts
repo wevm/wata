@@ -23,7 +23,8 @@
  *     target: ({ host }) => window.open(host, '_blank', 'popup=1'),
  *   }),
  * })
- * await wata.start()
+ *
+ * const { result } = await wata.send({ method: 'wallet_connect', params: [] })
  * ```
  *
  * @example iframe
