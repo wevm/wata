@@ -308,13 +308,24 @@ function pair(options: PairOptions = {}) {
 }
 
 function signedRequest(options: signedRequest.Options): Request {
-  const { body, components, created, keyid, method, nonce, privateKey, publicKey, url } = options
+  const {
+    body,
+    components,
+    contentType = 'application/json',
+    created,
+    keyid,
+    method,
+    nonce,
+    privateKey,
+    publicKey,
+    url,
+  } = options
   const headers =
     body === undefined
       ? { 'urpc-public-key': publicKey }
       : {
           'content-digest': MessageSig.contentDigest(body),
-          'content-type': 'application/json',
+          'content-type': contentType,
           'urpc-public-key': publicKey,
         }
   const { signature, signatureInput } = MessageSig.sign({
@@ -337,6 +348,7 @@ declare namespace signedRequest {
   type Options = {
     body?: string | undefined
     components: readonly string[]
+    contentType?: string | undefined
     created?: number | undefined
     keyid: string
     method: string
@@ -1232,6 +1244,46 @@ describe('webhookCallback end-to-end', () => {
     expect(record.status).toBe('pending')
   })
 
+  test('rejects default approval submissions without a JSON content type', async () => {
+    const setup = pair()
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+
+    await setup.consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await setup.findActiveCode()
+    const session = await setup.getApprovalSession(code)
+    if (!session) throw new Error('approval session missing')
+    const response = await setup.hostTransport.fetch(
+      new Request(`${setup.hostOrigin}${setup.hostPath}/verify?code=${encodeURIComponent(code)}`, {
+        body: JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
+        headers: {
+          'content-type': 'text/plain',
+          cookie: session.cookie,
+          origin: setup.hostOrigin,
+          'urpc-approval-token': session.token,
+        },
+        method: 'POST',
+      }),
+    )
+    const record = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "invalid_request",
+        "error_description": "expected \`Content-Type: application/json\`",
+      }
+    `)
+    expect(record.status).toBe('pending')
+  })
+
   test('rejects approval tokens from another approval session', async () => {
     const setup = pair()
     Wata.create({
@@ -1557,6 +1609,42 @@ describe('webhookCallback end-to-end', () => {
       {
         "error": "unauthorized",
         "error_description": "missing signature nonce",
+      }
+    `)
+    expect(hostStore.scanKeys('webhook:code:')).toEqual([])
+  })
+
+  test('rejects /register without a JSON content type', async () => {
+    const { consumerKeypair, hostOrigin, hostPath, hostStore, hostTransport, webhookUrl } = pair()
+    const publicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+    const body = JSON.stringify({ message, webhook_url: webhookUrl })
+    const response = await hostTransport.fetch(
+      signedRequest({
+        body,
+        components: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-public-key',
+        ],
+        contentType: 'text/plain',
+        keyid: 'https://acme.dev#identity',
+        method: 'POST',
+        nonce: 'wrong-content-type',
+        privateKey: consumerKeypair.privateKey,
+        publicKey,
+        url: `${hostOrigin}${hostPath}/register`,
+      }),
+    )
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "invalid_request",
+        "error_description": "expected \`Content-Type: application/json\`",
       }
     `)
     expect(hostStore.scanKeys('webhook:code:')).toEqual([])
@@ -2140,6 +2228,75 @@ describe('webhookCallback end-to-end', () => {
     expect(await response.json()).toMatchInlineSnapshot(`
       {
         "error": "missing \`uRPC-Idempotency-Key\`",
+      }
+    `)
+  })
+
+  test('consumer rejects active webhook delivery without a JSON content type', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostKeypair,
+      hostStore,
+      webhookUrl,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    const body = JSON.stringify(
+      Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]),
+    )
+    const headers = {
+      'content-digest': MessageSig.contentDigest(body),
+      'content-type': 'text/plain',
+      'urpc-auth-req-id': record.authReqId,
+      'urpc-idempotency-key': record.authReqId,
+      'urpc-public-key': ed25519Pubkey(hostKeypair.publicKey),
+    }
+    const { signature, signatureInput } = MessageSig.sign({
+      components: [
+        '@method',
+        '@target-uri',
+        '@authority',
+        'content-type',
+        'content-digest',
+        'urpc-auth-req-id',
+        'urpc-public-key',
+      ],
+      message: { headers, method: 'POST', url: webhookUrl },
+      parameters: {
+        alg: 'ed25519',
+        created: Math.floor(Date.now() / 1000),
+        keyid: 'https://wallet.example#identity',
+        nonce: 'wrong-content-type',
+      },
+      privateKey: hostKeypair.privateKey,
+    })
+
+    const response = await consumerTransport.fetch(
+      new Request(webhookUrl, {
+        body,
+        headers: { ...headers, signature, 'signature-input': signatureInput },
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "expected \`Content-Type: application/json\`",
       }
     `)
   })

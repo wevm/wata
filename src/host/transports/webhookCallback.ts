@@ -434,6 +434,14 @@ export function webhookCallback(options: Options): WebhookCallback {
         { error: 'invalid_request', error_description: 'missing `uRPC-Public-Key`' },
         { status: 400 },
       )
+    if (!isJsonRequest(request))
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'expected `Content-Type: application/json`',
+        },
+        { status: 400 },
+      )
 
     // Verify Content-Digest before reading body.
     const expectedDigest = MessageSig.contentDigest(bodyText)
@@ -841,6 +849,14 @@ export function webhookCallback(options: Options): WebhookCallback {
     }
 
     const bodyText = await request.text()
+    if (!isJsonRequest(request))
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'expected `Content-Type: application/json`',
+        },
+        { status: 400 },
+      )
     let responseEnvelope: Extract<Envelope.Envelope, { type: 'rpc-responses' }>
     try {
       const envelope = Envelope.parse(JSON.parse(bodyText))
@@ -1524,6 +1540,11 @@ function isFormRequest(request: Request): boolean {
     contentType?.startsWith('application/x-www-form-urlencoded') === true ||
     contentType?.startsWith('multipart/form-data') === true
   )
+}
+
+function isJsonRequest(request: Request): boolean {
+  const contentType = request.headers.get('content-type')?.toLowerCase()
+  return contentType === 'application/json' || contentType?.startsWith('application/json;') === true
 }
 
 function requestIdsFor(record: PendingRecord): Rpc.Id[] {

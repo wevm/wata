@@ -396,6 +396,8 @@ export function webhookCallback(options: Options): WebhookCallback {
     const contentEncoding = request.headers.get('content-encoding')
     if (contentEncoding && contentEncoding.toLowerCase() !== 'identity')
       return c.json({ error: 'unsupported `Content-Encoding`' }, { status: 400 })
+    if (!isJsonRequest(request))
+      return c.json({ error: 'expected `Content-Type: application/json`' }, { status: 400 })
 
     const bodyText = await request.text()
     const declaredPubkey = request.headers.get('urpc-public-key')
@@ -613,6 +615,11 @@ function constantTimeEqual(a: string, b: string): boolean {
   let mismatch = 0
   for (let i = 0; i < a.length; i += 1) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i)
   return mismatch === 0
+}
+
+function isJsonRequest(request: Request): boolean {
+  const contentType = request.headers.get('content-type')?.toLowerCase()
+  return contentType === 'application/json' || contentType?.startsWith('application/json;') === true
 }
 
 function signatureMetadataError(
