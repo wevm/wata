@@ -223,8 +223,8 @@ export declare namespace reject {
  *
  * const wata = Wata.create({ transport })
  * await wata.start()
- * wata.on('request', (event) => {
- *   if (event.method === 'ping') event.respond({ ok: true })
+ * wata.on('request', async (event) => {
+ *   if (event.method === 'ping') await event.respond({ ok: true })
  * })
  * ```
  *
@@ -239,7 +239,7 @@ export declare namespace reject {
  * })
  *
  * // Later, when the user clicks "approve":
- * wata.respond(event.id, { ok: true })
+ * await wata.respond(event.id, { ok: true })
  * ```
  */
 export function create<

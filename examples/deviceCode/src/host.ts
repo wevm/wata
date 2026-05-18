@@ -55,9 +55,9 @@ const wata = Wata.create({
   }),
 })
 
-wata.on('request', (event) => {
+wata.on('request', async (event) => {
   console.log(`request: ${event.method}`, event.params)
-  event.respond({ message: 'pong from host' })
+  await event.respond({ message: 'pong from host' })
 })
 
 const app = new Hono().all('/auth/*', (c) => wata.fetch(c.req.raw))

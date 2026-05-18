@@ -45,7 +45,9 @@
  * })
  *
  * const wata = Wata.create({ transport })
- * wata.on('request', (event) => event.respond({ ok: true }))
+ * wata.on('request', async (event) => {
+ *   await event.respond({ ok: true })
+ * })
  *
  * createServer(transport.listener).listen(3000)
  * ```
