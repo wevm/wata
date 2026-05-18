@@ -831,10 +831,26 @@ export function webhookCallback(options: Options): WebhookCallback {
       return c.json({ error: 'forbidden', error_description: metadataError }, { status: 403 })
 
     const record = code ? await store.get<PendingRecord>(codeKey(code)) : undefined
-    const pendingRecord =
-      record && record.status === 'pending' && Date.now() < record.expiresAt ? record : undefined
-    if (pendingRecord) {
-      const sessionError = await consumeApprovalSession(request, pendingRecord)
+    if (code && !record)
+      return c.json(
+        { error: 'not_found', error_description: 'unknown or expired approval request' },
+        { status: 404 },
+      )
+    if (record) {
+      if (record.status !== 'pending')
+        return c.json(
+          { error: 'conflict', error_description: 'approval request is no longer pending' },
+          { status: 409 },
+        )
+      if (Date.now() >= record.expiresAt) {
+        cancelRecord(record)
+        await persist(record)
+        return c.json(
+          { error: 'conflict', error_description: 'approval request expired' },
+          { status: 409 },
+        )
+      }
+      const sessionError = await consumeApprovalSession(request, record)
       if (sessionError)
         return c.json({ error: 'forbidden', error_description: sessionError }, { status: 403 })
     }
@@ -842,7 +858,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     if (html.authenticate) {
       const authResponse = await html.authenticate({
         actions,
-        record: pendingRecord,
+        record,
         request: request.clone(),
         code,
       })
@@ -859,19 +875,6 @@ export function webhookCallback(options: Options): WebhookCallback {
         { error: 'not_found', error_description: 'unknown or expired approval request' },
         { status: 404 },
       )
-    if (record.status !== 'pending')
-      return c.json(
-        { error: 'conflict', error_description: 'approval request is no longer pending' },
-        { status: 409 },
-      )
-    if (Date.now() >= record.expiresAt) {
-      cancelRecord(record)
-      await persist(record)
-      return c.json(
-        { error: 'conflict', error_description: 'approval request expired' },
-        { status: 409 },
-      )
-    }
 
     const bodyText = await request.text()
     if (!isJsonRequest(request))

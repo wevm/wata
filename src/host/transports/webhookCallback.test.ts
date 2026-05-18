@@ -1348,6 +1348,39 @@ describe('webhookCallback end-to-end', () => {
     expect(record.status).toBe('pending')
   })
 
+  test('rejects unknown form approval codes before authenticate', async () => {
+    let authenticates = 0
+    const setup = pair({
+      hostAuthenticate: () => {
+        authenticates += 1
+        return new Response('called')
+      },
+    })
+
+    const response = await setup.hostTransport.fetch(
+      new Request(`${setup.hostOrigin}${setup.hostPath}/verify`, {
+        body: new URLSearchParams({
+          code: 'unknown',
+          decision: 'approve',
+        }),
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          origin: setup.hostOrigin,
+        },
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "not_found",
+        "error_description": "unknown or expired approval request",
+      }
+    `)
+    expect(authenticates).toBe(0)
+  })
+
   test('rejects default approval submissions without a JSON content type', async () => {
     const setup = pair()
     Wata.create({
