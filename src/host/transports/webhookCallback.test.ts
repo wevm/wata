@@ -904,14 +904,14 @@ describe('webhookCallback end-to-end', () => {
     expect(await response.json()).toMatchInlineSnapshot(`
       {
         "error": "forbidden",
-        "error_description": "\`webhook_url\` must use https (http allowed only for loopback)",
+        "error_description": "\`webhook_url\` must use a public https URL (http allowed only for loopback development)",
       }
     `)
   })
 
   test('allows loopback HTTP webhook_url for local development', async () => {
     const consumerOrigin = 'http://localhost:4646'
-    const hostOrigin = 'https://wallet.example'
+    const hostOrigin = 'http://localhost:4747'
     const hostPath = '/auth/webhook'
     const webhookUrl = `${consumerOrigin}/cb`
     const consumerKeypair = Ed25519.createKeyPair()
@@ -985,6 +985,32 @@ describe('webhookCallback end-to-end', () => {
     )
 
     expect(response.status).toBe(200)
+  })
+
+  test('rejects reserved webhook_url hosts from non-loopback hosts', async () => {
+    const { consumerKeypair, hostOrigin, hostPath, hostTransport } = pair()
+    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+    const body = JSON.stringify({ message, webhook_url: 'https://127.0.0.1/cb' })
+    const digest = MessageSig.contentDigest(body)
+    const response = await hostTransport.fetch(
+      new Request(`${hostOrigin}${hostPath}/register`, {
+        body,
+        headers: {
+          'content-digest': digest,
+          'content-type': 'application/json',
+          'urpc-public-key': ed25519Pubkey(consumerKeypair.publicKey),
+        },
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "forbidden",
+        "error_description": "\`webhook_url\` must use a public https URL (http allowed only for loopback development)",
+      }
+    `)
   })
 
   test('rejects /register when webhook_url is not in consumer.json callback_urls', async () => {

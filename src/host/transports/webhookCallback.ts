@@ -458,11 +458,12 @@ export function webhookCallback(options: Options): WebhookCallback {
         { error: 'invalid_request', error_description: 'invalid `webhook_url`' },
         { status: 400 },
       )
-    if (!isAllowedWebhookUrl(webhookUrl))
+    if (!isAllowedWebhookUrl(webhookUrl, new URL(resolveBaseUrl(c.req.url))))
       return c.json(
         {
           error: 'forbidden',
-          error_description: '`webhook_url` must use https (http allowed only for loopback)',
+          error_description:
+            '`webhook_url` must use a public https URL (http allowed only for loopback development)',
         },
         { status: 403 },
       )
@@ -1072,15 +1073,55 @@ function identityKeyid(url: string): string {
   return `${new URL(url).origin}#identity`
 }
 
-function isAllowedWebhookUrl(url: URL): boolean {
+function isAllowedWebhookUrl(url: URL, hostUrl: URL): boolean {
+  if (isReservedHost(url.hostname))
+    return (
+      isLoopbackHost(url.hostname) &&
+      isLoopbackHost(hostUrl.hostname) &&
+      (url.protocol === 'http:' || url.protocol === 'https:')
+    )
   if (url.protocol === 'https:') return true
-  if (url.protocol !== 'http:') return false
-  return (
-    url.hostname === 'localhost' ||
-    url.hostname === '127.0.0.1' ||
-    url.hostname === '[::1]' ||
-    url.hostname === '::1'
-  )
+  return false
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  return host === 'localhost' || host === '::1' || host.startsWith('127.')
+}
+
+function isReservedHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  if (isLoopbackHost(host)) return true
+  const ipv4 = parseIpv4(host)
+  if (ipv4) {
+    const [a, b, c, d] = ipv4
+    if (a === 0) return true
+    if (a === 10) return true
+    if (a === 100 && b >= 64 && b <= 127) return true
+    if (a === 169 && b === 254) return true
+    if (a === 172 && b >= 16 && b <= 31) return true
+    if (a === 192 && b === 168) return true
+    if (a === 192 && b === 0 && c === 2) return true
+    if (a === 198 && b === 51 && c === 100) return true
+    if (a === 203 && b === 0 && c === 113) return true
+    if (a >= 224) return true
+    if (a === 255 && b === 255 && c === 255 && d === 255) return true
+    return false
+  }
+  if (host === '::') return true
+  if (host.startsWith('fe80:')) return true
+  if (host.startsWith('fc') || host.startsWith('fd')) return true
+  if (host.startsWith('ff')) return true
+  if (host.startsWith('2001:db8:')) return true
+  return host === 'fd00:ec2::254'
+}
+
+function parseIpv4(hostname: string): [number, number, number, number] | undefined {
+  const parts = hostname.split('.')
+  if (parts.length !== 4) return undefined
+  const bytes = parts.map((part) => Number(part))
+  if (bytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) return undefined
+  return bytes as [number, number, number, number]
 }
 
 function codeKey(code: string): string {
