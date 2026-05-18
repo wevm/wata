@@ -238,6 +238,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     // the same `auth_req_id` is treated as a no-op (idempotent 200)
     // rather than re-emitting `message`.
     state.activeAuthReqId = undefined
+    state.activeHostPubkey = undefined
     if (cause) emitter.emit('error', cause)
     if (message) emitter.emit('message', message)
     emitter.emit('close', cause)
@@ -523,6 +524,7 @@ export function webhookCallback(options: Options): WebhookCallback {
         `webhook-callback cancel returned status ${response.status}: ${text}`,
       )
     }
+    settle(undefined, new Transport.ClosedError('webhook-callback cancelled'))
   }
 
   return {

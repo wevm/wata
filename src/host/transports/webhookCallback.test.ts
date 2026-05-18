@@ -1528,6 +1528,48 @@ describe('webhookCallback end-to-end', () => {
     expect(await hostStore.get(`webhook:code:${code}`)).toBeUndefined()
   })
 
+  test('consumer cancel closes the local exchange', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostStore,
+      webhookUrl,
+    } = pair()
+    const consumer = Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    const sendPromise = consumer.send({ method: 'ping', params: [] })
+    const code = await findActiveCode()
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    await consumerTransport.cancel()
+
+    await expect(sendPromise).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Transport.ClosedError: webhook-callback cancelled]`,
+    )
+    const late = await consumerTransport.fetch(
+      new Request(webhookUrl, {
+        body: '{}',
+        headers: { 'urpc-auth-req-id': record.authReqId },
+        method: 'POST',
+      }),
+    )
+    expect(late.status).toBe(200)
+    expect(await late.json()).toMatchInlineSnapshot(`
+      {
+        "idempotent": true,
+        "ok": true,
+      }
+    `)
+  })
+
   test('cancel does not overwrite an already-settled approval transition', async () => {
     const {
       consumerKeypair,
