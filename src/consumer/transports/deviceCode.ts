@@ -125,7 +125,9 @@ export type Options = {
  *
  * const transport = deviceCode({
  *   url: 'https://wallet.example/auth/device',
- *   onPrompt: console.log,
+ *   onPrompt({ userCode, verificationUri }) {
+ *     console.log(`Visit ${verificationUri} and enter ${userCode}`)
+ *   },
  * })
  * ```
  */
