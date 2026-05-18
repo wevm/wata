@@ -70,6 +70,9 @@ export type Kv = {
   take?: <value = unknown>(key: string) => Promise<value | undefined>
 }
 
+/** {@link Kv} backend with linearizable atomic read-and-delete support. */
+export type AtomicKv = Kv & { take: NonNullable<Kv['take']> }
+
 export declare namespace set {
   /** Options for {@link Kv.set}. */
   type Options = {
@@ -168,7 +171,7 @@ export declare namespace cloudflare {
 export function durableObject(
   namespace: durableObject.Namespace,
   options: durableObject.Options = {},
-): Kv {
+): AtomicKv {
   const instanceName = options.name ?? 'default'
   const stub = () => namespace.get(namespace.idFromName(instanceName))
 
@@ -306,7 +309,7 @@ export declare namespace Storage {
  * const store = Kv.memory()
  * ```
  */
-export function memory(options: memory.Options = {}): Kv {
+export function memory(options: memory.Options = {}): AtomicKv {
   const now = options.now ?? Date.now
   const store = new Map<string, { expiresAt?: number; value: unknown }>()
 

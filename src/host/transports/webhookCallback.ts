@@ -139,9 +139,10 @@ export type Options = {
   retrySeconds?: number | undefined
   /**
    * Pluggable persistence for {@link PendingRecord}s. Use
-   * {@link Kv.memory} for tests.
+   * {@link Kv.memory} for tests. Must support atomic {@link Kv.Kv.take}
+   * so approval codes can be consumed exactly once.
    */
-  store: Kv.Kv
+  store: Kv.AtomicKv
 }
 
 export declare namespace html {

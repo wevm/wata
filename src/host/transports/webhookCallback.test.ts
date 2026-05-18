@@ -29,7 +29,7 @@ function ed25519Pubkey(publicKey: Hex.Hex): string {
  * pending intent's opaque code without going through the
  * browser-facing /verify UI.
  */
-function memoryWithScan(): Kv.Kv & { scanKeys: (prefix: string) => string[] } {
+function memoryWithScan(): Kv.AtomicKv & { scanKeys: (prefix: string) => string[] } {
   const inner = new Map<string, { expiresAt?: number; value: unknown }>()
   const isExpired = (entry: { expiresAt?: number }) =>
     entry.expiresAt !== undefined && Date.now() >= entry.expiresAt
@@ -438,7 +438,7 @@ describe('webhookCallback end-to-end', () => {
     expect(() =>
       hostWebhookCallback({
         html: { render: () => new Response('ok') },
-        store,
+        store: store as unknown as HostWebhookCallback.Options['store'],
       }),
     ).toThrowErrorMatchingInlineSnapshot(
       `[Transport.TransportError: webhook-callback host store must implement \`take\` for single-use approval codes]`,

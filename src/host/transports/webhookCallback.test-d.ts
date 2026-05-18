@@ -86,8 +86,8 @@ describe('webhookCallback (host)', () => {
     })
   })
 
-  test('store accepts a Kv.Kv', () => {
-    expectTypeOf<WebhookCallback.Options['store']>().toEqualTypeOf<Kv.Kv>()
+  test('store requires an atomic Kv backend', () => {
+    expectTypeOf<WebhookCallback.Options['store']>().toEqualTypeOf<Kv.AtomicKv>()
   })
 
   test('public options omit derived signature fields', () => {
