@@ -4,6 +4,7 @@
 // helpers, and host-side transport factories.
 
 export * as Wata from './Wata.js'
+export * as Discovery from '../core/Discovery.js'
 export * as Kv from '../core/Kv.js'
 export * as Schema from '../core/Schema.js'
 export * as Transport from '../core/Transport.js'

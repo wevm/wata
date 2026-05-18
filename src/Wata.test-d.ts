@@ -1,7 +1,7 @@
 import type { Hex } from 'ox'
 import { describe, expectTypeOf, test } from 'vp/test'
 import { Discovery, Rpc, Schema, Wata, loopback } from 'wata'
-import { Schema as HostSchema, Wata as HostWata } from 'wata/host'
+import { Discovery as HostDiscovery, Schema as HostSchema, Wata as HostWata } from 'wata/host'
 import { z } from 'zod/mini'
 
 const privateKey = '0x' as Hex.Hex
@@ -199,9 +199,9 @@ describe('baseUrl + meta options', () => {
     Wata.create({ privateKey, transport: consumer })
   })
 
-  test('host accepts `baseUrl` and `meta` typed as Discovery.Meta', () => {
+  test('host accepts `baseUrl` and `meta` typed as host Discovery.Meta', () => {
     const { host } = loopback()
-    const meta: Discovery.Meta = { name: 'Wallet' }
+    const meta: HostDiscovery.Meta = { name: 'Wallet' }
     HostWata.create({ baseUrl: 'https://wallet.example', meta, privateKey, transport: host })
   })
 

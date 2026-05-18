@@ -1,6 +1,5 @@
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Discovery } from 'wata'
-import { DeviceCode, Kv, Transport, Wata, deviceCode } from 'wata/host'
+import { DeviceCode, Discovery, Kv, Transport, Wata, deviceCode } from 'wata/host'
 
 describe('deviceCode (host)', () => {
   test('returns a single-exchange host-role transport with `.fetch` + `.listener`', () => {
