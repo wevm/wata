@@ -481,8 +481,9 @@ export function webhookCallback(options: Options): WebhookCallback {
       parameters: { alg: 'ed25519', created, keyid: getKeyid(), nonce },
       privateKey: identity.privateKey,
     })
+    let response: Response
     try {
-      await fetchWithTimeout(url, {
+      response = await fetchWithTimeout(url, {
         headers: {
           signature: signedHeaders.signature,
           'signature-input': signedHeaders.signatureInput,
@@ -494,6 +495,12 @@ export function webhookCallback(options: Options): WebhookCallback {
       throw new Transport.TransportError(
         `webhook-callback cancel failed: ${(cause as Error).message}`,
         { cause: cause as Error },
+      )
+    }
+    if (response.status !== 204) {
+      const text = await response.text().catch(() => '<no body>')
+      throw new Transport.TransportError(
+        `webhook-callback cancel returned status ${response.status}: ${text}`,
       )
     }
   }

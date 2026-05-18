@@ -1492,6 +1492,40 @@ describe('webhookCallback end-to-end', () => {
     expect(after.status).toBe('pending')
   })
 
+  test('consumer cancel surfaces host rejection', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostStore,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    await hostStore.set(`webhook:authReqId:${record.authReqId}`, {
+      ...record,
+      consumer: {
+        ...record.consumer,
+        publicKey: ed25519Pubkey(Ed25519.createKeyPair().publicKey),
+      },
+    } satisfies HostWebhookCallback.PendingRecord)
+
+    await expect(consumerTransport.cancel()).rejects.toThrow(
+      'webhook-callback cancel returned status 401',
+    )
+  })
+
   test('returns the same terminal response for unknown and cancelled verification codes', async () => {
     const {
       consumerKeypair,
