@@ -825,7 +825,13 @@ export function webhookCallback(options: Options): WebhookCallback {
 
   app.post('/verify', async (c) => {
     const request = c.req.raw
-    const code = await approvalCodeFromRequest(c.req.query('code') ?? undefined, request)
+    const approvalCode = await approvalCodeFromRequest(c.req.query('code') ?? undefined, request)
+    if (approvalCode.error)
+      return c.json(
+        { error: 'forbidden', error_description: approvalCode.error },
+        { status: 403 },
+      )
+    const code = approvalCode.code
     const metadataError = approvalMetadataError(request, new URL(resolveBaseUrl(c.req.url)).origin)
     if (metadataError)
       return c.json({ error: 'forbidden', error_description: metadataError }, { status: 403 })
@@ -1558,15 +1564,20 @@ async function approvalTokenFromRequest(request: Request): Promise<string | unde
 async function approvalCodeFromRequest(
   queryCode: string | undefined,
   request: Request,
-): Promise<string | undefined> {
-  if (queryCode) return queryCode
-  if (!isFormRequest(request)) return undefined
+): Promise<{ code: string | undefined; error?: string | undefined }> {
+  if (!isFormRequest(request)) return { code: queryCode }
   try {
     const form = await request.clone().formData()
     const value = form.get('code')
-    return typeof value === 'string' && value ? value : undefined
+    const formCode = typeof value === 'string' && value ? value : undefined
+    if (queryCode && formCode && queryCode !== formCode)
+      return {
+        code: queryCode,
+        error: 'approval form code does not match verification code',
+      }
+    return { code: queryCode ?? formCode }
   } catch {
-    return undefined
+    return { code: queryCode }
   }
 }
 
