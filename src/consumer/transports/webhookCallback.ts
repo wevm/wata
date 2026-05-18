@@ -459,6 +459,11 @@ export function webhookCallback(options: Options): WebhookCallback {
 
     const idemKey = request.headers.get('urpc-idempotency-key')
     if (!idemKey) return c.json({ error: 'missing `uRPC-Idempotency-Key`' }, { status: 400 })
+    if (idemKey !== authReqId)
+      return c.json(
+        { error: '`uRPC-Idempotency-Key` must match `uRPC-Auth-Req-Id`' },
+        { status: 400 },
+      )
 
     // §3.4.2 step 5: idempotency by uRPC-Idempotency-Key.
     // Look up before parsing, but only mark the key after the
