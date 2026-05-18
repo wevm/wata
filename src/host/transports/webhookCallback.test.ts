@@ -1944,6 +1944,56 @@ describe('webhookCallback end-to-end', () => {
     expect(await hostStore.get(`webhook:code:${code}`)).toBeUndefined()
   })
 
+  test('expired cancellation returns 204 without signature headers', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostStore,
+      hostTransport,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+    const expiredRecord = {
+      ...record,
+      expiresAt: Date.now() - 1,
+    } satisfies HostWebhookCallback.PendingRecord
+    await hostStore.set(`webhook:code:${code}`, expiredRecord)
+    await hostStore.set(`webhook:authReqId:${record.authReqId}`, expiredRecord)
+
+    const response = await hostTransport.fetch(
+      new Request(
+        `https://wallet.example/auth/webhook/register/${encodeURIComponent(record.authReqId)}`,
+        { method: 'DELETE' },
+      ),
+    )
+    const after = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:authReqId:${record.authReqId}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(204)
+    expect(after.status).toBe('cancelled')
+    expect(after.message).toMatchInlineSnapshot(`
+      {
+        "payload": [],
+        "type": "rpc-requests",
+      }
+    `)
+    expect(await hostStore.get(`webhook:code:${code}`)).toBeUndefined()
+  })
+
   test('consumer cancel closes the local exchange', async () => {
     const {
       consumerKeypair,

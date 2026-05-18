@@ -733,6 +733,10 @@ export function webhookCallback(options: Options): WebhookCallback {
     // §3.5 — idempotent. Unknown / already-cancelled / already-approved
     // all collapse into 204 No Content without revealing which case applied.
     if (!record || record.status !== 'pending') return new Response(null, { status: 204 })
+    if (Date.now() >= record.expiresAt) {
+      await cancelPendingRecord(record)
+      return new Response(null, { status: 204 })
+    }
 
     const request = c.req.raw
     const declaredPubkey = request.headers.get('urpc-public-key')
