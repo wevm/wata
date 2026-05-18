@@ -39,7 +39,9 @@ describe('webhookCallback (host)', () => {
         render: (options) => {
           expectTypeOf(options.approvalToken).toEqualTypeOf<string | undefined>()
           expectTypeOf(options.code).toEqualTypeOf<string | undefined>()
-          expectTypeOf(options.record).toEqualTypeOf<WebhookCallback.PendingRecord | undefined>()
+          expectTypeOf(options.record).toEqualTypeOf<
+            WebhookCallback.html.ApprovalRecord | undefined
+          >()
           expectTypeOf(options.request).toEqualTypeOf<Request>()
           return new Response('ok')
         },
@@ -65,9 +67,11 @@ describe('webhookCallback (host)', () => {
             ) => Promise<void>
           >()
           expectTypeOf(options.actions.get).toEqualTypeOf<
-            (code: string) => Promise<WebhookCallback.PendingRecord | undefined>
+            (code: string) => Promise<WebhookCallback.html.ApprovalRecord | undefined>
           >()
-          expectTypeOf(options.record).toEqualTypeOf<WebhookCallback.PendingRecord | undefined>()
+          expectTypeOf(options.record).toEqualTypeOf<
+            WebhookCallback.html.ApprovalRecord | undefined
+          >()
           expectTypeOf(options.code).toEqualTypeOf<string | undefined>()
           expectTypeOf(options.request).toEqualTypeOf<Request>()
           return new Response('ok')
@@ -89,6 +93,14 @@ describe('webhookCallback (host)', () => {
 
   test('store requires an atomic Kv backend', () => {
     expectTypeOf<WebhookCallback.Options['store']>().toEqualTypeOf<Kv.AtomicKv>()
+  })
+
+  test('approval records omit consumer-facing correlation handles', () => {
+    expectTypeOf<WebhookCallback.html.ApprovalRecord>().not.toHaveProperty('authReqId')
+    expectTypeOf<WebhookCallback.html.ApprovalRecord>().not.toHaveProperty('webhookUrl')
+    expectTypeOf<WebhookCallback.html.ApprovalRecord['consumer']>().not.toHaveProperty(
+      'publicKey',
+    )
   })
 
   test('public options omit derived signature fields', () => {

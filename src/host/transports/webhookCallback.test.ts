@@ -724,6 +724,76 @@ describe('webhookCallback end-to-end', () => {
     expect(response.headers.get('set-cookie')).toContain('; Secure')
   })
 
+  test('omits auth_req_id from approval hook records', async () => {
+    const store = memoryWithScan()
+    const now = Date.now()
+    await store.set('webhook:code:code-1', {
+      authReqId: 'auth-1',
+      code: 'code-1',
+      consumer: {
+        id: 'acme.dev',
+        origin: 'https://acme.dev',
+        publicKey: 'A'.repeat(43),
+      },
+      createdAt: now,
+      expiresAt: now + 60_000,
+      message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+      retrySeconds: 300,
+      status: 'pending',
+      webhookUrl: 'https://acme.dev/cb',
+    } satisfies HostWebhookCallback.PendingRecord)
+    let approvalToken = ''
+    let renderHasAuthReqId: boolean | undefined
+    let renderHasWebhookUrl: boolean | undefined
+    let renderHasPublicKey: boolean | undefined
+    let authenticateHasAuthReqId: boolean | undefined
+    let getHasAuthReqId: boolean | undefined
+    const transport = hostWebhookCallback({
+      baseUrl: 'https://wallet.example',
+      html: {
+        async authenticate({ actions, code, record }) {
+          authenticateHasAuthReqId = !!record && 'authReqId' in record
+          const fetched = code ? await actions.get(code) : undefined
+          getHasAuthReqId = !!fetched && 'authReqId' in fetched
+          return new Response('ok')
+        },
+        render: ({ approvalToken: token, record }) => {
+          approvalToken = token ?? ''
+          renderHasAuthReqId = !!record && 'authReqId' in record
+          renderHasWebhookUrl = !!record && 'webhookUrl' in record
+          renderHasPublicKey = !!record && 'publicKey' in record.consumer
+          return new Response('ok')
+        },
+      },
+      path: '/auth/webhook',
+      store,
+    })
+
+    const get = await transport.fetch(
+      new Request('https://wallet.example/auth/webhook/verify?code=code-1'),
+    )
+    const cookie = get.headers.get('set-cookie')?.split(';')[0]
+    if (!cookie) throw new Error('approval session cookie missing')
+    const post = await transport.fetch(
+      new Request('https://wallet.example/auth/webhook/verify', {
+        body: new URLSearchParams({ approval_token: approvalToken, code: 'code-1' }),
+        headers: {
+          cookie,
+          'content-type': 'application/x-www-form-urlencoded',
+          origin: 'https://wallet.example',
+        },
+        method: 'POST',
+      }),
+    )
+
+    expect(post.status).toBe(200)
+    expect(renderHasAuthReqId).toBe(false)
+    expect(renderHasWebhookUrl).toBe(false)
+    expect(renderHasPublicKey).toBe(false)
+    expect(authenticateHasAuthReqId).toBe(false)
+    expect(getHasAuthReqId).toBe(false)
+  })
+
   test('rejects supplied invalid verification codes before rendering', async () => {
     let renders = 0
     const transport = hostWebhookCallback({

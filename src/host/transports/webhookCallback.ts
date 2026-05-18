@@ -201,11 +201,36 @@ export declare namespace html {
     /**
      * Called for `GET /verify`. Receive the opaque code
      * from the URL's `?code=` query parameter, the resolved
-     * {@link PendingRecord} (when present and pending), an
+     * approval-safe record (when present and pending), an
      * `approvalToken` for hidden form fields or JSON headers, and
      * return the HTML form / page describing the queued requests.
      */
     render: (options: render.Options) => Response | Promise<Response>
+  }
+
+  /** Approval-surface-safe view of a pending request. */
+  type ApprovalRecord = {
+    /** Opaque single-use handle carried by `verification_uri` as `?code=...`. */
+    code: string
+    /** Display identity snapshotted from the consumer's `consumer.json`. */
+    consumer: {
+      /** Consumer's self-asserted `id` (typically hostname). */
+      id: string
+      /** Optional meta block, when published. */
+      meta?: Discovery.Meta | undefined
+      /** Self-asserted origin from the doc. */
+      origin: string
+    }
+    /** Epoch-ms creation. */
+    createdAt: number
+    /** Epoch-ms expiry of the approval window. */
+    expiresAt: number
+    /** Consumer's `rpc-requests` envelope, queued for delivery on approval. */
+    message: Envelope.Envelope
+    /** Retry budget (seconds) for outbound webhook delivery. */
+    retrySeconds: number
+    /** Lifecycle status. */
+    status: PendingRecord['status']
   }
 
   namespace render {
@@ -219,8 +244,8 @@ export declare namespace html {
       approvalToken: string | undefined
       /** Opaque code from the URL query (`?code=...`), if any. */
       code: string | undefined
-      /** Pending {@link PendingRecord} for the `code`, if found. */
-      record: PendingRecord | undefined
+      /** Pending approval-safe record for the `code`, if found. */
+      record: ApprovalRecord | undefined
       /** The original `Request` passed to `transport.fetch`. */
       request: Request
     }
@@ -232,10 +257,10 @@ export declare namespace html {
       /** Approve / deny / look up actions for form-based approval. */
       actions: Actions
       /**
-       * Pending {@link PendingRecord} for the `code`, if present
+       * Pending approval-safe record for the `code`, if present
        * in the URL query and still pending.
        */
-      record: PendingRecord | undefined
+      record: ApprovalRecord | undefined
       /** Opaque code from the verification URI query (`?code=...`), if any. */
       code: string | undefined
       /** The `POST /verify` request from the user-agent. */
@@ -261,8 +286,8 @@ export declare namespace html {
      * queued JSON-RPC request id and delivers them.
      */
     deny: (code: string, responseBody?: ResponseBody | undefined) => Promise<void>
-    /** Look up the {@link PendingRecord} associated with a code. */
-    get: (code: string) => Promise<PendingRecord | undefined>
+    /** Look up the approval-safe record associated with a code. */
+    get: (code: string) => Promise<ApprovalRecord | undefined>
   }
 }
 
@@ -396,7 +421,8 @@ export function webhookCallback(options: Options): WebhookCallback {
       await settleWithResponse(await consumePendingRecord(code, record.authReqId), body)
     },
     async get(code) {
-      return await store.get<PendingRecord>(codeKey(code))
+      const record = await store.get<PendingRecord>(codeKey(code))
+      return record ? approvalRecord(record) : undefined
     },
   }
 
@@ -821,7 +847,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     const response = await html.render({
       approvalToken: approvalSession.approvalToken,
       code,
-      record,
+      record: approvalRecord(record),
       request: c.req.raw,
     })
     return withSetCookie(response, approvalSession.cookie)
@@ -868,7 +894,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     if (html.authenticate) {
       const authResponse = await html.authenticate({
         actions,
-        record,
+        record: record ? approvalRecord(record) : undefined,
         request: request.clone(),
         code,
       })
@@ -1467,6 +1493,22 @@ function sleep(ms: number): Promise<void> {
 function cancelRecord(record: PendingRecord): void {
   record.message = Envelope.rpcRequests([])
   record.status = 'cancelled'
+}
+
+function approvalRecord(record: PendingRecord): html.ApprovalRecord {
+  return {
+    code: record.code,
+    consumer: {
+      id: record.consumer.id,
+      origin: record.consumer.origin,
+      ...(record.consumer.meta ? { meta: record.consumer.meta } : {}),
+    },
+    createdAt: record.createdAt,
+    expiresAt: record.expiresAt,
+    message: record.message,
+    retrySeconds: record.retrySeconds,
+    status: record.status,
+  }
 }
 
 function validateApprovalResponse(
