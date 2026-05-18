@@ -750,14 +750,16 @@ describe('webhookCallback end-to-end', () => {
     expect(renders).toBe(1)
   })
 
-  test('preserves host-provided approval-surface hardening headers', async () => {
+  test('enforces non-negotiable approval-surface hardening headers', async () => {
     const transport = hostWebhookCallback({
       html: {
         render: () =>
           new Response('ok', {
             headers: {
+              'cache-control': 'public, max-age=3600',
               'content-security-policy': "default-src 'none'",
               'referrer-policy': 'same-origin',
+              'x-frame-options': 'SAMEORIGIN',
             },
           }),
       },
@@ -767,7 +769,7 @@ describe('webhookCallback end-to-end', () => {
     const response = await transport.fetch(new Request('https://wallet.example/verify'))
 
     expect(response.headers.get('content-security-policy')).toBe("default-src 'none'")
-    expect(response.headers.get('referrer-policy')).toBe('same-origin')
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer')
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('x-frame-options')).toBe('DENY')
   })

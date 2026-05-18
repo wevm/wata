@@ -408,12 +408,12 @@ export function webhookCallback(options: Options): WebhookCallback {
   // universal for this endpoint family.
   app.use('*', async (c, next) => {
     await next()
-    if (!c.res.headers.has('Cache-Control')) c.res.headers.set('Cache-Control', 'no-store')
+    c.res.headers.set('Cache-Control', 'no-store')
     if (!c.res.headers.has('Content-Security-Policy'))
       c.res.headers.set('Content-Security-Policy', approvalSurfaceCsp)
-    if (!c.res.headers.has('Pragma')) c.res.headers.set('Pragma', 'no-cache')
-    if (!c.res.headers.has('Referrer-Policy')) c.res.headers.set('Referrer-Policy', 'no-referrer')
-    if (!c.res.headers.has('X-Frame-Options')) c.res.headers.set('X-Frame-Options', 'DENY')
+    c.res.headers.set('Pragma', 'no-cache')
+    c.res.headers.set('Referrer-Policy', 'no-referrer')
+    c.res.headers.set('X-Frame-Options', 'DENY')
   })
 
   app.onError((cause, c) => {
