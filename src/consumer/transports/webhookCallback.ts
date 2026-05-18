@@ -438,12 +438,14 @@ export function webhookCallback(options: Options): WebhookCallback {
     if (seen) return c.json({ error: 'replay detected' }, { status: 401 })
     await store.set(nonceKey, true, { ttl: 86400 })
 
+    const idemKey = request.headers.get('urpc-idempotency-key')
+    if (!idemKey) return c.json({ error: 'missing `uRPC-Idempotency-Key`' }, { status: 400 })
+
     // §3.4.2 step 5: idempotency by uRPC-Idempotency-Key.
     // Look up before parsing, but only mark the key after the
     // delivery has been accepted as a valid `rpc-responses` message.
-    const idemKey = request.headers.get('urpc-idempotency-key')
-    const dedupKey = idemKey ? `webhook:idem:${authReqId}:${idemKey}` : undefined
-    if (dedupKey && (await store.get(dedupKey)))
+    const dedupKey = `webhook:idem:${authReqId}:${idemKey}`
+    if (await store.get(dedupKey))
       return c.json({ idempotent: true, ok: true }, { status: 200 })
 
     // Parse the body as an `rpc-responses` envelope and emit.
@@ -459,7 +461,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     if (envelope.type !== 'rpc-responses')
       return c.json({ error: 'expected `rpc-responses` envelope' }, { status: 400 })
 
-    if (dedupKey) await store.set(dedupKey, true, { ttl: 86400 })
+    await store.set(dedupKey, true, { ttl: 86400 })
     settle(envelope)
     return c.json({ ok: true }, { status: 200 })
   })
