@@ -1077,9 +1077,10 @@ export function webhookCallback(options: Options): WebhookCallback {
     const session = generateOpaque(32)
     const ttl = Math.max(1, Math.ceil((record.expiresAt - Date.now()) / 1000))
     await store.set(approvalSessionKey(record.code, approvalToken), { session }, { ttl })
+    const secure = new URL(resolveBaseUrl(requestUrl)).protocol === 'https:'
     return {
       approvalToken,
-      cookie: approvalSessionCookie(session, requestUrl, ttl),
+      cookie: approvalSessionCookie(session, requestUrl, ttl, secure),
     }
   }
 
@@ -1520,10 +1521,15 @@ function deniedResponseFor(
   )
 }
 
-function approvalSessionCookie(session: string, requestUrl: string, ttl: number): string {
+function approvalSessionCookie(
+  session: string,
+  requestUrl: string,
+  ttl: number,
+  secure: boolean,
+): string {
   const url = new URL(requestUrl)
-  const secure = url.protocol === 'https:' ? '; Secure' : ''
-  return `${approvalSessionCookieName}=${session}; Path=${url.pathname}; Max-Age=${ttl}; HttpOnly; SameSite=Strict${secure}`
+  const secureAttribute = secure ? '; Secure' : ''
+  return `${approvalSessionCookieName}=${session}; Path=${url.pathname}; Max-Age=${ttl}; HttpOnly; SameSite=Strict${secureAttribute}`
 }
 
 function approvalSessionCookieValue(request: Request): string | undefined {

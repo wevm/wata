@@ -692,6 +692,38 @@ describe('webhookCallback end-to-end', () => {
     expect(response.headers.get('x-frame-options')).toBe('DENY')
   })
 
+  test('uses the public baseUrl to secure approval-session cookies', async () => {
+    const store = memoryWithScan()
+    const now = Date.now()
+    await store.set('webhook:code:code-1', {
+      authReqId: 'auth-1',
+      code: 'code-1',
+      consumer: {
+        id: 'acme.dev',
+        origin: 'https://acme.dev',
+        publicKey: 'A'.repeat(43),
+      },
+      createdAt: now,
+      expiresAt: now + 60_000,
+      message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+      retrySeconds: 300,
+      status: 'pending',
+      webhookUrl: 'https://acme.dev/cb',
+    } satisfies HostWebhookCallback.PendingRecord)
+    const transport = hostWebhookCallback({
+      baseUrl: 'https://wallet.example',
+      html: { render: () => new Response('ok') },
+      path: '/auth/webhook',
+      store,
+    })
+
+    const response = await transport.fetch(
+      new Request('http://internal.local/auth/webhook/verify?code=code-1'),
+    )
+
+    expect(response.headers.get('set-cookie')).toContain('; Secure')
+  })
+
   test('rejects supplied invalid verification codes before rendering', async () => {
     let renders = 0
     const transport = hostWebhookCallback({
