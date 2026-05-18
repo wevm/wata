@@ -25,8 +25,18 @@
  *
  * @example explicit MessagePort target
  * ```ts
+ * const port = new Promise<MessagePort>((resolve) => {
+ *   window.addEventListener('message', (event) => {
+ *     if (event.origin !== 'https://app.example') return
+ *     if (event.data?.type === 'wata.port') resolve(event.ports[0]!)
+ *   })
+ * })
+ *
  * const wata = Wata.create({
- *   transport: postMessage({ target: () => receivedPort }),
+ *   transport: postMessage({
+ *     target: () => port,
+ *     targetOrigin: 'https://app.example',
+ *   }),
  * })
  * ```
  */
