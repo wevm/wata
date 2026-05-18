@@ -426,6 +426,25 @@ describe('webhookCallback end-to-end', () => {
     expect(response.headers.get('x-frame-options')).toBe('DENY')
   })
 
+  test('requires a store with atomic take support', () => {
+    const store = {
+      async delete() {},
+      async get() {
+        return undefined
+      },
+      async set() {},
+    } satisfies Kv.Kv
+
+    expect(() =>
+      hostWebhookCallback({
+        html: { render: () => new Response('ok') },
+        store,
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `[Transport.TransportError: webhook-callback host store must implement \`take\` for single-use approval codes]`,
+    )
+  })
+
   test('clamps advertised retry_seconds to the spec bounds', async () => {
     async function registerWith(retrySeconds: number) {
       const prompts: Array<{ retrySeconds: number | undefined }> = []
@@ -634,6 +653,34 @@ describe('webhookCallback end-to-end', () => {
       }
     `)
     expect(record.status).toBe('pending')
+  })
+
+  test('rejects a second approval submission for the same code', async () => {
+    const setup = pair()
+    const consumer = Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transport: setup.hostTransport })
+
+    const sendPromise = consumer.send({ method: 'ping', params: [] })
+    const code = await setup.findActiveCode()
+    const body = JSON.stringify(
+      Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]),
+    )
+    const first = await setup.postApproval(code, body)
+    const second = await setup.postApproval(code, body)
+
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(409)
+    expect(await second.json()).toMatchInlineSnapshot(`
+      {
+        "error": "conflict",
+        "error_description": "approval request is no longer pending",
+      }
+    `)
+    await expect(sendPromise).resolves.toMatchObject({ result: { ok: true } })
   })
 
   test('rejects cross-origin approval submissions before consuming the intent', async () => {

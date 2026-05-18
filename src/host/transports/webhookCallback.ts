@@ -247,6 +247,14 @@ export function webhookCallback(options: Options): WebhookCallback {
     retrySeconds = 900,
     store,
   } = options
+  const take = (() => {
+    const take = store.take?.bind(store)
+    if (!take)
+      throw new Transport.TransportError(
+        'webhook-callback host store must implement `take` for single-use approval codes',
+      )
+    return take
+  })()
 
   const baseUrl_ctor = options.baseUrl ? Uri.trimTrailingSlash(options.baseUrl) : undefined
   const effectiveExpiresIn = Math.min(
@@ -311,7 +319,8 @@ export function webhookCallback(options: Options): WebhookCallback {
     async approve(code, responseBody?) {
       const record = await requirePendingRecord(code)
       if (responseBody !== undefined) {
-        await settleWithResponse(record, responseBody)
+        assertValidResponseBody(record, responseBody)
+        await settleWithResponse(await consumePendingRecord(code, record.authReqId), responseBody)
         return
       }
       const ids = requestIdsFor(record)
@@ -319,14 +328,17 @@ export function webhookCallback(options: Options): WebhookCallback {
         throw new Transport.TransportError(
           '`actions.approve(code)` without a response body requires exactly one queued JSON-RPC request',
         )
-      record.status = 'approved'
-      await persist(record)
-      activateDispatch(record)
-      emitter.emit('message', record.message)
+      const consumedRecord = await consumePendingRecord(code, record.authReqId)
+      consumedRecord.status = 'approved'
+      await persist(consumedRecord)
+      activateDispatch(consumedRecord)
+      emitter.emit('message', consumedRecord.message)
     },
     async deny(code, responseBody) {
       const record = await requirePendingRecord(code)
-      await settleWithResponse(record, responseBody ?? deniedResponseFor(record))
+      const body = responseBody ?? deniedResponseFor(record)
+      assertValidResponseBody(record, body)
+      await settleWithResponse(await consumePendingRecord(code, record.authReqId), body)
     },
     async get(code) {
       return await store.get<PendingRecord>(codeKey(code))
@@ -742,7 +754,19 @@ export function webhookCallback(options: Options): WebhookCallback {
         { status: 400 },
       )
 
-    await settleWithResponse(record, bodyText)
+    let consumedRecord: PendingRecord
+    try {
+      consumedRecord = await consumePendingRecord(code, record.authReqId)
+    } catch (cause) {
+      if (cause instanceof ApprovalConflictError)
+        return c.json(
+          { error: 'conflict', error_description: cause.message },
+          { status: 409 },
+        )
+      throw cause
+    }
+
+    await settleWithResponse(consumedRecord, bodyText)
     return c.json({ closeTab: true })
   })
 
@@ -837,6 +861,34 @@ export function webhookCallback(options: Options): WebhookCallback {
       throw new Transport.TransportError('approval request expired')
     }
     return record
+  }
+
+  async function consumePendingRecord(
+    code: string,
+    expectedAuthReqId: string,
+  ): Promise<PendingRecord> {
+    const record = await take<PendingRecord>(codeKey(code))
+    if (!record) throw new ApprovalConflictError('approval request is no longer pending')
+    if (record.authReqId !== expectedAuthReqId) {
+      await persist(record)
+      throw new ApprovalConflictError('approval request is no longer pending')
+    }
+    if (record.status !== 'pending') {
+      await persist(record)
+      throw new ApprovalConflictError('approval request is no longer pending')
+    }
+    if (Date.now() >= record.expiresAt) {
+      record.status = 'cancelled'
+      await persist(record)
+      throw new ApprovalConflictError('approval request expired')
+    }
+    return record
+  }
+
+  function assertValidResponseBody(record: PendingRecord, responseBody: html.ResponseBody): void {
+    const { envelope } = parseResponseBody(responseBody)
+    const correlationError = validateApprovalResponse(record, envelope)
+    if (correlationError) throw new Errors.ProtocolError(correlationError)
   }
 
   async function settleWithResponse(
@@ -1101,4 +1153,11 @@ export class UnknownCodeError<
   constructor(code: string, options: Errors.BaseError.Options<cause> = {} as never) {
     super(`no pending intent for code \`${code}\``, options)
   }
+}
+
+/** Thrown when an approval code has already been consumed. */
+export class ApprovalConflictError<
+  cause extends Error | undefined = Error | undefined,
+> extends Errors.BaseError<cause> {
+  override name = 'WebhookCallback.ApprovalConflictError'
 }
