@@ -480,6 +480,22 @@ export function webhookCallback(options: Options): WebhookCallback {
         { error: 'invalid_request', error_description: 'missing `webhook_url`' },
         { status: 400 },
       )
+    let requestedExpiry = effectiveExpiresIn
+    if (body.expiry !== undefined) {
+      if (
+        typeof body.expiry !== 'number' ||
+        !Number.isFinite(body.expiry) ||
+        body.expiry <= 0
+      )
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: '`expiry` must be a positive number of seconds',
+          },
+          { status: 400 },
+        )
+      requestedExpiry = body.expiry
+    }
 
     let envelope: Envelope.Envelope
     try {
@@ -666,10 +682,6 @@ export function webhookCallback(options: Options): WebhookCallback {
     const authReqId = generateOpaque(16)
     const code = generateOpaque(16)
     const now = Date.now()
-    const requestedExpiry =
-      typeof body.expiry === 'number' && Number.isFinite(body.expiry)
-        ? body.expiry
-        : effectiveExpiresIn
     const effectiveExpiry = Math.min(Math.max(60, Math.floor(requestedExpiry)), effectiveExpiresIn)
 
     const record: PendingRecord = {

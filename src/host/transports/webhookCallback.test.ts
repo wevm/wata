@@ -1387,6 +1387,48 @@ describe('webhookCallback end-to-end', () => {
     expect(hostStore.scanKeys('webhook:code:')).toEqual([])
   })
 
+  test('rejects /register with an invalid expiry', async () => {
+    const { consumerKeypair, hostOrigin, hostPath, hostStore, hostTransport, webhookUrl } = pair()
+    const publicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+    const cases: Array<{ expiry: unknown; nonce: string }> = [
+      { expiry: 0, nonce: 'zero-expiry' },
+      { expiry: -1, nonce: 'negative-expiry' },
+      { expiry: '600', nonce: 'string-expiry' },
+      { expiry: null, nonce: 'null-expiry' },
+    ]
+
+    for (const { expiry, nonce } of cases) {
+      const body = JSON.stringify({ expiry, message, webhook_url: webhookUrl })
+      const response = await hostTransport.fetch(
+        signedRequest({
+          body,
+          components: [
+            '@method',
+            '@target-uri',
+            '@authority',
+            'content-type',
+            'content-digest',
+            'urpc-public-key',
+          ],
+          keyid: 'https://acme.dev#identity',
+          method: 'POST',
+          nonce,
+          privateKey: consumerKeypair.privateKey,
+          publicKey,
+          url: `${hostOrigin}${hostPath}/register`,
+        }),
+      )
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({
+        error: 'invalid_request',
+        error_description: '`expiry` must be a positive number of seconds',
+      })
+    }
+    expect(hostStore.scanKeys('webhook:code:')).toEqual([])
+  })
+
   test('rejects /register with a non-HTTPS webhook_url', async () => {
     const { consumerKeypair, hostOrigin, hostPath, hostTransport } = pair()
     const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
