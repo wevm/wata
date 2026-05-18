@@ -16,14 +16,16 @@ const sendButton = document.getElementById('send') as HTMLButtonElement
 const log = document.getElementById('log') as HTMLPreElement
 
 const wata = Wata.create({
-  transport: postMessage({
-    host: hostOrigin,
-    target: ({ host }) => {
-      const popup = window.open(host, 'wata-host', 'popup=1,width=400,height=300')
-      if (!popup) throw new PostMessage.PopupBlockedError('popup was blocked')
-      return popup
-    },
-  }),
+  transports: [
+    postMessage({
+      host: hostOrigin,
+      target: ({ host }) => {
+        const popup = window.open(host, 'wata-host', 'popup=1,width=400,height=300')
+        if (!popup) throw new PostMessage.PopupBlockedError('popup was blocked')
+        return popup
+      },
+    }),
+  ],
 })
 
 wata.on('open', () => append('open'))

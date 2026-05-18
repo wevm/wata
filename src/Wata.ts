@@ -60,30 +60,25 @@ export type LifecycleEventMap = {
   open: void
 }
 
-/**
- * Consumer-side `Wata`. Returned by {@link create}.
- */
-export type Consumer<
-  schema extends Schema.Schema | undefined = undefined,
-  transport extends Transport.Transport<'consumer'> = Transport.Transport<'consumer'>,
+/** Non-empty tuple of consumer transports accepted by {@link create}. */
+export type ConsumerTransports = readonly [
+  Transport.Transport<'consumer', string>,
+  ...Transport.Transport<'consumer', string>[],
+]
+
+/** Default single-transport tuple used by the broad {@link Consumer} type. */
+export type SingleConsumerTransports = readonly [Transport.Transport<'consumer', string>]
+
+/** Transport-specific consumer session exposed on `wata.<transportName>`. */
+export type ConsumerSession<
+  schema extends Schema.Schema | undefined,
+  transport extends Transport.Transport<'consumer', string>,
 > = {
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
   /**
-   * Web-standard fetch handler + Node `http.RequestListener` pair.
-   * Present (with the standard {@link Http.Server} signatures) when
-   * either the wrapped transport carries HTTP-server-shaped `.fetch`
-   * / `.listener` (e.g. `webhookCallback`) or when
-   * {@link create.Options.meta} + {@link create.Options.baseUrl} were
-   * supplied (so a `/.well-known/urpc/consumer.json` publisher is
-   * mounted). Otherwise both are `undefined`.
-   */
-  fetch: Http.Handlers<transport>['fetch']
-  /** See {@link fetch}. */
-  listener: Http.Handlers<transport>['listener']
-  /**
    * Send a typed JSON-RPC notification (no response expected).
-   * Auto-{@link Consumer.start}s on first use.
+   * Auto-starts this transport on first use.
    */
   notify: <
     const method extends Consumer.MethodName<schema>,
@@ -109,7 +104,7 @@ export type Consumer<
   /** Optional method-registry schema flowed through `send` / `notify`. */
   schema: schema
   /**
-   * Send a typed JSON-RPC request. Auto-{@link Consumer.start}s on
+   * Send a typed JSON-RPC request over this transport. Auto-starts on
    * first use. Resolves with the host's `result` (or rejects with
    * {@link Rpc.RpcError} if the host returned an error response).
    */
@@ -132,6 +127,62 @@ export type Consumer<
   /** The wrapped transport. */
   transport: transport
 }
+
+/** Consumer surface shared by single and multi-transport instances. */
+export type ConsumerBase<
+  schema extends Schema.Schema | undefined,
+  transports extends ConsumerTransports,
+> = {
+  /** Close all configured transports. Idempotent. */
+  close: (cause?: Error) => Promise<void>
+  /**
+   * Composite web-standard fetch handler. Present when any configured
+   * transport exposes HTTP routes or when discovery is auto-published.
+   */
+  fetch: Http.HandlersForTransports<transports>['fetch']
+  /** See {@link fetch}. */
+  listener: Http.HandlersForTransports<transports>['listener']
+  /** Remove a previously subscribed lifecycle listener. */
+  off: <type extends keyof LifecycleEventMap>(
+    type: type,
+    listener: Listener<LifecycleEventMap[type]>,
+  ) => void
+  /** Subscribe to aggregate lifecycle events. */
+  on: <type extends keyof LifecycleEventMap>(
+    type: type,
+    listener: Listener<LifecycleEventMap[type]>,
+  ) => AbortController
+  /** Side of the protocol this wata speaks for. */
+  role: 'consumer'
+  /** Optional method-registry schema. */
+  schema: schema
+  /** Configured transports, in user-supplied order. */
+  transports: transports
+}
+
+/** Child sessions keyed by each transport's SDK-facing name. */
+export type ConsumerChildMap<
+  schema extends Schema.Schema | undefined,
+  transports extends ConsumerTransports,
+> = {
+  [name in transports[number]['name']]: ConsumerSession<
+    schema,
+    Extract<transports[number], { name: name }>
+  >
+}
+
+/**
+ * Consumer-side `Wata`. Returned by {@link create}. A single transport
+ * exposes `send` / `notify` at the top level; multiple transports expose
+ * named child sessions such as `wata.webhookCallback.send`.
+ */
+export type Consumer<
+  schema extends Schema.Schema | undefined = undefined,
+  transports extends ConsumerTransports = SingleConsumerTransports,
+> = ConsumerBase<schema, transports> &
+  (transports extends readonly [infer transport extends Transport.Transport<'consumer', string>]
+    ? ConsumerSession<schema, transport>
+    : ConsumerChildMap<schema, transports>)
 
 export declare namespace Consumer {
   /** Method names known to a consumer (any string when no schema supplied). */
@@ -179,7 +230,7 @@ export declare namespace Consumer {
 }
 
 /**
- * Create a consumer-side {@link Consumer} `Wata` around a transport.
+ * Create a consumer-side {@link Consumer} `Wata` around one or more transports.
  *
  * @example
  * ```ts
@@ -188,20 +239,20 @@ export declare namespace Consumer {
  *
  * const { consumer, host } = loopback()
  *
- * const hostWata = HostWata.create({ transport: host })
+ * const hostWata = HostWata.create({ transports: [host] })
  * hostWata.on('request', async (event) => {
  *   if (event.method === 'ping') await event.respond({ ok: true })
  * })
  *
- * const wata = Wata.create({ transport: consumer })
+ * const wata = Wata.create({ transports: [consumer] })
  * const { result } = await wata.send({ method: 'ping', params: [] })
  * ```
  */
 export function create<
   const schema extends Schema.Schema | undefined = undefined,
-  const transport extends Transport.Transport<'consumer'> = Transport.Transport<'consumer'>,
->(options: create.Options<schema, transport>): Consumer<schema, transport> {
-  const transport = options.transport as transport
+  const transports extends ConsumerTransports = SingleConsumerTransports,
+>(options: create.Options<schema, transports>): Consumer<schema, transports> {
+  const transports = options.transports as transports
   const schema = options.schema as schema
   const { baseUrl, meta, privateKey } = options
   const identity = privateKey ? identityFromPrivateKey(privateKey) : undefined
@@ -210,10 +261,75 @@ export function create<
     throw new Errors.BaseError('`baseUrl` is required when `meta` is set', {
       details: 'consumer_id needs a fully-qualified origin',
     })
-  // Lazy-inject parent app context into the transport so adapters can
+  assertUniqueTransportNames(transports)
+
+  // Lazy-inject parent app context into every transport so adapters can
   // derive discovery URLs, signing keys, and peer-facing metadata from
   // one app-level `Wata.create` call.
-  transport.bind?.({ baseUrl, identity, meta })
+  for (const transport of transports) transport.bind?.({ baseUrl, identity, meta })
+
+  const sessions = transports.map((transport) => createConsumerSession({ schema, transport }))
+  const routed = Http.composeRouted(transports.filter(isHttpServer))
+  let httpFetch = routed?.fetch
+  let httpListener = routed?.listener
+  if (meta && baseUrl) {
+    const publicKey = identity?.publicKey ?? collectPublicKey(transports)
+    const callbackUrls = collectCallbackUrls(transports)
+    const document = Wellknown.buildConsumerDocument({
+      baseUrl,
+      meta,
+      ...(callbackUrls.length > 0 ? { callbackUrls } : {}),
+      ...(publicKey ? { publicKey } : {}),
+    })
+    const wrapped = Wellknown.wrapFetch({
+      base: routed ? { fetch: routed.fetch } : undefined,
+      document,
+      wellknownPath: Wellknown.consumerPath,
+    })
+    httpFetch = wrapped.fetch
+    httpListener = wrapped.listener
+  }
+
+  if (sessions.length === 1) {
+    const session = sessions[0]!
+    return {
+      ...session,
+      fetch: httpFetch as Consumer<schema, transports>['fetch'],
+      listener: httpListener as Consumer<schema, transports>['listener'],
+      transports,
+    } as unknown as Consumer<schema, transports>
+  }
+
+  const emitter = Events.create<LifecycleEventMap>()
+  for (const session of sessions) {
+    session.on('error', (error) => emitter.emit('error', error))
+  }
+  const consumer = {
+    async close(cause?: Error) {
+      await Promise.all(sessions.map((session) => session.close(cause)))
+      emitter.emit('close', cause)
+    },
+    fetch: httpFetch as Consumer<schema, transports>['fetch'],
+    listener: httpListener as Consumer<schema, transports>['listener'],
+    off: emitter.off,
+    on(type: keyof LifecycleEventMap, listener: Listener<LifecycleEventMap[typeof type]>) {
+      const controller = new AbortController()
+      emitter.on(type, listener as never, { signal: controller.signal })
+      return controller
+    },
+    role: 'consumer' as const,
+    schema,
+    transports,
+  }
+  for (const session of sessions) Object.assign(consumer, { [session.transport.name]: session })
+  return consumer as unknown as Consumer<schema, transports>
+}
+
+function createConsumerSession<
+  const schema extends Schema.Schema | undefined,
+  const transport extends Transport.Transport<'consumer', string>,
+>(parameters: { schema: schema; transport: transport }): ConsumerSession<schema, transport> {
+  const { schema, transport } = parameters
 
   const emitter = Events.create<LifecycleEventMap>()
 
@@ -351,36 +467,6 @@ export function create<
     return startPromise
   }
 
-  // HTTP-shaped consumer transports (e.g. `webhookCallback`) expose
-  // `.fetch` / `.listener`. When `meta` + `baseUrl` are set,
-  // wrap them so GET `/.well-known/urpc/consumer.json` serves the
-  // auto-built document and every other request falls through.
-  type HttpHandlers = {
-    fetch?: (request: Request) => Promise<Response>
-    listener?: (req: unknown, res: unknown) => void
-  }
-  const http = transport as HttpHandlers
-  let httpFetch = http.fetch
-  let httpListener = http.listener
-  if (meta && baseUrl) {
-    const publicKey = identity?.publicKey ?? transport.publicKey
-    const document = Wellknown.buildConsumerDocument({
-      baseUrl,
-      meta,
-      ...(transport.callbackUrls ? { callbackUrls: transport.callbackUrls } : {}),
-      ...(publicKey ? { publicKey } : {}),
-    })
-    const wrapped = Wellknown.wrapFetch({
-      base: http.fetch
-        ? { fetch: http.fetch.bind(http) as (request: Request) => Promise<Response> }
-        : undefined,
-      document,
-      wellknownPath: Wellknown.consumerPath,
-    })
-    httpFetch = wrapped.fetch
-    httpListener = wrapped.listener
-  }
-
   return {
     async close(cause) {
       if (!state.started) return
@@ -389,8 +475,6 @@ export function create<
       await transport.close(cause)
       emitter.emit('close', cause)
     },
-    fetch: httpFetch as Consumer<schema, transport>['fetch'],
-    listener: httpListener as Consumer<schema, transport>['listener'],
     async notify(opts) {
       if (!state.started) await start()
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
@@ -438,7 +522,7 @@ export declare namespace create {
   /** Options for {@link create}. */
   type Options<
     schema extends Schema.Schema | undefined,
-    transport extends Transport.Transport<'consumer'> = Transport.Transport<'consumer'>,
+    transports extends ConsumerTransports = SingleConsumerTransports,
   > = {
     /**
      * Public origin of the consumer app (e.g. `https://acme.dev`).
@@ -470,9 +554,42 @@ export declare namespace create {
     privateKey?: Hex.Hex | undefined
     /** Optional method-registry schema (typed `send` / `notify` payloads). */
     schema?: schema | undefined
-    /** Consumer-role transport this wata wraps. */
-    transport: transport
+    /** Consumer-role transports this wata wraps. */
+    transports: transports
   }
+}
+
+function assertUniqueTransportNames(transports: readonly Transport.Transport[]): void {
+  const seen = new Set<string>()
+  for (const transport of transports) {
+    if (seen.has(transport.name))
+      throw new Errors.BaseError(`duplicate transport name \`${transport.name}\``)
+    seen.add(transport.name)
+  }
+}
+
+function collectCallbackUrls(transports: readonly Transport.Transport[]): readonly string[] {
+  const urls = new Set<string>()
+  for (const transport of transports) for (const url of transport.callbackUrls ?? []) urls.add(url)
+  return Array.from(urls)
+}
+
+function collectPublicKey(transports: readonly Transport.Transport[]): string | undefined {
+  let publicKey: string | undefined
+  for (const transport of transports) {
+    if (!transport.publicKey) continue
+    if (publicKey && publicKey !== transport.publicKey)
+      throw new Errors.BaseError('configured transports expose conflicting public keys')
+    publicKey = transport.publicKey
+  }
+  return publicKey
+}
+
+function isHttpServer<transport extends Transport.Transport>(
+  transport: transport,
+): transport is transport & Http.RoutedServer {
+  const candidate = transport as Partial<Http.RoutedServer>
+  return typeof candidate.fetch === 'function' && typeof candidate.listener === 'function'
 }
 
 type Pending = {

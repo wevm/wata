@@ -38,12 +38,14 @@ Opens a popup at the host URL and sends a `wallet_connect` request once the hand
 import { Wata, postMessage } from 'wata'
 
 const wata = Wata.create({
-  transport: postMessage({
-    host: 'https://wallet.example',
-    target(c) {
-      return window.open(c.host, '_blank', 'popup=1')
-    },
-  }),
+  transports: [
+    postMessage({
+      host: 'https://wallet.example',
+      target(c) {
+        return window.open(c.host, '_blank', 'popup=1')
+      },
+    }),
+  ],
 })
 
 const { result } = await wata.send({
@@ -60,7 +62,7 @@ Listens on its opener for incoming requests and responds to `wallet_connect` wit
 import { Wata, postMessage } from 'wata/host'
 
 const wata = Wata.create({
-  transport: postMessage(),
+  transports: [postMessage()],
 })
 
 wata.on('request', async (c) => {
@@ -83,12 +85,14 @@ Requests a device code from the host, prints the verification URL and `user_code
 import { Wata, deviceCode } from 'wata'
 
 const wata = Wata.create({
-  transport: deviceCode({
-    url: 'https://wallet.example/auth/device',
-    onPrompt(c) {
-      console.log(`Visit ${c.verificationUri} and enter ${c.userCode}`)
-    },
-  }),
+  transports: [
+    deviceCode({
+      url: 'https://wallet.example/auth/device',
+      onPrompt(c) {
+        console.log(`Visit ${c.verificationUri} and enter ${c.userCode}`)
+      },
+    }),
+  ],
 })
 
 const { result } = await wata.send({
@@ -107,23 +111,25 @@ import { Wata, Kv, deviceCode } from 'wata/host'
 
 const wata = Wata.create({
   baseUrl: 'https://wallet.example',
-  transport: deviceCode({
-    html: {
-      async authenticate({ actions, request }) {
-        const body = await request.formData()
-        await actions.approve(String(body.get('user_code')))
-        return new Response('approved')
+  transports: [
+    deviceCode({
+      html: {
+        async authenticate({ actions, request }) {
+          const body = await request.formData()
+          await actions.approve(String(body.get('user_code')))
+          return new Response('approved')
+        },
+        render({ userCode }) {
+          return new Response(
+            `<form method="post"><input name="user_code" value="${userCode ?? ''}" required /><button>Approve</button></form>`,
+            { headers: { 'content-type': 'text/html' } },
+          )
+        },
       },
-      render({ userCode }) {
-        return new Response(
-          `<form method="post"><input name="user_code" value="${userCode ?? ''}" required /><button>Approve</button></form>`,
-          { headers: { 'content-type': 'text/html' } },
-        )
-      },
-    },
-    path: '/auth/device',
-    store: Kv.memory(),
-  })
+      path: '/auth/device',
+      store: Kv.memory(),
+    }),
+  ],
 })
 
 wata.on('request', async (c) => {
@@ -151,14 +157,16 @@ const wata = Wata.create({
   baseUrl: 'https://app.example',
   meta: { name: 'Example App' },
   privateKey,
-  transport: webhookCallback({
-    host: 'https://wallet.example',
-    onPrompt({ verificationUri }) {
-      console.log(`Visit ${verificationUri}`)
-    },
-    path: '/callback',
-    store: Kv.memory(),
-  }),
+  transports: [
+    webhookCallback({
+      host: 'https://wallet.example',
+      onPrompt({ verificationUri }) {
+        console.log(`Visit ${verificationUri}`)
+      },
+      path: '/callback',
+      store: Kv.memory(),
+    }),
+  ],
 })
 
 const { result } = await wata.send({
@@ -178,28 +186,30 @@ const wata = Wata.create({
   baseUrl: 'https://wallet.example',
   meta: { name: 'Example Wallet' },
   privateKey,
-  transport: webhookCallback({
-    html: {
-      async authenticate({ actions, request }) {
-        const body = await request.formData()
-        await actions.approve(String(body.get('code')))
-        return new Response('approved')
+  transports: [
+    webhookCallback({
+      html: {
+        async authenticate({ actions, request }) {
+          const body = await request.formData()
+          await actions.approve(String(body.get('code')))
+          return new Response('approved')
+        },
+        render({ approvalToken, code, record }) {
+          if (!record) return new Response('no pending request', { status: 404 })
+          return new Response(
+            `<form method="post">
+              <input type="hidden" name="approval_token" value="${approvalToken ?? ''}" />
+              <input type="hidden" name="code" value="${code ?? ''}" />
+              <button>Approve</button>
+            </form>`,
+            { headers: { 'content-type': 'text/html' } },
+          )
+        },
       },
-      render({ approvalToken, code, record }) {
-        if (!record) return new Response('no pending request', { status: 404 })
-        return new Response(
-          `<form method="post">
-            <input type="hidden" name="approval_token" value="${approvalToken ?? ''}" />
-            <input type="hidden" name="code" value="${code ?? ''}" />
-            <button>Approve</button>
-          </form>`,
-          { headers: { 'content-type': 'text/html' } },
-        )
-      },
-    },
-    path: '/auth/webhook',
-    store: Kv.memory(),
-  }),
+      path: '/auth/webhook',
+      store: Kv.memory(),
+    }),
+  ],
 })
 
 wata.on('request', async (event) => {

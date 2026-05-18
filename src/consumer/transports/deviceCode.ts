@@ -24,12 +24,14 @@
  * import { Wata, deviceCode } from 'wata'
  *
  * const wata = Wata.create({
- *   transport: deviceCode({
- *     url: 'https://wallet.example/auth/device',
- *     onPrompt: ({ userCode, verificationUri }) => {
- *       console.log(`Visit ${verificationUri} and enter ${userCode}`)
- *     },
- *   }),
+ *   transports: [
+ *     deviceCode({
+ *       url: 'https://wallet.example/auth/device',
+ *       onPrompt: ({ userCode, verificationUri }) => {
+ *         console.log(`Visit ${verificationUri} and enter ${userCode}`)
+ *       },
+ *     }),
+ *   ],
  * })
  *
  * const { result } = await wata.send({ method: 'ping', params: [] })
@@ -131,7 +133,7 @@ export type Options = {
  * })
  * ```
  */
-export function deviceCode(options: Options): Transport.Transport<'consumer'> {
+export function deviceCode(options: Options): Transport.Transport<'consumer', 'deviceCode'> {
   const {
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
     onPrompt,
@@ -382,6 +384,7 @@ export function deviceCode(options: Options): Transport.Transport<'consumer'> {
       emitter.emit('close', cause)
     },
     exchange: 'single_exchange',
+    name: 'deviceCode',
     on: emitter.on,
     role: 'consumer',
     async send(envelope) {

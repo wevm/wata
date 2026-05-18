@@ -24,11 +24,11 @@
  * transport boundary stays stable across schema and protocol revisions.
  */
 
+import type { Hex } from 'ox'
+
 import * as Envelope from './Envelope.js'
 import * as Errors from './Errors.js'
 import * as Events from './Events.js'
-
-import type { Hex } from 'ox'
 
 /** Side of the protocol this transport speaks for. */
 export type Role = 'consumer' | 'host'
@@ -102,7 +102,7 @@ export type DiscoveryBinding = {
  * The normalized transport contract. Every adapter — consumer-side,
  * host-side, role-agnostic loopback — implements this shape.
  */
-export type Transport<role extends Role = Role> = {
+export type Transport<role extends Role = Role, name extends string = string> = {
   /**
    * Apply parent application context to this transport. Lazy-bound by
    * `Wata.create({ baseUrl, meta, privateKey })` so transports can
@@ -129,6 +129,8 @@ export type Transport<role extends Role = Role> = {
   discovery?: DiscoveryBinding | undefined
   /** Lifetime model — see {@link Exchange}. */
   exchange: Exchange
+  /** Stable SDK-facing transport name used to expose child sessions. */
+  name: name
   /**
    * Subscribe to a transport event. Listener receives the typed payload
    * directly. Pass `{ signal }` to scope the subscription to an
@@ -147,6 +149,12 @@ export type Transport<role extends Role = Role> = {
   publicKey?: string | undefined
   /** Side of the protocol this transport speaks for. */
   role: role
+  /**
+   * HTTP route prefixes owned by this transport, when it exposes
+   * `.fetch` / `.listener`. Composite `Wata.create({ transports })`
+   * uses these to route requests without probing every transport.
+   */
+  routes?: readonly string[] | undefined
   /** Send a single envelope frame to the peer. */
   send: (envelope: Envelope.Envelope) => Promise<void>
   /** Open the transport. Resolves once the wire is ready to send and receive. */

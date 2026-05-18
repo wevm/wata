@@ -18,14 +18,16 @@ const wata = Wata.create({
   baseUrl,
   meta: { name: 'Example Consumer' },
   privateKey,
-  transport: webhookCallback({
-    host: hostUrl,
-    onPrompt({ verificationUri }) {
-      console.log(`open ${verificationUri}`)
-    },
-    path: '/cb',
-    store: Kv.memory(),
-  }),
+  transports: [
+    webhookCallback({
+      host: hostUrl,
+      onPrompt({ verificationUri }) {
+        console.log(`open ${verificationUri}`)
+      },
+      path: '/cb',
+      store: Kv.memory(),
+    }),
+  ],
 })
 
 const app = new Hono()

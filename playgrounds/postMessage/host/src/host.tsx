@@ -48,10 +48,12 @@ function App() {
     }
 
     const wata = Wata.create({
-      transport: postMessage<Window>({
-        targetOrigin: peer.origin ?? '*',
-        target: () => peer.window,
-      }),
+      transports: [
+        postMessage<Window>({
+          targetOrigin: peer.origin ?? '*',
+          target: () => peer.window,
+        }),
+      ],
     })
     wataRef.current = wata
 

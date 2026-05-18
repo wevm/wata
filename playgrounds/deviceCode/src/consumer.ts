@@ -32,22 +32,24 @@ if (Clack.isCancel(method)) {
 }
 
 const wata = Wata.create({
-  transport: deviceCode({
-    meta: {
-      description: 'uRPC device-code playground consumer',
-      icon: 'https://api.dicebear.com/9.x/identicon/svg?seed=acme-cli',
-      name: 'Acme CLI',
-    },
-    onPrompt({ userCode, verificationUri, verificationUriFull }) {
-      Clack.note(
-        `${verificationUri}\nuser_code: ${userCode}` +
-          (verificationUriFull ? `\nor visit: ${verificationUriFull}` : ''),
-        'Open this URL in your browser to approve',
-      )
-    },
-    pollingInterval: 1000,
-    url: `${baseUrl}/auth/device`,
-  }),
+  transports: [
+    deviceCode({
+      meta: {
+        description: 'uRPC device-code playground consumer',
+        icon: 'https://api.dicebear.com/9.x/identicon/svg?seed=acme-cli',
+        name: 'Acme CLI',
+      },
+      onPrompt({ userCode, verificationUri, verificationUriFull }) {
+        Clack.note(
+          `${verificationUri}\nuser_code: ${userCode}` +
+            (verificationUriFull ? `\nor visit: ${verificationUriFull}` : ''),
+          'Open this URL in your browser to approve',
+        )
+      },
+      pollingInterval: 1000,
+      url: `${baseUrl}/auth/device`,
+    }),
+  ],
 })
 
 const params = method === 'echo' ? [{ hello: 'world' }] : []

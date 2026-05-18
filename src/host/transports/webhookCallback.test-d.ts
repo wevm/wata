@@ -28,7 +28,7 @@ describe('webhookCallback (host)', () => {
       },
       store: Kv.memory(),
     })
-    const wata = Wata.create({ privateKey: '0x' as Hex.Hex, transport })
+    const wata = Wata.create({ privateKey: '0x' as Hex.Hex, transports: [transport] })
     expectTypeOf(wata.role).toEqualTypeOf<'host'>()
   })
 
@@ -101,9 +101,7 @@ describe('webhookCallback (host)', () => {
     expectTypeOf<NonNullable<WebhookCallback.html.ApprovalRecord['consumer']['meta']>>()
       .toHaveProperty('icon')
       .toEqualTypeOf<string | undefined>()
-    expectTypeOf<WebhookCallback.html.ApprovalRecord['consumer']>().not.toHaveProperty(
-      'publicKey',
-    )
+    expectTypeOf<WebhookCallback.html.ApprovalRecord['consumer']>().not.toHaveProperty('publicKey')
   })
 
   test('public options omit derived signature fields', () => {

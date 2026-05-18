@@ -10,7 +10,7 @@ describe('postMessage (host)', () => {
       target: () => popupHandle,
       targetOrigin: 'https://app.example',
     })
-    expectTypeOf(transport).toEqualTypeOf<Transport.Transport<'host'>>()
+    expectTypeOf(transport).toEqualTypeOf<Transport.Transport<'host', 'postMessage'>>()
     expectTypeOf(transport.role).toEqualTypeOf<'host'>()
   })
 

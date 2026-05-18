@@ -18,22 +18,23 @@ const wata = Wata.create({
   baseUrl,
   meta: { name: 'Example Wallet' },
   privateKey,
-  transport: webhookCallback({
-    html: {
-      async authenticate({ request, actions }) {
-        const form = await request.formData()
-        const code = String(form.get('code') ?? '')
-        const decision = String(form.get('decision') ?? '')
-        if (decision === 'approve') {
-          await actions.approve(code)
-          return html('<p>Approved</p>')
-        }
-        await actions.deny(code)
-        return html('<p>Denied</p>')
-      },
-      render({ approvalToken, record, code }) {
-        if (!record) return html('<h1>No pending request</h1>')
-        return html(`
+  transports: [
+    webhookCallback({
+      html: {
+        async authenticate({ request, actions }) {
+          const form = await request.formData()
+          const code = String(form.get('code') ?? '')
+          const decision = String(form.get('decision') ?? '')
+          if (decision === 'approve') {
+            await actions.approve(code)
+            return html('<p>Approved</p>')
+          }
+          await actions.deny(code)
+          return html('<p>Denied</p>')
+        },
+        render({ approvalToken, record, code }) {
+          if (!record) return html('<h1>No pending request</h1>')
+          return html(`
           <h1>Approve request?</h1>
           <p>Consumer: <code>${escape(record.consumer.origin)}</code></p>
           <form method="post" action="/auth/webhook/verify">
@@ -43,11 +44,12 @@ const wata = Wata.create({
             <button type="submit" name="decision" value="deny">Deny</button>
           </form>
         `)
+        },
       },
-    },
-    path: '/auth/webhook',
-    store: Kv.memory(),
-  }),
+      path: '/auth/webhook',
+      store: Kv.memory(),
+    }),
+  ],
 })
 
 wata.on('request', async (event) => {

@@ -46,43 +46,45 @@ function App() {
 
     let cleanup = () => {}
     const wata = Wata.create({
-      transport: postMessage<Window>({
-        host: hostOrigin,
-        target: ({ host }) => {
-          if (!host) throw new Error('host is required')
-          const url = new URL(host)
-          if (mount === 'popup') {
-            const popup = window.open(
-              url.toString(),
-              'wata-host',
-              popupFeatures(hostChromeRef.current),
-            )
-            if (!popup) throw new PostMessage.PopupBlockedError('window.open returned null')
-            cleanup = () => popup.close()
-            return popup
-          }
-          const iframe = iframeRef.current
-          if (!iframe) throw new Error('iframe mount missing')
-          iframe.src = url.toString()
-          return new Promise<Window>((resolve, reject) => {
-            iframe.addEventListener(
-              'load',
-              () => {
-                const win = iframe.contentWindow
-                if (win) resolve(win)
-                else reject(new Error('iframe.contentWindow was null'))
-              },
-              { once: true },
-            )
-          })
-        },
-        close: (handle: Window) => {
-          if (mount === 'popup' && handle.close) handle.close()
-          cleanup()
-          const iframe = iframeRef.current
-          if (iframe) iframe.removeAttribute('src')
-        },
-      }),
+      transports: [
+        postMessage<Window>({
+          host: hostOrigin,
+          target: ({ host }) => {
+            if (!host) throw new Error('host is required')
+            const url = new URL(host)
+            if (mount === 'popup') {
+              const popup = window.open(
+                url.toString(),
+                'wata-host',
+                popupFeatures(hostChromeRef.current),
+              )
+              if (!popup) throw new PostMessage.PopupBlockedError('window.open returned null')
+              cleanup = () => popup.close()
+              return popup
+            }
+            const iframe = iframeRef.current
+            if (!iframe) throw new Error('iframe mount missing')
+            iframe.src = url.toString()
+            return new Promise<Window>((resolve, reject) => {
+              iframe.addEventListener(
+                'load',
+                () => {
+                  const win = iframe.contentWindow
+                  if (win) resolve(win)
+                  else reject(new Error('iframe.contentWindow was null'))
+                },
+                { once: true },
+              )
+            })
+          },
+          close: (handle: Window) => {
+            if (mount === 'popup' && handle.close) handle.close()
+            cleanup()
+            const iframe = iframeRef.current
+            if (iframe) iframe.removeAttribute('src')
+          },
+        }),
+      ],
     })
     wata.on('open', () => {
       setState('open')
