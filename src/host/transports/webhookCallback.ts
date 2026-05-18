@@ -22,10 +22,10 @@
  *   body and forwards those exact bytes to the consumer's webhook
  *   (RFC 9421-signed under the host's long-term `identity` keypair).
  *
- * The verify UI is intentionally bring-your-own — the host owns
- * branding, sign-in state, CSP / `SameSite` / `Origin` enforcement,
- * etc. The transport owns routing, signature verification, intent
- * lifecycle, and outbound delivery.
+ * The verify UI is intentionally bring-your-own: the host owns
+ * branding and sign-in state. The transport owns routing, signature
+ * verification, approval CSRF/session binding, intent lifecycle, and
+ * outbound delivery.
  *
  * @example minimal Node host
  * ```ts
@@ -154,9 +154,7 @@ export type Options = {
    * SSRF rules in the Webhook Callback spec. Throw to refuse the
    * registration or outbound request before `fetch` runs.
    */
-  validateOutboundRequest?:
-    | ((request: Options.OutboundRequest) => void | Promise<void>)
-    | undefined
+  validateOutboundRequest?: ((request: Options.OutboundRequest) => void | Promise<void>) | undefined
   /**
    * Pluggable persistence for {@link PendingRecord}s. Use
    * {@link Kv.memory} for tests. Must support atomic {@link Kv.Kv.take}
@@ -191,9 +189,8 @@ export declare namespace html {
   type Hooks = {
     /**
      * Called for `POST /verify`. Hosts can inspect form submissions,
-     * enforce session / CSRF checks, then settle with
-     * `actions.approve(code, responseBody)` or
-     * `actions.deny(code)`.
+     * enforce sign-in policy, then settle with
+     * `actions.approve(code, responseBody)` or `actions.deny(code)`.
      * Return a `Response` to show the user the result; return nothing
      * to let the transport validate and deliver an `application/json`
      * `rpc-responses` request body verbatim.
@@ -204,8 +201,9 @@ export declare namespace html {
     /**
      * Called for `GET /verify`. Receive the opaque code
      * from the URL's `?code=` query parameter, the resolved
-     * {@link PendingRecord} (when present and pending), and return the
-     * HTML form / page describing the queued requests.
+     * {@link PendingRecord} (when present and pending), an
+     * `approvalToken` for hidden form fields or JSON headers, and
+     * return the HTML form / page describing the queued requests.
      */
     render: (options: render.Options) => Response | Promise<Response>
   }
@@ -213,10 +211,16 @@ export declare namespace html {
   namespace render {
     /** Argument passed to {@link html.Hooks.render}. */
     type Options = {
-      /** Pending {@link PendingRecord} for the `code`, if found. */
-      record: PendingRecord | undefined
+      /**
+       * Single-use CSRF token for `POST /verify`, when a pending record exists.
+       * Submit it as a form field named `approval_token` or a
+       * `uRPC-Approval-Token` header.
+       */
+      approvalToken: string | undefined
       /** Opaque code from the URL query (`?code=...`), if any. */
       code: string | undefined
+      /** Pending {@link PendingRecord} for the `code`, if found. */
+      record: PendingRecord | undefined
       /** The original `Request` passed to `transport.fetch`. */
       request: Request
     }
@@ -266,6 +270,8 @@ export declare namespace html {
 export type WebhookCallback = Transport.Transport<'host'> & Http.Server
 
 type DeliveryAttempt = { type: 'delivered' } | { error: Error; retryable: boolean; type: 'failed' }
+type ApprovalSession = { session: string }
+type CreatedApprovalSession = { approvalToken: string; cookie: string }
 type RegistrationRateLimit = { max: number; windowSeconds: number }
 
 /**
@@ -624,10 +630,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       )
     const nonceError = await consumeSignatureNonce(request, consumerDoc.identity_pubkey)
     if (nonceError)
-      return c.json(
-        { error: 'unauthorized', error_description: nonceError },
-        { status: 401 },
-      )
+      return c.json({ error: 'unauthorized', error_description: nonceError }, { status: 401 })
     if (registrationRateLimit) {
       const allowed = await consumeRegistrationQuota(
         consumerDoc.identity_pubkey,
@@ -753,10 +756,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       )
     const nonceError = await consumeSignatureNonce(request, record.consumer.publicKey)
     if (nonceError)
-      return c.json(
-        { error: 'unauthorized', error_description: nonceError },
-        { status: 401 },
-      )
+      return c.json({ error: 'unauthorized', error_description: nonceError }, { status: 401 })
 
     await cancelPendingRecord(record)
     return new Response(null, { status: 204 })
@@ -764,7 +764,13 @@ export function webhookCallback(options: Options): WebhookCallback {
 
   app.get('/verify', async (c) => {
     const code = c.req.query('code') ?? undefined
-    if (!code) return await html.render({ record: undefined, request: c.req.raw, code })
+    if (!code)
+      return await html.render({
+        approvalToken: undefined,
+        code,
+        record: undefined,
+        request: c.req.raw,
+      })
 
     const record = await store.get<PendingRecord>(codeKey(code))
     if (!record || record.status !== 'pending') return invalidVerificationUriResponse()
@@ -774,7 +780,14 @@ export function webhookCallback(options: Options): WebhookCallback {
       return invalidVerificationUriResponse()
     }
 
-    return await html.render({ record, request: c.req.raw, code })
+    const approvalSession = await createApprovalSession(record, c.req.url)
+    const response = await html.render({
+      approvalToken: approvalSession.approvalToken,
+      code,
+      record,
+      request: c.req.raw,
+    })
+    return withSetCookie(response, approvalSession.cookie)
   })
 
   app.post('/verify', async (c) => {
@@ -787,6 +800,11 @@ export function webhookCallback(options: Options): WebhookCallback {
     const record = code ? await store.get<PendingRecord>(codeKey(code)) : undefined
     const pendingRecord =
       record && record.status === 'pending' && Date.now() < record.expiresAt ? record : undefined
+    if (pendingRecord) {
+      const sessionError = await consumeApprovalSession(request, pendingRecord)
+      if (sessionError)
+        return c.json({ error: 'forbidden', error_description: sessionError }, { status: 403 })
+    }
 
     if (html.authenticate) {
       const authResponse = await html.authenticate({
@@ -996,6 +1014,36 @@ export function webhookCallback(options: Options): WebhookCallback {
   async function validateOutbound(request: Options.OutboundRequest): Promise<void> {
     if (!validateOutboundRequest) return
     await validateOutboundRequest({ ...request, url: new URL(request.url.toString()) })
+  }
+
+  async function createApprovalSession(
+    record: PendingRecord,
+    requestUrl: string,
+  ): Promise<CreatedApprovalSession> {
+    const approvalToken = generateOpaque(32)
+    const session = generateOpaque(32)
+    const ttl = Math.max(1, Math.ceil((record.expiresAt - Date.now()) / 1000))
+    await store.set(approvalSessionKey(record.code, approvalToken), { session }, { ttl })
+    return {
+      approvalToken,
+      cookie: approvalSessionCookie(session, requestUrl, ttl),
+    }
+  }
+
+  async function consumeApprovalSession(
+    request: Request,
+    record: PendingRecord,
+  ): Promise<string | undefined> {
+    const approvalToken = await approvalTokenFromRequest(request)
+    if (!approvalToken) return 'missing approval token'
+    const session = approvalSessionCookieValue(request)
+    if (!session) return 'missing approval session'
+    const approvalSession = await take<ApprovalSession>(
+      approvalSessionKey(record.code, approvalToken),
+    )
+    if (!approvalSession) return 'invalid or expired approval token'
+    if (approvalSession.session !== session) return 'approval token does not match approval session'
+    return undefined
   }
 
   async function persist(record: PendingRecord): Promise<void> {
@@ -1312,6 +1360,10 @@ function codeKey(code: string): string {
   return `webhook:code:${code}`
 }
 
+function approvalSessionKey(code: string, token: string): string {
+  return `webhook:approvalSession:${code}:${token}`
+}
+
 function authReqIdKey(authReqId: string): string {
   return `webhook:authReqId:${authReqId}`
 }
@@ -1415,6 +1467,35 @@ function deniedResponseFor(
   )
 }
 
+function approvalSessionCookie(session: string, requestUrl: string, ttl: number): string {
+  const url = new URL(requestUrl)
+  const secure = url.protocol === 'https:' ? '; Secure' : ''
+  return `${approvalSessionCookieName}=${session}; Path=${url.pathname}; Max-Age=${ttl}; HttpOnly; SameSite=Strict${secure}`
+}
+
+function approvalSessionCookieValue(request: Request): string | undefined {
+  const cookie = request.headers.get('cookie')
+  if (!cookie) return undefined
+  for (const entry of cookie.split(';')) {
+    const [name, ...rest] = entry.trim().split('=')
+    if (name === approvalSessionCookieName) return rest.join('=')
+  }
+  return undefined
+}
+
+async function approvalTokenFromRequest(request: Request): Promise<string | undefined> {
+  const header = request.headers.get('urpc-approval-token')
+  if (header) return header
+  if (!isFormRequest(request)) return undefined
+  try {
+    const form = await request.clone().formData()
+    const value = form.get('approval_token')
+    return typeof value === 'string' && value ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function approvalMetadataError(request: Request, expectedOrigin: string): string | undefined {
   const origin = request.headers.get('origin')
   if (origin && origin !== expectedOrigin) return 'approval origin does not match host origin'
@@ -1435,6 +1516,14 @@ function approvalMetadataError(request: Request, expectedOrigin: string): string
   if (request.headers.get('sec-fetch-user') === '?0')
     return 'approval submission requires an explicit user gesture'
   return undefined
+}
+
+function isFormRequest(request: Request): boolean {
+  const contentType = request.headers.get('content-type')?.toLowerCase()
+  return (
+    contentType?.startsWith('application/x-www-form-urlencoded') === true ||
+    contentType?.startsWith('multipart/form-data') === true
+  )
 }
 
 function requestIdsFor(record: PendingRecord): Rpc.Id[] {
@@ -1469,9 +1558,17 @@ function collectHeaders(headers: Headers): Record<string, string> {
   return out
 }
 
-function signatureMetadataError(
-  parsedInput: MessageSig.ParsedSignatureInput,
-): string | undefined {
+function withSetCookie(response: Response, cookie: string): Response {
+  const headers = new Headers(response.headers)
+  headers.append('Set-Cookie', cookie)
+  return new Response(response.body, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  })
+}
+
+function signatureMetadataError(parsedInput: MessageSig.ParsedSignatureInput): string | undefined {
   const { alg, created } = parsedInput.parameters
   if (alg !== 'ed25519') return 'signature alg must be `ed25519`'
   if (created === undefined) return 'missing signature created'
@@ -1480,6 +1577,8 @@ function signatureMetadataError(
     return 'signature created outside acceptance window'
   return undefined
 }
+
+const approvalSessionCookieName = 'urpc_webhook_approval'
 
 const approvalSurfaceCsp = [
   "default-src 'self'",

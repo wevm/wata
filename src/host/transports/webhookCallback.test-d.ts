@@ -32,11 +32,12 @@ describe('webhookCallback (host)', () => {
     expectTypeOf(wata.role).toEqualTypeOf<'host'>()
   })
 
-  test('html.render receives `record`, `request`, `code`', () => {
+  test('html.render receives `approvalToken`, `record`, `request`, `code`', () => {
     webhookCallback({
       html: {
         authenticate: () => new Response('ok'),
         render: (options) => {
+          expectTypeOf(options.approvalToken).toEqualTypeOf<string | undefined>()
           expectTypeOf(options.code).toEqualTypeOf<string | undefined>()
           expectTypeOf(options.record).toEqualTypeOf<WebhookCallback.PendingRecord | undefined>()
           expectTypeOf(options.request).toEqualTypeOf<Request>()

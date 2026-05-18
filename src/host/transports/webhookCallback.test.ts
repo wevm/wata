@@ -76,10 +76,10 @@ type PairOptions = {
   hostExpiresIn?: number | undefined
   hostRegistrationRateLimit?: HostWebhookCallback.Options['registrationRateLimit'] | undefined
   hostRetrySeconds?: number | undefined
-  hostValidateOutboundRequest?:
-    | HostWebhookCallback.Options['validateOutboundRequest']
-    | undefined
+  hostValidateOutboundRequest?: HostWebhookCallback.Options['validateOutboundRequest'] | undefined
 }
+
+type ApprovalTokenSession = { cookie: string; token: string }
 
 function pair(options: PairOptions = {}) {
   const hostOrigin = 'https://wallet.example'
@@ -160,7 +160,7 @@ function pair(options: PairOptions = {}) {
     expiresIn: options.hostExpiresIn ?? 60,
     fetch: hostFetchOverride,
     html: {
-      render: () => new Response('ok'),
+      render: ({ approvalToken }) => new Response(approvalToken ?? 'ok'),
       ...(options.hostAuthenticate ? { authenticate: options.hostAuthenticate } : {}),
     },
     path: hostPath,
@@ -189,13 +189,29 @@ function pair(options: PairOptions = {}) {
   }
 
   async function postApproval(code: string, body: string): Promise<Response> {
+    const session = await getApprovalSession(code)
+    const headers = new Headers({ 'content-type': 'application/json', origin: hostOrigin })
+    if (session) {
+      headers.set('cookie', session.cookie)
+      headers.set('urpc-approval-token', session.token)
+    }
     return await hostTransport.fetch(
       new Request(`${hostOrigin}${hostPath}/verify?code=${encodeURIComponent(code)}`, {
         body,
-        headers: { 'content-type': 'application/json', origin: hostOrigin },
+        headers,
         method: 'POST',
       }),
     )
+  }
+
+  async function getApprovalSession(code: string): Promise<ApprovalTokenSession | undefined> {
+    const response = await hostTransport.fetch(
+      new Request(`${hostOrigin}${hostPath}/verify?code=${encodeURIComponent(code)}`),
+    )
+    if (!response.ok) return undefined
+    const cookie = response.headers.get('set-cookie')?.split(';')[0]
+    if (!cookie) return undefined
+    return { cookie, token: await response.text() }
   }
 
   async function submitApproval(code: string, body: string): Promise<void> {
@@ -275,6 +291,7 @@ function pair(options: PairOptions = {}) {
     consumerWk,
     deny,
     findActiveCode,
+    getApprovalSession,
     getDeliveryAttempts,
     getDeliveryBody,
     getDeliverySignatureInput,
@@ -520,9 +537,7 @@ describe('webhookCallback end-to-end', () => {
     const winnerBody = JSON.stringify(
       Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: 'winner' } })]),
     )
-    const winnerResponse = Envelope.rpcResponses([
-      Rpc.success({ id: 1, result: { ok: 'winner' } }),
-    ])
+    const winnerResponse = Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: 'winner' } })])
 
     setup = pair({
       hostDelivery: async () => {
@@ -616,11 +631,18 @@ describe('webhookCallback end-to-end', () => {
 
     const sendPromise = consumer.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
+    const session = await setup.getApprovalSession(code)
+    if (!session) throw new Error('approval session missing')
     const response = await hostTransport.fetch(
       new Request(`${setup.hostOrigin}${setup.hostPath}/verify`, {
-        body: new URLSearchParams({ decision: 'approve', code: code }),
+        body: new URLSearchParams({
+          approval_token: session.token,
+          code,
+          decision: 'approve',
+        }),
         headers: {
           'content-type': 'application/x-www-form-urlencoded',
+          cookie: session.cookie,
           origin: setup.hostOrigin,
         },
         method: 'POST',
@@ -1029,9 +1051,15 @@ describe('webhookCallback end-to-end', () => {
       expiresAt: Date.now() - 1,
     } satisfies HostWebhookCallback.PendingRecord)
 
-    const response = await setup.postApproval(
-      code,
-      JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
+    const response = await setup.hostTransport.fetch(
+      new Request(`${setup.hostOrigin}${setup.hostPath}/verify?code=${encodeURIComponent(code)}`, {
+        body: JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
+        headers: {
+          'content-type': 'application/json',
+          origin: setup.hostOrigin,
+        },
+        method: 'POST',
+      }),
     )
     const after = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
       `webhook:authReqId:${record.authReqId}`,
@@ -1168,6 +1196,83 @@ describe('webhookCallback end-to-end', () => {
     expect(record.status).toBe('pending')
   })
 
+  test('rejects approval submissions without an approval token', async () => {
+    const setup = pair()
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+
+    await setup.consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await setup.findActiveCode()
+    const response = await setup.hostTransport.fetch(
+      new Request(`${setup.hostOrigin}${setup.hostPath}/verify?code=${encodeURIComponent(code)}`, {
+        body: JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
+        headers: {
+          'content-type': 'application/json',
+          origin: setup.hostOrigin,
+        },
+        method: 'POST',
+      }),
+    )
+    const record = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "forbidden",
+        "error_description": "missing approval token",
+      }
+    `)
+    expect(record.status).toBe('pending')
+  })
+
+  test('rejects approval tokens from another approval session', async () => {
+    const setup = pair()
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+
+    await setup.consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await setup.findActiveCode()
+    const first = await setup.getApprovalSession(code)
+    const second = await setup.getApprovalSession(code)
+    if (!first || !second) throw new Error('approval sessions missing')
+    const response = await setup.hostTransport.fetch(
+      new Request(`${setup.hostOrigin}${setup.hostPath}/verify?code=${encodeURIComponent(code)}`, {
+        body: JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
+        headers: {
+          'content-type': 'application/json',
+          cookie: second.cookie,
+          origin: setup.hostOrigin,
+          'urpc-approval-token': first.token,
+        },
+        method: 'POST',
+      }),
+    )
+    const record = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "forbidden",
+        "error_description": "approval token does not match approval session",
+      }
+    `)
+    expect(record.status).toBe('pending')
+  })
+
   test('rejects /register without a correlatable JSON-RPC request id', async () => {
     const { consumerKeypair, consumerOrigin, consumerTransport, hostStore } = pair()
     Wata.create({
@@ -1292,11 +1397,7 @@ describe('webhookCallback end-to-end', () => {
 
   test('rejects reserved webhook_url hosts from non-loopback hosts', async () => {
     const { consumerKeypair, hostOrigin, hostPath, hostTransport } = pair()
-    const urls = [
-      'https://127.0.0.1/cb',
-      'https://[::ffff:127.0.0.1]/cb',
-      'https://[fea0::1]/cb',
-    ]
+    const urls = ['https://127.0.0.1/cb', 'https://[::ffff:127.0.0.1]/cb', 'https://[fea0::1]/cb']
 
     for (const webhookUrl of urls) {
       const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
@@ -1819,13 +1920,7 @@ describe('webhookCallback end-to-end', () => {
   })
 
   test('consumer cancel surfaces host rejection', async () => {
-    const {
-      consumerKeypair,
-      consumerOrigin,
-      consumerTransport,
-      findActiveCode,
-      hostStore,
-    } = pair()
+    const { consumerKeypair, consumerOrigin, consumerTransport, findActiveCode, hostStore } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
       privateKey: consumerKeypair.privateKey,

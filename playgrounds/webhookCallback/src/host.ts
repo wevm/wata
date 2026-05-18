@@ -68,7 +68,7 @@ const wata = Wata.create({
         await actions.deny(code)
         return html('<p>Denied. You may close this tab.</p>')
       },
-      render({ record, code }) {
+      render({ approvalToken, record, code }) {
         if (!record)
           return html(
             `<h1>No pending request</h1><p>Open this URL from the consumer's approval link.</p>`,
@@ -98,6 +98,7 @@ const wata = Wata.create({
         <p>Pending JSON-RPC requests:</p>
         <ul>${requestItems}</ul>
         <form method="post" action="/auth/webhook/verify">
+          <input type="hidden" name="approval_token" value="${escape(approvalToken ?? '')}" />
           <input type="hidden" name="code" value="${escape(code ?? '')}" />
           <button type="submit" name="decision" value="approve">Approve</button>
           <button type="submit" name="decision" value="deny">Deny</button>
