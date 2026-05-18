@@ -83,6 +83,7 @@ type PairOptions = {
       ) => Promise<Response> | Response)
     | undefined
   hostExpiresIn?: number | undefined
+  hostPendingIntentLimit?: HostWebhookCallback.Options['pendingIntentLimit'] | undefined
   hostRegistrationRateLimit?: HostWebhookCallback.Options['registrationRateLimit'] | undefined
   hostRetrySeconds?: number | undefined
   hostValidateOutboundRequest?: HostWebhookCallback.Options['validateOutboundRequest'] | undefined
@@ -173,6 +174,7 @@ function pair(options: PairOptions = {}) {
       ...(options.hostAuthenticate ? { authenticate: options.hostAuthenticate } : {}),
     },
     path: hostPath,
+    pendingIntentLimit: options.hostPendingIntentLimit,
     registrationRateLimit: options.hostRegistrationRateLimit,
     retrySeconds: options.hostRetrySeconds,
     store: hostStore,
@@ -2498,6 +2500,46 @@ describe('webhookCallback end-to-end', () => {
     expect(await second.json()).toEqual({
       error: 'rate_limited',
       error_description: 'registration rate limit exceeded',
+    })
+    expect(hostStore.scanKeys('webhook:code:')).toHaveLength(1)
+  })
+
+  test('caps concurrent pending registrations per consumer', async () => {
+    const { consumerKeypair, hostOrigin, hostPath, hostStore, hostTransport, webhookUrl } = pair({
+      hostPendingIntentLimit: { max: 1 },
+      hostRegistrationRateLimit: false,
+    })
+    const publicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+    const body = JSON.stringify({ message, webhook_url: webhookUrl })
+    const registerUrl = `${hostOrigin}${hostPath}/register`
+    const request = (nonce: string) =>
+      signedRequest({
+        body,
+        components: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-public-key',
+        ],
+        keyid: 'https://acme.dev#identity',
+        method: 'POST',
+        nonce,
+        privateKey: consumerKeypair.privateKey,
+        publicKey,
+        url: registerUrl,
+      })
+
+    const first = await hostTransport.fetch(request('first-pending'))
+    const second = await hostTransport.fetch(request('second-pending'))
+
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(429)
+    expect(await second.json()).toEqual({
+      error: 'rate_limited',
+      error_description: 'too many pending approval requests',
     })
     expect(hostStore.scanKeys('webhook:code:')).toHaveLength(1)
   })

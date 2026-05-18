@@ -113,6 +113,12 @@ type CachedConsumerIcon = {
   contentType: string
 }
 
+type PendingIntentEntry = {
+  authReqId: string
+  code: string
+  expiresAt: number
+}
+
 /** Options accepted by {@link webhookCallback}. */
 export type Options = {
   /**
@@ -146,6 +152,12 @@ export type Options = {
    * of whatever the caller hands `transport.fetch`).
    */
   path?: string | undefined
+  /**
+   * Per-consumer cap on live pending approval intents. Defaults to
+   * 100. Set to `false` only when an outer trusted layer enforces an
+   * equivalent cap.
+   */
+  pendingIntentLimit?: Options.PendingIntentLimit | false | undefined
   /**
    * Per-consumer registration rate limit. Defaults to 60 accepted
    * registrations per 60 seconds. Set to `false` only when an outer
@@ -191,6 +203,11 @@ export declare namespace Options {
     max?: number | undefined
     /** Sliding-window length in seconds. */
     windowSeconds?: number | undefined
+  }
+
+  type PendingIntentLimit = {
+    /** Maximum live pending approval intents allowed per consumer. */
+    max?: number | undefined
   }
 }
 
@@ -313,6 +330,7 @@ export type WebhookCallback = Transport.Transport<'host'> & Http.Server
 type DeliveryAttempt = { type: 'delivered' } | { error: Error; retryable: boolean; type: 'failed' }
 type ApprovalSession = { session: string }
 type CreatedApprovalSession = { approvalToken: string; cookie: string }
+type PendingIntentLimit = { max: number }
 type RegistrationRateLimit = { max: number; windowSeconds: number }
 
 /**
@@ -336,6 +354,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     fetch: fetch_option,
     html,
     path,
+    pendingIntentLimit: pendingIntentLimit_option,
     registrationRateLimit: registrationRateLimit_option,
     retrySeconds = 900,
     store,
@@ -360,6 +379,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     86400,
     Math.max(300, Number.isFinite(retrySeconds) ? Math.floor(retrySeconds) : 900),
   )
+  const pendingIntentLimit = resolvePendingIntentLimit(pendingIntentLimit_option)
   const registrationRateLimit = resolveRegistrationRateLimit(registrationRateLimit_option)
   let baseUrl_bound: string | undefined
   let identity_bound: Transport.Identity | undefined
@@ -776,6 +796,19 @@ export function webhookCallback(options: Options): WebhookCallback {
       retrySeconds: effectiveRetrySeconds,
       status: 'pending',
       webhookUrl: body.webhook_url,
+    }
+    if (pendingIntentLimit) {
+      const allowed = await reservePendingIntentSlot(
+        consumerDoc.identity_pubkey,
+        record,
+        pendingIntentLimit,
+        now,
+      )
+      if (!allowed)
+        return c.json(
+          { error: 'rate_limited', error_description: 'too many pending approval requests' },
+          { status: 429 },
+        )
     }
     await store.set(codeKey(code), record, {
       ttl: effectiveExpiry + effectiveRetrySeconds,
@@ -1344,6 +1377,34 @@ export function webhookCallback(options: Options): WebhookCallback {
     return true
   }
 
+  async function reservePendingIntentSlot(
+    publicKey: string,
+    record: PendingRecord,
+    limit: PendingIntentLimit,
+    now: number,
+  ): Promise<boolean> {
+    const key = pendingIntentLimitKey(publicKey)
+    const previous = (await take<PendingIntentEntry[]>(key)) ?? []
+    const entries: PendingIntentEntry[] = []
+    for (const entry of previous) {
+      if (entry.expiresAt <= now) continue
+      const current = await store.get<PendingRecord>(codeKey(entry.code))
+      if (!current || current.status !== 'pending' || current.expiresAt <= now) continue
+      entries.push(entry)
+    }
+    if (entries.length >= limit.max) {
+      await store.set(key, entries, { ttl: pendingIntentIndexTtl(entries, now) })
+      return false
+    }
+    entries.push({
+      authReqId: record.authReqId,
+      code: record.code,
+      expiresAt: record.expiresAt,
+    })
+    await store.set(key, entries, { ttl: pendingIntentIndexTtl(entries, now) })
+    return true
+  }
+
   async function requirePendingRecord(code: string): Promise<PendingRecord> {
     const record = await store.get<PendingRecord>(codeKey(code))
     if (!record) throw new UnknownCodeError(code)
@@ -1758,6 +1819,18 @@ function registrationRateLimitKey(publicKey: string): string {
   return `webhook:registrationRate:${publicKey}`
 }
 
+function pendingIntentLimitKey(publicKey: string): string {
+  return `webhook:pendingIntentLimit:${publicKey}`
+}
+
+function resolvePendingIntentLimit(
+  value: Options.PendingIntentLimit | false | undefined,
+): PendingIntentLimit | undefined {
+  if (value === false) return undefined
+  const max = value?.max ?? 100
+  return { max: Math.max(1, Math.floor(Number.isFinite(max) ? max : 100)) }
+}
+
 function resolveRegistrationRateLimit(
   value: Options.RegistrationRateLimit | false | undefined,
 ): RegistrationRateLimit | undefined {
@@ -1768,6 +1841,11 @@ function resolveRegistrationRateLimit(
     max: Math.max(1, Math.floor(Number.isFinite(max) ? max : 60)),
     windowSeconds: Math.max(1, Math.floor(Number.isFinite(windowSeconds) ? windowSeconds : 60)),
   }
+}
+
+function pendingIntentIndexTtl(entries: PendingIntentEntry[], now: number): number {
+  const expiresAt = Math.max(...entries.map((entry) => entry.expiresAt))
+  return Math.max(60, Math.ceil((expiresAt - now) / 1000))
 }
 
 function generateOpaque(byteCount: number): string {
