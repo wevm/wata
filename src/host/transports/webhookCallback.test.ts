@@ -374,6 +374,32 @@ describe('webhookCallback end-to-end', () => {
     expect(response.headers.get('x-frame-options')).toBe('DENY')
   })
 
+  test('rejects supplied invalid verification codes before rendering', async () => {
+    let renders = 0
+    const transport = hostWebhookCallback({
+      html: {
+        render: () => {
+          renders += 1
+          return new Response('rendered')
+        },
+      },
+      store: Kv.memory(),
+    })
+
+    const invalid = await transport.fetch(new Request('https://wallet.example/verify?code=unknown'))
+    const bare = await transport.fetch(new Request('https://wallet.example/verify'))
+
+    expect(invalid.status).toBe(410)
+    expect(await invalid.json()).toMatchInlineSnapshot(`
+      {
+        "error": "gone",
+        "error_description": "approval request is no longer available",
+      }
+    `)
+    expect(await bare.text()).toBe('rendered')
+    expect(renders).toBe(1)
+  })
+
   test('preserves host-provided approval-surface hardening headers', async () => {
     const transport = hostWebhookCallback({
       html: {
@@ -388,7 +414,7 @@ describe('webhookCallback end-to-end', () => {
       store: Kv.memory(),
     })
 
-    const response = await transport.fetch(new Request('https://wallet.example/verify?code=x'))
+    const response = await transport.fetch(new Request('https://wallet.example/verify'))
 
     expect(response.headers.get('content-security-policy')).toBe("default-src 'none'")
     expect(response.headers.get('referrer-policy')).toBe('same-origin')
@@ -621,6 +647,42 @@ describe('webhookCallback end-to-end', () => {
       `webhook:authReqId:${record.authReqId}`,
     )) as HostWebhookCallback.PendingRecord
     expect(after.status).toBe('cancelled')
+  })
+
+  test('returns the same terminal response for unknown and cancelled verification codes', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostKeypair,
+      hostOrigin,
+      hostPath,
+      hostTransport,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+    HostWata.create({ privateKey: hostKeypair.privateKey, transport: hostTransport })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    await consumerTransport.cancel()
+
+    const unknown = await hostTransport.fetch(
+      new Request(`${hostOrigin}${hostPath}/verify?code=unknown`),
+    )
+    const cancelled = await hostTransport.fetch(
+      new Request(`${hostOrigin}${hostPath}/verify?code=${encodeURIComponent(code)}`),
+    )
+
+    expect(cancelled.status).toBe(unknown.status)
+    expect(cancelled.status).toBe(410)
+    expect(await cancelled.text()).toBe(await unknown.text())
   })
 
   test('rejects cancel signed by a different consumer identity', async () => {

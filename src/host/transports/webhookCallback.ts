@@ -641,9 +641,17 @@ export function webhookCallback(options: Options): WebhookCallback {
 
   app.get('/verify', async (c) => {
     const code = c.req.query('code') ?? undefined
-    const record = code ? await store.get<PendingRecord>(codeKey(code)) : undefined
-    const pendingRecord = record && record.status === 'pending' ? record : undefined
-    return await html.render({ record: pendingRecord, request: c.req.raw, code })
+    if (!code) return await html.render({ record: undefined, request: c.req.raw, code })
+
+    const record = await store.get<PendingRecord>(codeKey(code))
+    if (!record || record.status !== 'pending') return invalidVerificationUriResponse()
+    if (Date.now() >= record.expiresAt) {
+      record.status = 'cancelled'
+      await persist(record)
+      return invalidVerificationUriResponse()
+    }
+
+    return await html.render({ record, request: c.req.raw, code })
   })
 
   app.post('/verify', async (c) => {
@@ -960,6 +968,13 @@ function parseResponseBody(responseBody: html.ResponseBody): {
   if (envelope.type !== 'rpc-responses')
     throw new Errors.ProtocolError('approval body must be an `rpc-responses` envelope')
   return { body, envelope }
+}
+
+function invalidVerificationUriResponse(): Response {
+  return Response.json(
+    { error: 'gone', error_description: 'approval request is no longer available' },
+    { status: 410 },
+  )
 }
 
 function deniedResponseFor(
