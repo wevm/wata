@@ -553,6 +553,51 @@ describe('webhookCallback end-to-end', () => {
     expect(record.status).toBe('pending')
   })
 
+  test('rejects cross-origin approval submissions before consuming the intent', async () => {
+    const {
+      consumerKeypair,
+      consumerOrigin,
+      consumerTransport,
+      findActiveCode,
+      hostOrigin,
+      hostPath,
+      hostStore,
+      hostTransport,
+    } = pair()
+    Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transport: consumerTransport,
+    })
+
+    await consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await findActiveCode()
+    const response = await hostTransport.fetch(
+      new Request(`${hostOrigin}${hostPath}/verify?code=${encodeURIComponent(code)}`, {
+        body: JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
+        headers: {
+          'content-type': 'application/json',
+          origin: 'https://attacker.example',
+        },
+        method: 'POST',
+      }),
+    )
+    const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchInlineSnapshot(`
+      {
+        "error": "forbidden",
+        "error_description": "approval origin does not match host origin",
+      }
+    `)
+    expect(record.status).toBe('pending')
+  })
+
   test('rejects /register when webhook_url is not in consumer.json callback_urls', async () => {
     const { consumerKeypair, consumerOrigin, hostOrigin, hostPath, hostTransport } = pair()
 

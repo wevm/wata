@@ -657,6 +657,13 @@ export function webhookCallback(options: Options): WebhookCallback {
   app.post('/verify', async (c) => {
     const code = c.req.query('code') ?? undefined
     const request = c.req.raw
+    const metadataError = approvalMetadataError(request, new URL(resolveBaseUrl(c.req.url)).origin)
+    if (metadataError)
+      return c.json(
+        { error: 'forbidden', error_description: metadataError },
+        { status: 403 },
+      )
+
     const record = code ? await store.get<PendingRecord>(codeKey(code)) : undefined
     const pendingRecord =
       record && record.status === 'pending' && Date.now() < record.expiresAt ? record : undefined
@@ -989,6 +996,27 @@ function deniedResponseFor(
       }),
     ),
   )
+}
+
+function approvalMetadataError(request: Request, expectedOrigin: string): string | undefined {
+  const origin = request.headers.get('origin')
+  if (origin && origin !== expectedOrigin) return 'approval origin does not match host origin'
+
+  const referer = request.headers.get('referer')
+  if (!origin && referer) {
+    const refererOrigin = (() => {
+      try {
+        return new URL(referer).origin
+      } catch {
+        return undefined
+      }
+    })()
+    if (refererOrigin !== expectedOrigin) return 'approval referer does not match host origin'
+  }
+
+  if (request.headers.get('sec-fetch-user') === '?0')
+    return 'approval submission requires an explicit user gesture'
+  return undefined
 }
 
 function requestIdsFor(record: PendingRecord): Rpc.Id[] {
