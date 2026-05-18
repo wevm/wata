@@ -315,14 +315,15 @@ export function webhookCallback(options: Options): WebhookCallback {
       throw new Transport.TransportError('host /register response missing `verification_uri`')
 
     const verificationUri = data.verification_uri
-    let verificationUrl: URL
-    try {
-      verificationUrl = new URL(verificationUri)
-    } catch (cause) {
-      throw new Errors.ProtocolError('host /register response returned invalid `verification_uri`', {
-        cause: cause as Error,
-      })
-    }
+    const verificationUrl = (() => {
+      try {
+        return new URL(verificationUri)
+      } catch (cause) {
+        throw new Errors.ProtocolError('host /register response returned invalid `verification_uri`', {
+          cause: cause as Error,
+        })
+      }
+    })()
     const authUrlOrigin = new URL(
       hostDoc.transports['webhook-callback']?.auth_url_origin ?? hostDoc.origin,
     ).origin
