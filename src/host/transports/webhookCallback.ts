@@ -152,7 +152,7 @@ export type Options = {
    * consumer-controlled origins. Hosts can use this hook to perform
    * runtime-specific DNS resolution / connect-address checks for the
    * SSRF rules in the Webhook Callback spec. Throw to refuse the
-   * outbound request before `fetch` runs.
+   * registration or outbound request before `fetch` runs.
    */
   validateOutboundRequest?:
     | ((request: Options.OutboundRequest) => void | Promise<void>)
@@ -169,9 +169,12 @@ export declare namespace Options {
   type OutboundRequest = {
     /** Registration-time discovery fetch or approval webhook delivery. */
     kind: 'consumer-discovery' | 'webhook-delivery'
-    /** Exact outbound URL about to be fetched. */
+    /** Exact outbound URL being validated or fetched. */
     url: URL
-    /** Correlation handle for webhook delivery requests. */
+    /**
+     * Correlation handle for webhook delivery requests. Omitted during
+     * registration-time `webhook_url` validation.
+     */
     authReqId?: string | undefined
   }
 
@@ -505,6 +508,20 @@ export function webhookCallback(options: Options): WebhookCallback {
         },
         { status: 403 },
       )
+    try {
+      await validateOutbound({
+        kind: 'webhook-delivery',
+        url: webhookUrl,
+      })
+    } catch (cause) {
+      return c.json(
+        {
+          error: 'forbidden',
+          error_description: `webhook_url validation failed: ${(cause as Error).message}`,
+        },
+        { status: 403 },
+      )
+    }
 
     let consumerDoc: Discovery.ConsumerDocument | undefined
     try {

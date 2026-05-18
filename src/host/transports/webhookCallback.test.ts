@@ -389,6 +389,10 @@ describe('webhookCallback end-to-end', () => {
       url: `${setup.consumerOrigin}/.well-known/urpc/consumer.json`,
     })
     expect(outboundRequests).toContainEqual({
+      kind: 'webhook-delivery',
+      url: setup.webhookUrl,
+    })
+    expect(outboundRequests).toContainEqual({
       authReqId: record.authReqId,
       kind: 'webhook-delivery',
       url: setup.webhookUrl,
@@ -412,6 +416,26 @@ describe('webhookCallback end-to-end', () => {
         Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
       ),
     ).rejects.toThrow('consumer discovery fetch failed: blocked private address')
+    expect(setup.hostStore.scanKeys('webhook:code:')).toEqual([])
+  })
+
+  test('rejects registration when outbound request guard refuses webhook_url', async () => {
+    const setup = pair({
+      hostValidateOutboundRequest: ({ authReqId, kind }) => {
+        if (kind === 'webhook-delivery' && !authReqId) throw new Error('blocked private address')
+      },
+    })
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+
+    await expect(
+      setup.consumerTransport.send(
+        Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+      ),
+    ).rejects.toThrow('webhook_url validation failed: blocked private address')
     expect(setup.hostStore.scanKeys('webhook:code:')).toEqual([])
   })
 
