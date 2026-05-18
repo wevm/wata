@@ -324,6 +324,8 @@ export function webhookCallback(options: Options): WebhookCallback {
       throw new Transport.TransportError('webhook-callback /register returned a non-object body')
     if (typeof data.auth_req_id !== 'string')
       throw new Transport.TransportError('host /register response missing `auth_req_id`')
+    if (!data.auth_req_id)
+      throw new Errors.ProtocolError('host /register response returned invalid `auth_req_id`')
     if (typeof data.expires_in !== 'number' || !Number.isFinite(data.expires_in))
       throw new Transport.TransportError('host /register response missing `expires_in`')
     if (typeof data.retry_seconds !== 'number' || !Number.isFinite(data.retry_seconds))
