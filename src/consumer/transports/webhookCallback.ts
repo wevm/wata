@@ -205,11 +205,24 @@ export function webhookCallback(options: Options): WebhookCallback {
     return host
   })()
 
+  /** Host `webhook-callback` binding, validated against the host document origin. */
+  const resolvedWebhookBinding = (async () => {
+    const doc = await resolvedHost
+    const binding = doc.transports['webhook-callback']
+    if (!binding) {
+      if (options.registerUrl) return undefined
+      throw new Transport.UnsupportedError(
+        'host does not advertise a `webhook-callback` transport binding',
+      )
+    }
+    assertWebhookBindingOrigin(doc, binding)
+    return binding
+  })()
+
   /** Host `register_url` — constructor override wins, else read from discovery binding. */
   const resolvedRegisterUrl = (async () => {
     if (options.registerUrl) return options.registerUrl
-    const doc = await resolvedHost
-    const binding = doc.transports['webhook-callback']
+    const binding = await resolvedWebhookBinding
     if (!binding)
       throw new Transport.UnsupportedError(
         'host does not advertise a `webhook-callback` transport binding',
@@ -328,9 +341,8 @@ export function webhookCallback(options: Options): WebhookCallback {
         })
       }
     })()
-    const authUrlOrigin = new URL(
-      hostDoc.transports['webhook-callback']?.auth_url_origin ?? hostDoc.origin,
-    ).origin
+    const binding = await resolvedWebhookBinding
+    const authUrlOrigin = new URL(binding?.auth_url_origin ?? hostDoc.origin).origin
     if (verificationUrl.origin !== authUrlOrigin)
       throw new Errors.ProtocolError('verification_uri origin does not match host auth_url_origin', {
         details: `expected ${authUrlOrigin}, host returned ${verificationUrl.origin}`,
@@ -564,6 +576,21 @@ function generateNonce(): string {
 
 function identityKeyid(url: string): string {
   return `${new URL(url).origin}#identity`
+}
+
+function assertWebhookBindingOrigin(
+  hostDoc: Discovery.HostDocument,
+  binding: NonNullable<Discovery.HostDocument['transports']['webhook-callback']>,
+): void {
+  const hostOrigin = new URL(hostDoc.origin).origin
+  if (new URL(binding.register_url).origin !== hostOrigin)
+    throw new Errors.ProtocolError(
+      'webhook-callback register_url origin does not match host origin',
+    )
+
+  const authUrlOrigin = new URL(binding.auth_url_origin)
+  if (authUrlOrigin.origin !== hostOrigin || authUrlOrigin.href !== `${hostOrigin}/`)
+    throw new Errors.ProtocolError('webhook-callback auth_url_origin must be the host origin')
 }
 
 function constantTimeEqual(a: string, b: string): boolean {

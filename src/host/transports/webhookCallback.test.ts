@@ -753,9 +753,62 @@ describe('webhookCallback end-to-end', () => {
       'verification_uri code must not equal `auth_req_id`',
     )
     await expectVerificationUriRejected(
-      'https://wallet.example/auth?code=opaque',
+      'https://auth.wallet.example/auth?code=opaque',
       'verification_uri origin does not match host auth_url_origin',
-      'https://auth.wallet.example',
+    )
+  })
+
+  test('consumer validates webhook-callback discovery binding origins', async () => {
+    const hostKeypair = Ed25519.createKeyPair()
+    const consumerKeypair = Ed25519.createKeyPair()
+
+    async function expectBindingRejected(
+      binding: NonNullable<Discovery.HostDocument['transports']['webhook-callback']>,
+      message: string,
+    ) {
+      const transport = webhookCallback({
+        fetch: (async () => {
+          throw new Error('unexpected fetch')
+        }) as typeof fetch,
+        host: {
+          id: 'wallet.example',
+          identity_pubkey: ed25519Pubkey(hostKeypair.publicKey),
+          name: 'Example Wallet',
+          origin: 'https://wallet.example',
+          transports: {
+            'webhook-callback': binding,
+          },
+          version: '1.0',
+        },
+        path: '/cb',
+        store: Kv.memory(),
+      })
+      Wata.create({
+        baseUrl: 'https://acme.dev',
+        privateKey: consumerKeypair.privateKey,
+        transport,
+      })
+
+      await expect(
+        transport.send(
+          Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+        ),
+      ).rejects.toThrow(message)
+    }
+
+    await expectBindingRejected(
+      {
+        auth_url_origin: 'https://wallet.example',
+        register_url: 'https://evil.example/register',
+      },
+      'webhook-callback register_url origin does not match host origin',
+    )
+    await expectBindingRejected(
+      {
+        auth_url_origin: 'https://wallet.example/auth',
+        register_url: 'https://wallet.example/register',
+      },
+      'webhook-callback auth_url_origin must be the host origin',
     )
   })
 
