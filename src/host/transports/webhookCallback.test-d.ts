@@ -98,6 +98,8 @@ describe('webhookCallback (host)', () => {
   test('approval records omit consumer-facing correlation handles', () => {
     expectTypeOf<WebhookCallback.html.ApprovalRecord>().not.toHaveProperty('authReqId')
     expectTypeOf<WebhookCallback.html.ApprovalRecord>().not.toHaveProperty('webhookUrl')
+    expectTypeOf<NonNullable<WebhookCallback.html.ApprovalRecord['consumer']['meta']>>()
+      .not.toHaveProperty('icon')
     expectTypeOf<WebhookCallback.html.ApprovalRecord['consumer']>().not.toHaveProperty(
       'publicKey',
     )

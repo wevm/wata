@@ -216,8 +216,8 @@ export declare namespace html {
     consumer: {
       /** Consumer's self-asserted `id` (typically hostname). */
       id: string
-      /** Optional meta block, when published. */
-      meta?: Discovery.Meta | undefined
+      /** Optional approval-safe meta block, when published. */
+      meta?: ApprovalMeta | undefined
       /** Self-asserted origin from the doc. */
       origin: string
     }
@@ -232,6 +232,9 @@ export declare namespace html {
     /** Lifecycle status. */
     status: PendingRecord['status']
   }
+
+  /** Consumer metadata safe to pass to an approval surface. */
+  type ApprovalMeta = Omit<Discovery.Meta, 'icon'>
 
   namespace render {
     /** Argument passed to {@link html.Hooks.render}. */
@@ -1501,13 +1504,21 @@ function approvalRecord(record: PendingRecord): html.ApprovalRecord {
     consumer: {
       id: record.consumer.id,
       origin: record.consumer.origin,
-      ...(record.consumer.meta ? { meta: record.consumer.meta } : {}),
+      ...(record.consumer.meta ? { meta: approvalMeta(record.consumer.meta) } : {}),
     },
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
     message: record.message,
     retrySeconds: record.retrySeconds,
     status: record.status,
+  }
+}
+
+function approvalMeta(meta: Discovery.Meta): html.ApprovalMeta {
+  return {
+    name: meta.name,
+    ...(meta.description !== undefined ? { description: meta.description } : {}),
+    ...(meta.websiteUrl !== undefined ? { websiteUrl: meta.websiteUrl } : {}),
   }
 }
 

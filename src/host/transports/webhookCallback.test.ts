@@ -700,6 +700,10 @@ describe('webhookCallback end-to-end', () => {
       code: 'code-1',
       consumer: {
         id: 'acme.dev',
+        meta: {
+          icon: 'https://acme.dev/icon.png',
+          name: 'Acme',
+        },
         origin: 'https://acme.dev',
         publicKey: 'A'.repeat(43),
       },
@@ -746,6 +750,7 @@ describe('webhookCallback end-to-end', () => {
     let renderHasAuthReqId: boolean | undefined
     let renderHasWebhookUrl: boolean | undefined
     let renderHasPublicKey: boolean | undefined
+    let renderHasRawIcon: boolean | undefined
     let authenticateHasAuthReqId: boolean | undefined
     let getHasAuthReqId: boolean | undefined
     const transport = hostWebhookCallback({
@@ -762,6 +767,7 @@ describe('webhookCallback end-to-end', () => {
           renderHasAuthReqId = !!record && 'authReqId' in record
           renderHasWebhookUrl = !!record && 'webhookUrl' in record
           renderHasPublicKey = !!record && 'publicKey' in record.consumer
+          renderHasRawIcon = !!record?.consumer.meta && 'icon' in record.consumer.meta
           return new Response('ok')
         },
       },
@@ -790,6 +796,7 @@ describe('webhookCallback end-to-end', () => {
     expect(renderHasAuthReqId).toBe(false)
     expect(renderHasWebhookUrl).toBe(false)
     expect(renderHasPublicKey).toBe(false)
+    expect(renderHasRawIcon).toBe(false)
     expect(authenticateHasAuthReqId).toBe(false)
     expect(getHasAuthReqId).toBe(false)
   })

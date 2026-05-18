@@ -87,7 +87,6 @@ const wata = Wata.create({
         const consumerMeta = consumer.meta
         const display = consumerMeta
           ? `<p>
-              ${consumerMeta.icon ? `<img src="${escape(consumerMeta.icon)}" alt="${escape(consumerMeta.name)} icon" width="32" height="32" /> ` : ''}
               App: <strong>${escape(consumerMeta.name)}</strong>${consumerMeta.description ? ` -- ${escape(consumerMeta.description)}` : ''}
             </p>`
           : `<p>App: <strong>${escape(consumer.id)}</strong></p>`
