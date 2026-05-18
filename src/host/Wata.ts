@@ -219,9 +219,11 @@ export declare namespace reject {
  * @example
  * Synchronous answer from inside the listener.
  * ```ts
- * import { Wata } from 'wata/host'
+ * import { Wata, postMessage } from 'wata/host'
  *
- * const wata = Wata.create({ transport })
+ * const wata = Wata.create({
+ *   transport: postMessage(),
+ * })
  * await wata.start()
  * wata.on('request', async (event) => {
  *   if (event.method === 'ping') await event.respond({ ok: true })
@@ -229,10 +231,14 @@ export declare namespace reject {
  * ```
  *
  * @example
- * Late answer by id (UI / approval flows). `Wata.on` lazy-connects
+ * Late answer by id (UI / approval flows). `wata.on` lazy-connects
  * the transport on first call, so an explicit `start()` is optional.
  * ```ts
- * const wata = Wata.create({ transport })
+ * import { Wata, postMessage } from 'wata/host'
+ *
+ * const wata = Wata.create({
+ *   transport: postMessage(),
+ * })
  *
  * wata.on('request', (event) => {
  *   setPending((prev) => [...prev, event])
