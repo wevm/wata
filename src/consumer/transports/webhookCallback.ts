@@ -315,12 +315,29 @@ export function webhookCallback(options: Options): WebhookCallback {
       throw new Transport.TransportError('host /register response missing `verification_uri`')
 
     const verificationUri = data.verification_uri
-    const verificationOrigin = new URL(verificationUri).origin
-    const hostOrigin = new URL(hostDoc.origin).origin
-    if (verificationOrigin !== hostOrigin)
-      throw new Errors.ProtocolError('verification_uri origin does not match host doc origin', {
-        details: `expected ${hostOrigin}, host returned ${verificationOrigin}`,
+    let verificationUrl: URL
+    try {
+      verificationUrl = new URL(verificationUri)
+    } catch (cause) {
+      throw new Errors.ProtocolError('host /register response returned invalid `verification_uri`', {
+        cause: cause as Error,
       })
+    }
+    const authUrlOrigin = new URL(
+      hostDoc.transports['webhook-callback']?.auth_url_origin ?? hostDoc.origin,
+    ).origin
+    if (verificationUrl.origin !== authUrlOrigin)
+      throw new Errors.ProtocolError('verification_uri origin does not match host auth_url_origin', {
+        details: `expected ${authUrlOrigin}, host returned ${verificationUrl.origin}`,
+      })
+    const codeValues = verificationUrl.searchParams.getAll('code')
+    const hasOnlyCode = Array.from(verificationUrl.searchParams.keys()).every(
+      (key) => key === 'code',
+    )
+    if (codeValues.length !== 1 || !codeValues[0] || !hasOnlyCode || verificationUrl.hash)
+      throw new Errors.ProtocolError(
+        'verification_uri must contain exactly one `code` query parameter',
+      )
 
     state.activeAuthReqId = data.auth_req_id
     state.activeHostPubkey = hostDoc.identity_pubkey

@@ -12,7 +12,7 @@
 
 import { Base64, Bytes, Ed25519, Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
-import { Envelope, Kv, MessageSig, Rpc, Wata, webhookCallback } from 'wata'
+import { Discovery, Envelope, Kv, MessageSig, Rpc, Wata, webhookCallback } from 'wata'
 import {
   Wata as HostWata,
   WebhookCallback as HostWebhookCallback,
@@ -455,6 +455,65 @@ describe('webhookCallback end-to-end', () => {
     expect(low.record.retrySeconds).toBe(300)
     expect(high.prompt?.retrySeconds).toBe(86400)
     expect(high.record.retrySeconds).toBe(86400)
+  })
+
+  test('consumer validates the returned verification_uri code shape', async () => {
+    async function expectVerificationUriRejected(
+      verificationUri: string,
+      message: string,
+      authUrlOrigin = 'https://wallet.example',
+    ) {
+      const hostKeypair = Ed25519.createKeyPair()
+      const consumerKeypair = Ed25519.createKeyPair()
+      const hostDocument = {
+        id: 'wallet.example',
+        identity_pubkey: ed25519Pubkey(hostKeypair.publicKey),
+        name: 'Example Wallet',
+        origin: 'https://wallet.example',
+        transports: {
+          'webhook-callback': {
+            auth_url_origin: authUrlOrigin,
+            register_url: 'https://wallet.example/register',
+          },
+        },
+        version: '1.0',
+      } satisfies Discovery.HostDocument
+      const transport = webhookCallback({
+        fetch: (async () =>
+          Response.json({
+            auth_req_id: 'auth-1',
+            expires_in: 60,
+            retry_seconds: 300,
+            verification_uri: verificationUri,
+          })) as typeof fetch,
+        host: hostDocument,
+        path: '/cb',
+        store: Kv.memory(),
+      })
+      Wata.create({
+        baseUrl: 'https://acme.dev',
+        privateKey: consumerKeypair.privateKey,
+        transport,
+      })
+
+      await expect(
+        transport.send(Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])),
+      ).rejects.toThrow(message)
+    }
+
+    await expectVerificationUriRejected(
+      'https://wallet.example/auth?req=opaque',
+      'verification_uri must contain exactly one `code` query parameter',
+    )
+    await expectVerificationUriRejected(
+      'https://wallet.example/auth?code=opaque&auth_req_id=secret',
+      'verification_uri must contain exactly one `code` query parameter',
+    )
+    await expectVerificationUriRejected(
+      'https://wallet.example/auth?code=opaque',
+      'verification_uri origin does not match host auth_url_origin',
+      'https://auth.wallet.example',
+    )
   })
 
   test('rejects approval body whose response ids do not match the queued request', async () => {
