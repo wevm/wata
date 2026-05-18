@@ -67,6 +67,7 @@ type PairOptions = {
   hostAuthenticate?:
     | NonNullable<Parameters<typeof hostWebhookCallback>[0]['html']['authenticate']>
     | undefined
+  hostExpiresIn?: number | undefined
   hostRetrySeconds?: number | undefined
 }
 
@@ -140,7 +141,7 @@ function pair(options: PairOptions = {}) {
 
   hostTransport = hostWebhookCallback({
     baseUrl: hostOrigin,
-    expiresIn: 60,
+    expiresIn: options.hostExpiresIn ?? 60,
     fetch: hostFetchOverride,
     html: {
       render: () => new Response('ok'),
@@ -458,6 +459,32 @@ describe('webhookCallback end-to-end', () => {
     expect(low.record.retrySeconds).toBe(300)
     expect(high.prompt?.retrySeconds).toBe(86400)
     expect(high.record.retrySeconds).toBe(86400)
+  })
+
+  test('clamps advertised expires_in to the spec approval-window ceiling', async () => {
+    const prompts: Array<{ expiresIn: number | undefined }> = []
+    const setup = pair({
+      consumerOnPrompt: (prompt) => {
+        prompts.push(prompt)
+      },
+      hostExpiresIn: 1_000,
+    })
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transport: setup.consumerTransport,
+    })
+
+    await setup.consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await setup.findActiveCode()
+    const record = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    expect(prompts[0]?.expiresIn).toBe(600)
+    expect(record.expiresAt - record.createdAt).toBe(600_000)
   })
 
   test('consumer validates the returned verification_uri code shape', async () => {

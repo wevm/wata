@@ -249,6 +249,10 @@ export function webhookCallback(options: Options): WebhookCallback {
   } = options
 
   const baseUrl_ctor = options.baseUrl ? Uri.trimTrailingSlash(options.baseUrl) : undefined
+  const effectiveExpiresIn = Math.min(
+    600,
+    Math.max(60, Number.isFinite(expiresIn) ? Math.floor(expiresIn) : 600),
+  )
   const effectiveRetrySeconds = Math.min(
     86400,
     Math.max(300, Number.isFinite(retrySeconds) ? Math.floor(retrySeconds) : 900),
@@ -544,8 +548,10 @@ export function webhookCallback(options: Options): WebhookCallback {
     const code = generateOpaque(16)
     const now = Date.now()
     const requestedExpiry =
-      typeof body.expiry === 'number' && Number.isFinite(body.expiry) ? body.expiry : expiresIn
-    const effectiveExpiry = Math.min(Math.max(60, Math.floor(requestedExpiry)), expiresIn)
+      typeof body.expiry === 'number' && Number.isFinite(body.expiry)
+        ? body.expiry
+        : effectiveExpiresIn
+    const effectiveExpiry = Math.min(Math.max(60, Math.floor(requestedExpiry)), effectiveExpiresIn)
 
     const record: PendingRecord = {
       authReqId,
