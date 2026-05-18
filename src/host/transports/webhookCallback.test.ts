@@ -74,6 +74,7 @@ type PairOptions = {
       ) => Promise<Response> | Response)
     | undefined
   hostExpiresIn?: number | undefined
+  hostRegistrationRateLimit?: HostWebhookCallback.Options['registrationRateLimit'] | undefined
   hostRetrySeconds?: number | undefined
 }
 
@@ -160,6 +161,7 @@ function pair(options: PairOptions = {}) {
       ...(options.hostAuthenticate ? { authenticate: options.hostAuthenticate } : {}),
     },
     path: hostPath,
+    registrationRateLimit: options.hostRegistrationRateLimit,
     retrySeconds: options.hostRetrySeconds,
     store: hostStore,
   })
@@ -1364,6 +1366,45 @@ describe('webhookCallback end-to-end', () => {
         "error_description": "replay detected",
       }
     `)
+    expect(hostStore.scanKeys('webhook:code:')).toHaveLength(1)
+  })
+
+  test('rate-limits authenticated registrations per consumer', async () => {
+    const { consumerKeypair, hostOrigin, hostPath, hostStore, hostTransport, webhookUrl } = pair({
+      hostRegistrationRateLimit: { max: 1, windowSeconds: 60 },
+    })
+    const publicKey = ed25519Pubkey(consumerKeypair.publicKey)
+    const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
+    const body = JSON.stringify({ message, webhook_url: webhookUrl })
+    const registerUrl = `${hostOrigin}${hostPath}/register`
+    const request = (nonce: string) =>
+      signedRequest({
+        body,
+        components: [
+          '@method',
+          '@target-uri',
+          '@authority',
+          'content-type',
+          'content-digest',
+          'urpc-public-key',
+        ],
+        keyid: 'https://acme.dev#identity',
+        method: 'POST',
+        nonce,
+        privateKey: consumerKeypair.privateKey,
+        publicKey,
+        url: registerUrl,
+      })
+
+    const first = await hostTransport.fetch(request('first-register'))
+    const second = await hostTransport.fetch(request('second-register'))
+
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(429)
+    expect(await second.json()).toEqual({
+      error: 'rate_limited',
+      error_description: 'registration rate limit exceeded',
+    })
     expect(hostStore.scanKeys('webhook:code:')).toHaveLength(1)
   })
 

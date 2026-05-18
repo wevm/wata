@@ -137,6 +137,12 @@ export type Options = {
    */
   path?: string | undefined
   /**
+   * Per-consumer registration rate limit. Defaults to 60 accepted
+   * registrations per 60 seconds. Set to `false` only when an outer
+   * trusted layer enforces an equivalent limit.
+   */
+  registrationRateLimit?: Options.RegistrationRateLimit | false | undefined
+  /**
    * Retry budget surfaced in the `/register` response (seconds).
    * Defaults to 900 (15 minutes). Spec minimum: 300; maximum: 86400.
    */
@@ -147,6 +153,15 @@ export type Options = {
    * so approval codes can be consumed exactly once.
    */
   store: Kv.AtomicKv
+}
+
+export declare namespace Options {
+  type RegistrationRateLimit = {
+    /** Number of accepted registration requests allowed per window. */
+    max?: number | undefined
+    /** Sliding-window length in seconds. */
+    windowSeconds?: number | undefined
+  }
 }
 
 export declare namespace html {
@@ -229,6 +244,7 @@ export declare namespace html {
 export type WebhookCallback = Transport.Transport<'host'> & Http.Server
 
 type DeliveryAttempt = { type: 'delivered' } | { error: Error; retryable: boolean; type: 'failed' }
+type RegistrationRateLimit = { max: number; windowSeconds: number }
 
 /**
  * Create a host-side `webhook-callback` transport.
@@ -251,6 +267,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
     html,
     path,
+    registrationRateLimit: registrationRateLimit_option,
     retrySeconds = 900,
     store,
   } = options
@@ -272,6 +289,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     86400,
     Math.max(300, Number.isFinite(retrySeconds) ? Math.floor(retrySeconds) : 900),
   )
+  const registrationRateLimit = resolveRegistrationRateLimit(registrationRateLimit_option)
   let baseUrl_bound: string | undefined
   let identity_bound: Transport.Identity | undefined
 
@@ -569,6 +587,17 @@ export function webhookCallback(options: Options): WebhookCallback {
         { error: 'unauthorized', error_description: nonceError },
         { status: 401 },
       )
+    if (registrationRateLimit) {
+      const allowed = await consumeRegistrationQuota(
+        consumerDoc.identity_pubkey,
+        registrationRateLimit,
+      )
+      if (!allowed)
+        return c.json(
+          { error: 'rate_limited', error_description: 'registration rate limit exceeded' },
+          { status: 429 },
+        )
+    }
 
     // Mint fresh opaque identifiers. Spec §3.1.3 — `auth_req_id` and
     // the `?code=` handle MUST each carry ≥128 bits of CSPRNG entropy
@@ -983,6 +1012,24 @@ export function webhookCallback(options: Options): WebhookCallback {
     return undefined
   }
 
+  async function consumeRegistrationQuota(
+    publicKey: string,
+    limit: RegistrationRateLimit,
+  ): Promise<boolean> {
+    const key = registrationRateLimitKey(publicKey)
+    const now = Date.now()
+    const windowMs = limit.windowSeconds * 1000
+    const previous = (await take<number[]>(key)) ?? []
+    const entries = previous.filter((timestamp) => now - timestamp < windowMs)
+    if (entries.length >= limit.max) {
+      await store.set(key, entries, { ttl: limit.windowSeconds })
+      return false
+    }
+    entries.push(now)
+    await store.set(key, entries, { ttl: limit.windowSeconds })
+    return true
+  }
+
   async function requirePendingRecord(code: string): Promise<PendingRecord> {
     const record = await store.get<PendingRecord>(codeKey(code))
     if (!record) throw new UnknownCodeError(code)
@@ -1219,6 +1266,22 @@ function authReqIdKey(authReqId: string): string {
 
 function signatureNonceKey(publicKey: string, nonce: string): string {
   return `webhook:signatureNonce:${publicKey}:${nonce}`
+}
+
+function registrationRateLimitKey(publicKey: string): string {
+  return `webhook:registrationRate:${publicKey}`
+}
+
+function resolveRegistrationRateLimit(
+  value: Options.RegistrationRateLimit | false | undefined,
+): RegistrationRateLimit | undefined {
+  if (value === false) return undefined
+  const max = value?.max ?? 60
+  const windowSeconds = value?.windowSeconds ?? 60
+  return {
+    max: Math.max(1, Math.floor(Number.isFinite(max) ? max : 60)),
+    windowSeconds: Math.max(1, Math.floor(Number.isFinite(windowSeconds) ? windowSeconds : 60)),
+  }
 }
 
 function generateOpaque(byteCount: number): string {
