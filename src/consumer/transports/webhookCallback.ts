@@ -187,6 +187,7 @@ export function webhookCallback(options: Options): WebhookCallback {
   type State = {
     activeAuthReqId: string | undefined
     activeHostPubkey: string | undefined
+    activeRegisterUrl: string | undefined
     closed: boolean
     inFlight: boolean
     started: boolean
@@ -194,20 +195,22 @@ export function webhookCallback(options: Options): WebhookCallback {
   const state: State = {
     activeAuthReqId: undefined,
     activeHostPubkey: undefined,
+    activeRegisterUrl: undefined,
     closed: false,
     inFlight: false,
     started: false,
   }
 
-  /** Resolved host doc — eagerly fetched, then implicitly cached by the promise. */
-  const resolvedHost = (async () => {
+  /** Host doc fetched at registration time, unless supplied as trusted config. */
+  async function resolveHost(): Promise<Discovery.HostDocument> {
     if (typeof host === 'string') return Discovery.fetchHost(host, { fetch: fetchImpl })
     return host
-  })()
+  }
 
   /** Host `webhook-callback` binding, validated against the host document origin. */
-  const resolvedWebhookBinding = (async () => {
-    const doc = await resolvedHost
+  function resolveWebhookBinding(
+    doc: Discovery.HostDocument,
+  ): NonNullable<Discovery.HostDocument['transports']['webhook-callback']> | undefined {
     const binding = doc.transports['webhook-callback']
     if (!binding) {
       if (options.registerUrl) return undefined
@@ -217,18 +220,19 @@ export function webhookCallback(options: Options): WebhookCallback {
     }
     assertWebhookBindingOrigin(doc, binding)
     return binding
-  })()
+  }
 
   /** Host `register_url` — constructor override wins, else read from discovery binding. */
-  const resolvedRegisterUrl = (async () => {
+  function resolveRegisterUrl(
+    binding: NonNullable<Discovery.HostDocument['transports']['webhook-callback']> | undefined,
+  ): string {
     if (options.registerUrl) return options.registerUrl
-    const binding = await resolvedWebhookBinding
     if (!binding)
       throw new Transport.UnsupportedError(
         'host does not advertise a `webhook-callback` transport binding',
       )
     return binding.register_url
-  })()
+  }
 
   function settle(message: Envelope.Envelope | undefined, cause?: Error) {
     if (state.closed) return
@@ -239,6 +243,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     // rather than re-emitting `message`.
     state.activeAuthReqId = undefined
     state.activeHostPubkey = undefined
+    state.activeRegisterUrl = undefined
     if (cause) emitter.emit('error', cause)
     if (message) emitter.emit('message', message)
     emitter.emit('close', cause)
@@ -252,9 +257,10 @@ export function webhookCallback(options: Options): WebhookCallback {
         `webhook-callback transport only carries rpc-requests envelopes; received \`${envelope.type}\``,
       )
 
-    const hostDoc = await resolvedHost
+    const hostDoc = await resolveHost()
+    const binding = resolveWebhookBinding(hostDoc)
     const identity = getIdentity()
-    const registerUrl = await resolvedRegisterUrl
+    const registerUrl = resolveRegisterUrl(binding)
     const webhookUrl = getWebhookUrl()
 
     const body = JSON.stringify({
@@ -348,7 +354,6 @@ export function webhookCallback(options: Options): WebhookCallback {
         })
       }
     })()
-    const binding = await resolvedWebhookBinding
     const authUrlOrigin = new URL(binding?.auth_url_origin ?? hostDoc.origin).origin
     if (verificationUrl.origin !== authUrlOrigin)
       throw new Errors.ProtocolError('verification_uri origin does not match host auth_url_origin', {
@@ -367,6 +372,7 @@ export function webhookCallback(options: Options): WebhookCallback {
 
     state.activeAuthReqId = data.auth_req_id
     state.activeHostPubkey = hostDoc.identity_pubkey
+    state.activeRegisterUrl = registerUrl
 
     if (onPrompt)
       await onPrompt({
@@ -499,7 +505,8 @@ export function webhookCallback(options: Options): WebhookCallback {
   async function cancel(): Promise<void> {
     if (!state.activeAuthReqId) return
     const authReqId = state.activeAuthReqId
-    const registerUrl = await resolvedRegisterUrl
+    const registerUrl =
+      state.activeRegisterUrl ?? resolveRegisterUrl(resolveWebhookBinding(await resolveHost()))
     const url = `${registerUrl}/${encodeURIComponent(authReqId)}`
     const nonce = generateNonce()
     const created = Math.floor(Date.now() / 1000)

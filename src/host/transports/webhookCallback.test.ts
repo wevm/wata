@@ -938,6 +938,61 @@ describe('webhookCallback end-to-end', () => {
     )
   })
 
+  test('consumer fetches host discovery at registration time', async () => {
+    const hostKeypair = Ed25519.createKeyPair()
+    const consumerKeypair = Ed25519.createKeyPair()
+    const hostDocument = {
+      id: 'wallet.example',
+      identity_pubkey: ed25519Pubkey(hostKeypair.publicKey),
+      name: 'Example Wallet',
+      origin: 'https://wallet.example',
+      transports: {
+        'webhook-callback': {
+          auth_url_origin: 'https://wallet.example',
+          register_url: 'https://wallet.example/register',
+        },
+      },
+      version: '1.0',
+    } satisfies Discovery.HostDocument
+    const fetches: string[] = []
+    const transport = webhookCallback({
+      fetch: (async (input: Request | string) => {
+        const url = input instanceof Request ? input.url : String(input)
+        fetches.push(url)
+        if (url === 'https://wallet.example/.well-known/urpc/host.json')
+          return Response.json(hostDocument)
+        if (url === 'https://wallet.example/register')
+          return Response.json({
+            auth_req_id: 'auth-1',
+            expires_in: 60,
+            retry_seconds: 300,
+            verification_uri: 'https://wallet.example/auth?code=opaque',
+          })
+        throw new Error(`unexpected fetch to ${url}`)
+      }) as typeof fetch,
+      host: 'https://wallet.example',
+      path: '/cb',
+      store: Kv.memory(),
+    })
+
+    expect(fetches).toEqual([])
+    Wata.create({
+      baseUrl: 'https://acme.dev',
+      privateKey: consumerKeypair.privateKey,
+      transport,
+    })
+    expect(fetches).toEqual([])
+
+    await transport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+
+    expect(fetches).toEqual([
+      'https://wallet.example/.well-known/urpc/host.json',
+      'https://wallet.example/register',
+    ])
+  })
+
   test('consumer requires lifetime fields in the /register response', async () => {
     async function expectRegisterResponseRejected(
       responseBody: Record<string, unknown>,
