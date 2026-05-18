@@ -783,6 +783,53 @@ describe('webhookCallback end-to-end', () => {
     await expect(sendPromise).resolves.toMatchObject({ result: { ok: true } })
   })
 
+  test('form authenticate actions accept opaque-origin approval submissions', async () => {
+    const setup = pair({
+      hostAuthenticate: async ({ actions, request }) => {
+        const form = await request.formData()
+        const code = String(form.get('code') ?? '')
+        await actions.approve(code)
+        return new Response('Approved')
+      },
+    })
+    const { consumerKeypair, consumerOrigin, consumerTransport, hostKeypair, hostTransport } = setup
+    const consumer = Wata.create({
+      baseUrl: consumerOrigin,
+      privateKey: consumerKeypair.privateKey,
+      transports: [consumerTransport],
+    })
+    const host = HostWata.create({
+      privateKey: hostKeypair.privateKey,
+      transports: [hostTransport],
+    })
+    host.on('request', (event) => event.respond({ ok: true }))
+    await host.start()
+
+    const sendPromise = consumer.send({ method: 'ping', params: [] })
+    const code = await setup.findActiveCode()
+    const session = await setup.getApprovalSession(code)
+    if (!session) throw new Error('approval session missing')
+    const response = await hostTransport.fetch(
+      new Request(`${setup.hostOrigin}${setup.hostPath}/verify`, {
+        body: new URLSearchParams({
+          approval_token: session.token,
+          code,
+          decision: 'approve',
+        }),
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: session.cookie,
+          origin: 'null',
+        },
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toBe('Approved')
+    await expect(sendPromise).resolves.toMatchObject({ result: { ok: true } })
+  })
+
   test('sets approval-surface hardening headers', async () => {
     const { hostOrigin, hostPath, hostTransport } = pair()
 

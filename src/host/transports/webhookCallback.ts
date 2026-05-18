@@ -2033,7 +2033,8 @@ async function approvalCodeFromRequest(
 
 function approvalMetadataError(request: Request, expectedOrigin: string): string | undefined {
   const origin = request.headers.get('origin')
-  if (origin && origin !== expectedOrigin) return 'approval origin does not match host origin'
+  if (origin && origin !== 'null' && origin !== expectedOrigin)
+    return 'approval origin does not match host origin'
 
   const referer = request.headers.get('referer')
   if (!origin) {
