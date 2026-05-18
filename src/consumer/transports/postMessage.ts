@@ -46,11 +46,13 @@
  *
  * @example MessageChannel
  * ```ts
+ * const host = 'https://wallet.example'
  * const wata = Wata.create({
  *   transport: postMessage({
  *     target: () => {
+ *       const popup = window.open(host, '_blank', 'popup=1')!
  *       const { port1, port2 } = new MessageChannel()
- *       sendPortSomehow(port2)
+ *       popup.postMessage({ type: 'wata.port' }, host, [port2])
  *       return port1
  *     },
  *   }),
