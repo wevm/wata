@@ -73,15 +73,38 @@ export namespace schema {
   )
 
   /**
-   * `https://`-only URL that additionally rejects wildcard glob tokens
-   * (`*`) anywhere in the URL string. Used for `callback_urls`, where
-   * the spec mandates fully-qualified, exact-match entries.
+   * Fully-qualified callback URL with exact-match semantics. HTTPS is
+   * accepted everywhere, HTTP is accepted only for loopback local
+   * development, and private-use schemes are accepted for mobile
+   * app callbacks. Wildcards and fragments are forbidden.
    */
-  export const callbackUrl = httpsUrl.check(
-    z.refine((value) => !value.includes('*'), {
-      error: 'callback_urls must not contain wildcard tokens',
-    }),
-  )
+  export const callbackUrl = z
+    .url({ error: 'expected a callback URL' })
+    .check(
+      z.refine(
+        (value) => {
+          const url = new URL(value)
+          if (url.protocol === 'https:') return true
+          if (url.protocol !== 'http:') return true
+          return (
+            url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]'
+          )
+        },
+        {
+          error: 'expected an https:// URL, loopback http:// URL, or private-use callback scheme',
+        },
+      ),
+    )
+    .check(
+      z.refine((value) => !new URL(value).hash, {
+        error: 'callback_urls must not contain fragments',
+      }),
+    )
+    .check(
+      z.refine((value) => !value.includes('*'), {
+        error: 'callback_urls must not contain wildcard tokens',
+      }),
+    )
 
   /** `mobile-link` transport binding. */
   export const mobileLinkTransport = z.object({

@@ -132,8 +132,21 @@ export type HostTransports = readonly [
   ...Transport.Transport<'host', string>[],
 ]
 
+type LiteralName<name extends string> = string extends name ? never : name
+
+type HostTransportMap<transports extends HostTransports> = string extends transports[number]['name']
+  ? {}
+  : {
+      [transport in transports[number] as LiteralName<transport['name']>]: transport
+    }
+
 /** Host-side `Wata`. Returned by {@link create}. */
 export type Host<
+  schema extends Schema.Schema | undefined = undefined,
+  transports extends HostTransports = HostTransports,
+> = HostBase<schema, transports> & HostTransportMap<transports>
+
+type HostBase<
   schema extends Schema.Schema | undefined = undefined,
   transports extends HostTransports = HostTransports,
 > = {
@@ -608,7 +621,7 @@ export function create<
     httpListener = wrapped.listener
   }
 
-  return {
+  const host: HostBase<schema, transports> = {
     async close(cause) {
       pending.clear()
       for (const runtime of runtimes) runtime.started = false
@@ -649,6 +662,8 @@ export function create<
     start,
     transports,
   }
+  for (const transport of transports) Object.assign(host, { [transport.name]: transport })
+  return host as unknown as Host<schema, transports>
 }
 
 export declare namespace create {

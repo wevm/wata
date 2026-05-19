@@ -69,11 +69,13 @@ export type ConsumerTransports = readonly [
 /** Default single-transport tuple used by the broad {@link Consumer} type. */
 export type SingleConsumerTransports = readonly [Transport.Transport<'consumer', string>]
 
+type LiteralName<name extends string> = string extends name ? never : name
+
 /** Transport-specific consumer session exposed on `wata.<transportName>`. */
 export type ConsumerSession<
   schema extends Schema.Schema | undefined,
   transport extends Transport.Transport<'consumer', string>,
-> = {
+> = ConsumerTransportExtras<transport> & {
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
   /**
@@ -128,6 +130,9 @@ export type ConsumerSession<
   transport: transport
 }
 
+type ConsumerTransportExtras<transport extends Transport.Transport<'consumer', string>> =
+  transport extends { handle: infer handle } ? { handle: handle } : {}
+
 /** Consumer surface shared by single and multi-transport instances. */
 export type ConsumerBase<
   schema extends Schema.Schema | undefined,
@@ -164,12 +169,14 @@ export type ConsumerBase<
 export type ConsumerChildMap<
   schema extends Schema.Schema | undefined,
   transports extends ConsumerTransports,
-> = {
-  [name in transports[number]['name']]: ConsumerSession<
-    schema,
-    Extract<transports[number], { name: name }>
-  >
-}
+> = string extends transports[number]['name']
+  ? {}
+  : {
+      [transport in transports[number] as LiteralName<transport['name']>]: ConsumerSession<
+        schema,
+        transport
+      >
+    }
 
 /**
  * Consumer-side `Wata`. Returned by {@link create}. A single transport
@@ -180,9 +187,10 @@ export type Consumer<
   schema extends Schema.Schema | undefined = undefined,
   transports extends ConsumerTransports = SingleConsumerTransports,
 > = ConsumerBase<schema, transports> &
+  ConsumerChildMap<schema, transports> &
   (transports extends readonly [infer transport extends Transport.Transport<'consumer', string>]
     ? ConsumerSession<schema, transport>
-    : ConsumerChildMap<schema, transports>)
+    : {})
 
 export declare namespace Consumer {
   /** Method names known to a consumer (any string when no schema supplied). */
@@ -297,6 +305,7 @@ export function create<
       fetch: httpFetch as Consumer<schema, transports>['fetch'],
       listener: httpListener as Consumer<schema, transports>['listener'],
       transports,
+      [session.transport.name]: session,
     } as unknown as Consumer<schema, transports>
   }
 
@@ -468,14 +477,17 @@ function createConsumerSession<
   }
 
   return {
-    async close(cause) {
+    async close(cause?: Error) {
       if (!state.started) return
       state.started = false
       rejectPending(cause ?? new Transport.ClosedError('wata closed locally'))
       await transport.close(cause)
       emitter.emit('close', cause)
     },
-    async notify(opts) {
+    async notify<
+      const method extends Consumer.MethodName<schema>,
+      const params extends Consumer.ParamsOf<schema, method>,
+    >(opts: Consumer.NotifyOptions<method, params>) {
       if (!state.started) await start()
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
       await transport.send(
@@ -483,14 +495,20 @@ function createConsumerSession<
       )
     },
     off: emitter.off,
-    on(type, listener) {
+    on<type extends keyof LifecycleEventMap>(
+      type: type,
+      listener: Listener<LifecycleEventMap[type]>,
+    ) {
       const controller = new AbortController()
       emitter.on(type, listener, { signal: controller.signal })
       return controller
     },
     role: 'consumer',
     schema,
-    async send(opts) {
+    async send<
+      const method extends Consumer.MethodName<schema>,
+      const params extends Consumer.ParamsOf<schema, method>,
+    >(opts: Consumer.SendOptions<method, params>) {
       if (!state.started) await start()
 
       const id = opts.id ?? nextId++
@@ -515,7 +533,8 @@ function createConsumerSession<
     },
     start,
     transport,
-  }
+    ...('handle' in transport ? { handle: transport.handle } : {}),
+  } as unknown as ConsumerSession<schema, transport>
 }
 
 export declare namespace create {
