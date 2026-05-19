@@ -19,6 +19,7 @@ bun i wata
 | Transport         | Description                                                                                            | Peers             |
 | ----------------- | ------------------------------------------------------------------------------------------------------ | ----------------- |
 | `postMessage`     | Same-device browser session over a `Window`, `WindowProxy`, or `MessagePort` (popup, iframe, channel). | Browser ⇄ Browser |
+| `relay`           | Ongoing encrypted session through a signed HTTP relay.                                                 | Any ⇄ Any         |
 | `deviceCode`      | OAuth 2.0 Device Authorization Grant (RFC 8628) over HTTP, with PKCE and a bring-your-own approval UI. | CLI ⇄ Browser     |
 | `webhookCallback` | Signed HTTP registration + callback flow for consumers that can receive webhooks.                      | Server ⇄ Server   |
 
@@ -69,6 +70,68 @@ wata.on('request', async (c) => {
   if (c.method === 'wallet_connect')
     await c.respond(['0x0000000000000000000000000000000000000001'])
 })
+```
+
+### `relay`
+
+Ongoing session through an HTTP relay. Consumer and host share an out-of-band `sessionId` and `pairingSecret`; after the key-share, every uRPC envelope through the relay is AEAD-encrypted.
+
+[See example →](./examples/relay)
+
+#### Consumer
+
+Discovers the host's relay URL from `host.json`, connects through the relay, and sends a `wallet_connect` request.
+
+```ts
+import { Wata, relay } from 'wata'
+
+const wata = Wata.create({
+  transports: [
+    relay({
+      host: 'https://wallet.example',
+      pairingSecret,
+      sessionId,
+    }),
+  ],
+})
+
+const { result } = await wata.send({
+  method: 'wallet_connect',
+  params: [],
+})
+```
+
+#### Host
+
+Publishes the relay binding in `host.json`, starts polling the relay, and answers requests once the consumer connects.
+
+```ts
+import { createServer } from 'node:http'
+import { Wata, relay } from 'wata/host'
+import { relayServer } from 'wata/server'
+
+const relayHandler = relayServer()
+
+const wata = Wata.create({
+  baseUrl: 'http://localhost:3000',
+  meta: { name: 'Example Wallet' },
+  privateKey,
+  transports: [
+    relay({
+      pairingSecret,
+      sessionId,
+      url: 'http://localhost:4000/r',
+    }),
+  ],
+})
+
+wata.on('request', async (c) => {
+  if (c.method === 'wallet_connect')
+    await c.respond(['0x0000000000000000000000000000000000000001'])
+})
+
+createServer(wata.listener!).listen(3000)
+createServer(relayHandler.listener).listen(4000)
 ```
 
 ### `deviceCode`

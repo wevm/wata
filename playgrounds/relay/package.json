@@ -1,0 +1,22 @@
+{
+  "name": "relay-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:types": "tsc",
+    "dev": "pnpm /^dev:/",
+    "dev:consumer": "vite dev --host 0.0.0.0 --port 5176",
+    "dev:host": "node --import tsx src/server.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "catalog:",
+    "hono": "catalog:",
+    "wata": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "latest",
+    "typescript": "catalog:",
+    "vite": "latest"
+  }
+}

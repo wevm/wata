@@ -163,6 +163,19 @@ importers:
         specifier: latest
         version: 1.0.3
 
+  examples/relay:
+    dependencies:
+      wata:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      typescript:
+        specifier: latest
+        version: 6.0.3
+      vite:
+        specifier: latest
+        version: 8.0.13(@types/node@25.7.0)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.1)
+
   examples/webhookCallback:
     dependencies:
       '@hono/node-server':
@@ -246,6 +259,31 @@ importers:
       vp:
         specifier: 'catalog:'
         version: vite-plus@0.1.20(@types/node@25.7.0)(@vitest/coverage-v8@4.1.5)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.1)(typescript@5.9.3)(vite@8.0.13(@types/node@25.7.0)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.1))
+
+  playgrounds/relay:
+    dependencies:
+      '@hono/node-server':
+        specifier: 'catalog:'
+        version: 1.19.14(hono@4.12.18)
+      hono:
+        specifier: 'catalog:'
+        version: 4.12.18
+      wata:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.7.0
+      tsx:
+        specifier: latest
+        version: 4.22.1
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vite:
+        specifier: latest
+        version: 8.0.13(@types/node@25.7.0)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.1)
 
   playgrounds/webhookCallback:
     dependencies:

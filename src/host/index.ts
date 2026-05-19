@@ -11,6 +11,8 @@ export * as Transport from '../core/Transport.js'
 
 export { postMessage } from './transports/postMessage.js'
 export * as PostMessage from './transports/postMessage.js'
+export { relay } from './transports/relay.js'
+export * as Relay from './transports/relay.js'
 export { deviceCode } from './transports/deviceCode.js'
 export * as DeviceCode from './transports/deviceCode.js'
 export { webhookCallback } from './transports/webhookCallback.js'
