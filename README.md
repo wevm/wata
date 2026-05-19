@@ -240,6 +240,10 @@ const wata = Wata.create({
   ],
 })
 
+Linking.addEventListener('url', ({ url }) => {
+  void wata.mobileLink.handle(url)
+})
+
 const { result } = await wata.send({
   method: 'wallet_connect',
   params: [],

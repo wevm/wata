@@ -44,6 +44,7 @@ describe('create', () => {
     expectTypeOf(wata).toMatchTypeOf<{ start: () => Promise<void> }>()
     expectTypeOf(wata).toMatchTypeOf<{ send: Function }>()
     expectTypeOf(wata).toMatchTypeOf<{ notify: Function }>()
+    expectTypeOf(wata.loopback).toMatchTypeOf<{ send: Function }>()
   })
 
   test('multiple consumer transports expose child sessions by transport name', () => {
@@ -66,6 +67,7 @@ describe('create', () => {
     expectTypeOf(wata.role).toEqualTypeOf<'host'>()
     expectTypeOf(wata).toMatchTypeOf<{ start: () => Promise<void> }>()
     expectTypeOf(wata).toMatchTypeOf<{ on: Function }>()
+    expectTypeOf(wata.loopback).toEqualTypeOf<typeof host>()
   })
 
   test('accepts Schema imported from the host entrypoint', () => {

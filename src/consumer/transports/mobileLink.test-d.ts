@@ -29,6 +29,8 @@ describe('mobileLink (consumer)', () => {
       ],
     })
     expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
+    expectTypeOf(wata.mobileLink.handle).toEqualTypeOf<(url: string | URL) => Promise<void>>()
+    expectTypeOf(wata.mobileLink.send).toMatchTypeOf<Function>()
   })
 
   test('accepts discovery mode with string or pre-parsed host document', () => {

@@ -21,6 +21,8 @@ describe('mobileLink (host)', () => {
       transports: [mobileLink({ scheme: 'examplewallet' })],
     })
     expectTypeOf(wata.role).toEqualTypeOf<'host'>()
+    expectTypeOf(wata.mobileLink.handle).toEqualTypeOf<(url: string | URL) => Promise<void>>()
+    expectTypeOf(wata.mobileLink.fetch).toEqualTypeOf<(request: Request) => Promise<Response>>()
   })
 
   test('options expose scheme, path, universalLink, responseTimeout, and open', () => {

@@ -73,7 +73,7 @@ export type SingleConsumerTransports = readonly [Transport.Transport<'consumer',
 export type ConsumerSession<
   schema extends Schema.Schema | undefined,
   transport extends Transport.Transport<'consumer', string>,
-> = {
+> = ConsumerTransportExtras<transport> & {
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
   /**
@@ -128,6 +128,9 @@ export type ConsumerSession<
   transport: transport
 }
 
+type ConsumerTransportExtras<transport extends Transport.Transport<'consumer', string>> =
+  transport extends { handle: infer handle } ? { handle: handle } : {}
+
 /** Consumer surface shared by single and multi-transport instances. */
 export type ConsumerBase<
   schema extends Schema.Schema | undefined,
@@ -172,17 +175,18 @@ export type ConsumerChildMap<
 }
 
 /**
- * Consumer-side `Wata`. Returned by {@link create}. A single transport
- * exposes `send` / `notify` at the top level; multiple transports expose
- * named child sessions such as `wata.webhookCallback.send`.
+ * Consumer-side `Wata`. Returned by {@link create}. Every transport exposes
+ * a named child session such as `wata.webhookCallback.send`; a single
+ * transport also exposes `send` / `notify` at the top level.
  */
 export type Consumer<
   schema extends Schema.Schema | undefined = undefined,
   transports extends ConsumerTransports = SingleConsumerTransports,
 > = ConsumerBase<schema, transports> &
+  ConsumerChildMap<schema, transports> &
   (transports extends readonly [infer transport extends Transport.Transport<'consumer', string>]
     ? ConsumerSession<schema, transport>
-    : ConsumerChildMap<schema, transports>)
+    : {})
 
 export declare namespace Consumer {
   /** Method names known to a consumer (any string when no schema supplied). */
@@ -295,6 +299,7 @@ export function create<
     return {
       ...session,
       fetch: httpFetch as Consumer<schema, transports>['fetch'],
+      [session.transport.name]: session,
       listener: httpListener as Consumer<schema, transports>['listener'],
       transports,
     } as unknown as Consumer<schema, transports>
@@ -468,42 +473,55 @@ function createConsumerSession<
   }
 
   return {
-    async close(cause) {
+    async close(cause?: Error) {
       if (!state.started) return
       state.started = false
       rejectPending(cause ?? new Transport.ClosedError('wata closed locally'))
       await transport.close(cause)
       emitter.emit('close', cause)
     },
-    async notify(opts) {
+    async notify<
+      const method extends Consumer.MethodName<schema>,
+      const params extends Consumer.ParamsOf<schema, method>,
+    >(options: Consumer.NotifyOptions<method, params>) {
       if (!state.started) await start()
-      if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
+      if (schema) validateParamsIfKnown(schema, options.method, options.params)
       await transport.send(
-        Envelope.rpcRequests([Rpc.notification({ method: opts.method, params: opts.params })]),
+        Envelope.rpcRequests([
+          Rpc.notification({ method: options.method, params: options.params }),
+        ]),
       )
     },
     off: emitter.off,
-    on(type, listener) {
+    on<type extends keyof LifecycleEventMap>(
+      type: type,
+      listener: Listener<LifecycleEventMap[type]>,
+    ) {
       const controller = new AbortController()
       emitter.on(type, listener, { signal: controller.signal })
       return controller
     },
     role: 'consumer',
     schema,
-    async send(opts) {
+    async send<
+      const method extends Consumer.MethodName<schema>,
+      const params extends Consumer.ParamsOf<schema, method>,
+    >(options: Consumer.SendOptions<method, params>) {
       if (!state.started) await start()
 
-      const id = opts.id ?? nextId++
-      if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
+      const id = options.id ?? nextId++
+      if (schema) validateParamsIfKnown(schema, options.method, options.params)
 
       const deferred = new Promise<SendResult<unknown>>((resolve, reject) => {
         pending.set(id, { reject, resolve })
       })
-      methodById.set(id, opts.method)
+      methodById.set(id, options.method)
 
       try {
         await transport.send(
-          Envelope.rpcRequests([Rpc.request({ id, method: opts.method, params: opts.params })]),
+          Envelope.rpcRequests([
+            Rpc.request({ id, method: options.method, params: options.params }),
+          ]),
         )
       } catch (cause) {
         pending.delete(id)
@@ -511,11 +529,12 @@ function createConsumerSession<
         throw cause
       }
 
-      return (await deferred) as SendResult<Consumer.ResultOf<schema, typeof opts.method>>
+      return (await deferred) as SendResult<Consumer.ResultOf<schema, typeof options.method>>
     },
     start,
     transport,
-  }
+    ...('handle' in transport ? { handle: transport.handle } : {}),
+  } as unknown as ConsumerSession<schema, transport>
 }
 
 export declare namespace create {

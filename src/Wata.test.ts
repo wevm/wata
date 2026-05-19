@@ -97,6 +97,7 @@ describe('create', () => {
     expect(wata.role).toMatchInlineSnapshot(`"consumer"`)
     expect(typeof wata.start).toMatchInlineSnapshot(`"function"`)
     expect(typeof wata.send).toMatchInlineSnapshot(`"function"`)
+    expect(typeof wata.loopback.send).toMatchInlineSnapshot(`"function"`)
   })
 
   test('wata/host Wata.create returns a host', () => {
@@ -105,6 +106,7 @@ describe('create', () => {
     expect(wata.role).toMatchInlineSnapshot(`"host"`)
     expect(typeof wata.start).toMatchInlineSnapshot(`"function"`)
     expect(typeof wata.on).toMatchInlineSnapshot(`"function"`)
+    expect(wata.loopback).toBe(host)
   })
 
   test('multiple consumer transports expose named child sessions', async () => {

@@ -8,13 +8,15 @@ const hostUrl = process.env.EXPO_PUBLIC_HOST_URL ?? 'http://localhost:4748/auth/
 const publicKey =
   process.env.EXPO_PUBLIC_HOST_PUBLIC_KEY ?? 'oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA'
 
-const transport = mobileLink({
-  callbackUrl,
-  identity: { deepLinkUrl: hostUrl, publicKey },
-  open: (url) => Linking.openURL(url),
+const wata = Wata.create({
+  transports: [
+    mobileLink({
+      callbackUrl,
+      identity: { deepLinkUrl: hostUrl, publicKey },
+      open: (url) => Linking.openURL(url),
+    }),
+  ],
 })
-
-const wata = Wata.create({ transports: [transport] })
 
 export default function App() {
   const [log, setLog] = useState(`callback: ${callbackUrl}\nhost: ${hostUrl}`)
@@ -22,11 +24,13 @@ export default function App() {
   useEffect(() => {
     const subscription = Linking.addEventListener('url', ({ url }) => {
       setLog((value) => `${value}\ncallback ${url}`)
-      transport.handle(url).catch((error: Error) => setLog((value) => `${value}\n${error.message}`))
+      wata.mobileLink
+        .handle(url)
+        .catch((error: Error) => setLog((value) => `${value}\n${error.message}`))
     })
     Linking.getInitialURL().then((url) => {
       if (url)
-        transport
+        wata.mobileLink
           .handle(url)
           .catch((error: Error) => setLog((value) => `${value}\n${error.message}`))
     })

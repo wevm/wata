@@ -24,9 +24,7 @@ const schema = Schema.create({
 
 type Pair = {
   consumer: Wata.Consumer<typeof schema, readonly [ReturnType<typeof mobileLink>]>
-  consumerTransport: ReturnType<typeof mobileLink>
   host: HostWata.Host<typeof schema, readonly [ReturnType<typeof hostMobileLink>]>
-  hostTransport: ReturnType<typeof hostMobileLink>
   opened: string[]
 }
 
@@ -34,33 +32,37 @@ function createPair(options: createPair.Options = {}): Pair {
   const keypair = Ed25519.createKeyPair()
   const publicKey = identityPublicKey(keypair.privateKey)
   const opened: string[] = []
-  let consumerTransport!: ReturnType<typeof mobileLink>
-  let hostTransport!: ReturnType<typeof hostMobileLink>
+  let consumer!: Wata.Consumer<typeof schema, readonly [ReturnType<typeof mobileLink>]>
+  let host!: HostWata.Host<typeof schema, readonly [ReturnType<typeof hostMobileLink>]>
 
   const open = async (url: string) => {
     const next = options.tamper?.(url) ?? url
     opened.push(next)
-    if (next.startsWith(hostUrl)) await hostTransport.handle(next)
-    else await consumerTransport.handle(next)
+    if (next.startsWith(hostUrl)) await host.mobileLink.handle(next)
+    else await consumer.mobileLink.handle(next)
   }
 
-  consumerTransport = mobileLink({
-    callbackUrl,
-    identity: { deepLinkUrl: hostUrl, publicKey },
-    open,
+  consumer = Wata.create({
+    schema,
+    transports: [
+      mobileLink({
+        callbackUrl,
+        identity: { deepLinkUrl: hostUrl, publicKey },
+        open,
+      }),
+    ],
   })
-  hostTransport = hostMobileLink({
-    open,
-    responseTimeout: 50,
-    scheme: 'examplewallet',
-    universalLink: hostUrl,
-  })
-
-  const consumer = Wata.create({ schema, transports: [consumerTransport] })
-  const host = HostWata.create({
+  host = HostWata.create({
     privateKey: keypair.privateKey,
     schema,
-    transports: [hostTransport],
+    transports: [
+      hostMobileLink({
+        open,
+        responseTimeout: 50,
+        scheme: 'examplewallet',
+        universalLink: hostUrl,
+      }),
+    ],
   })
 
   host.on('request', (event) => {
@@ -68,7 +70,7 @@ function createPair(options: createPair.Options = {}): Pair {
     return undefined
   })
 
-  return { consumer, consumerTransport, host, hostTransport, opened }
+  return { consumer, host, opened }
 }
 
 declare namespace createPair {
@@ -114,34 +116,39 @@ describe('mobileLink', () => {
       version: '1.0',
     }
     const fetched: string[] = []
-    let consumerTransport!: ReturnType<typeof mobileLink>
-    let hostTransport!: ReturnType<typeof hostMobileLink>
+    let consumer!: Wata.Consumer<typeof schema, readonly [ReturnType<typeof mobileLink>]>
+    let host!: HostWata.Host<typeof schema, readonly [ReturnType<typeof hostMobileLink>]>
     const open = async (url: string) => {
-      if (url.startsWith(hostUrl)) await hostTransport.handle(url)
-      else await consumerTransport.handle(url)
+      if (url.startsWith(hostUrl)) await host.mobileLink.handle(url)
+      else await consumer.mobileLink.handle(url)
     }
-    consumerTransport = mobileLink({
-      callbackUrl,
-      fetch: async (input) => {
-        fetched.push(String(input))
-        return new Response(JSON.stringify(document), {
-          headers: { 'content-type': 'application/json' },
-        })
-      },
-      host: 'https://wallet.example',
-      open,
+    consumer = Wata.create({
+      schema,
+      transports: [
+        mobileLink({
+          callbackUrl,
+          fetch: async (input) => {
+            fetched.push(String(input))
+            return new Response(JSON.stringify(document), {
+              headers: { 'content-type': 'application/json' },
+            })
+          },
+          host: 'https://wallet.example',
+          open,
+        }),
+      ],
     })
-    hostTransport = hostMobileLink({
-      open,
-      responseTimeout: 50,
-      scheme: 'examplewallet',
-      universalLink: hostUrl,
-    })
-    const consumer = Wata.create({ schema, transports: [consumerTransport] })
-    const host = HostWata.create({
+    host = HostWata.create({
       privateKey: keypair.privateKey,
       schema,
-      transports: [hostTransport],
+      transports: [
+        hostMobileLink({
+          open,
+          responseTimeout: 50,
+          scheme: 'examplewallet',
+          universalLink: hostUrl,
+        }),
+      ],
     })
     host.on('request', (event) => {
       if (event.method === 'ping') return { ok: true, transport: event.transport }
@@ -271,30 +278,36 @@ describe('mobileLink', () => {
     const keypair = Ed25519.createKeyPair()
     const publicKey = identityPublicKey(keypair.privateKey)
     const redirects: unknown[] = []
-    let consumerTransport!: ReturnType<typeof mobileLink>
-    const hostTransport = hostMobileLink({
-      responseTimeout: 50,
-      scheme: 'examplewallet',
-      universalLink: hostUrl,
+    let consumer!: Wata.Consumer<typeof schema, readonly [ReturnType<typeof mobileLink>]>
+    let host!: HostWata.Host<typeof schema, readonly [ReturnType<typeof hostMobileLink>]>
+    consumer = Wata.create({
+      schema,
+      transports: [
+        mobileLink({
+          callbackUrl,
+          identity: { deepLinkUrl: hostUrl, publicKey },
+          open: async (url) => {
+            const response = await host.mobileLink.fetch(new Request(url))
+            const location = response.headers.get('location')
+            redirects.push({
+              location: location ? new URL(location).protocol : null,
+              status: response.status,
+            })
+            if (location) await consumer.mobileLink.handle(location)
+          },
+        }),
+      ],
     })
-    consumerTransport = mobileLink({
-      callbackUrl,
-      identity: { deepLinkUrl: hostUrl, publicKey },
-      open: async (url) => {
-        const response = await hostTransport.fetch(new Request(url))
-        const location = response.headers.get('location')
-        redirects.push({
-          location: location ? new URL(location).protocol : null,
-          status: response.status,
-        })
-        if (location) await consumerTransport.handle(location)
-      },
-    })
-    const consumer = Wata.create({ schema, transports: [consumerTransport] })
-    const host = HostWata.create({
+    host = HostWata.create({
       privateKey: keypair.privateKey,
       schema,
-      transports: [hostTransport],
+      transports: [
+        hostMobileLink({
+          responseTimeout: 50,
+          scheme: 'examplewallet',
+          universalLink: hostUrl,
+        }),
+      ],
     })
     host.on('request', (event) => {
       if (event.method === 'ping') return { ok: true, transport: event.transport }

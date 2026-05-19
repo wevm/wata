@@ -7,16 +7,19 @@ const callbackUrl = 'exampleapp://callback'
 const privateKey = `0x${'11'.repeat(32)}` as `0x${string}`
 const publicKey = '0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc'
 
-let consumerTransport!: ReturnType<typeof mobileLink>
-let hostTransport!: ReturnType<typeof hostMobileLink>
+type Consumer = Wata.Consumer<undefined, readonly [ReturnType<typeof mobileLink>]>
+type Host = HostWata.Host<undefined, readonly [ReturnType<typeof hostMobileLink>]>
+
+let consumer!: Consumer
+let host!: Host
 
 const open = async (url: string) => {
   log.textContent += `open ${url}\n`
-  if (url.startsWith(hostUrl)) await hostTransport.handle(url)
-  else await consumerTransport.handle(url)
+  if (url.startsWith(hostUrl)) await host.mobileLink.handle(url)
+  else await consumer.mobileLink.handle(url)
 }
 
-const consumer = Wata.create({
+consumer = Wata.create({
   transports: [
     mobileLink({
       callbackUrl,
@@ -26,7 +29,7 @@ const consumer = Wata.create({
   ],
 })
 
-const host = HostWata.create({
+host = HostWata.create({
   privateKey,
   transports: [
     hostMobileLink({
@@ -36,9 +39,6 @@ const host = HostWata.create({
     }),
   ],
 })
-
-consumerTransport = consumer.transport
-hostTransport = host.transports[0]!
 
 host.on('request', (event) => {
   if (event.method === 'ping')

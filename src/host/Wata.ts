@@ -132,10 +132,15 @@ export type HostTransports = readonly [
   ...Transport.Transport<'host', string>[],
 ]
 
-/** Host-side `Wata`. Returned by {@link create}. */
+/** Host-side `Wata`. Returned by {@link create}; exposes transports by name. */
 export type Host<
   schema extends Schema.Schema | undefined = undefined,
   transports extends HostTransports = HostTransports,
+> = HostBase<schema, transports> & HostTransportMap<transports>
+
+type HostBase<
+  schema extends Schema.Schema | undefined,
+  transports extends HostTransports,
 > = {
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
@@ -214,6 +219,10 @@ export type Host<
   start: () => Promise<void>
   /** Configured transports, in user-supplied order. */
   transports: transports
+}
+
+type HostTransportMap<transports extends HostTransports> = {
+  [name in transports[number]['name']]: Extract<transports[number], { name: name }>
 }
 
 export declare namespace reject {
@@ -608,7 +617,7 @@ export function create<
     httpListener = wrapped.listener
   }
 
-  return {
+  const host: HostBase<schema, transports> = {
     async close(cause) {
       pending.clear()
       for (const runtime of runtimes) runtime.started = false
@@ -649,6 +658,8 @@ export function create<
     start,
     transports,
   }
+  for (const transport of transports) Object.assign(host, { [transport.name]: transport })
+  return host as unknown as Host<schema, transports>
 }
 
 export declare namespace create {
