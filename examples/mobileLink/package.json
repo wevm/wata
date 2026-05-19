@@ -1,0 +1,19 @@
+{
+  "name": "example-mobile-link",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check:types": "tsc",
+    "dev": "vite dev",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "wata": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}

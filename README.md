@@ -21,6 +21,7 @@ bun i wata
 | `postMessage`     | Same-device browser session over a `Window`, `WindowProxy`, or `MessagePort` (popup, iframe, channel). | Browser ⇄ Browser |
 | `deviceCode`      | OAuth 2.0 Device Authorization Grant (RFC 8628) over HTTP, with PKCE and a bring-your-own approval UI. | CLI ⇄ Browser     |
 | `webhookCallback` | Signed HTTP registration + callback flow for consumers that can receive webhooks.                      | Server ⇄ Server   |
+| `mobileLink`      | Encrypted ongoing session over deep links or universal links, with signed host identity bootstrap.     | Mobile ⇄ Web      |
 
 ## Usage
 
@@ -208,6 +209,56 @@ const wata = Wata.create({
       },
       path: '/auth/webhook',
       store: Kv.memory(),
+    }),
+  ],
+})
+
+wata.on('request', async (event) => {
+  if (event.method === 'wallet_connect')
+    await event.respond(['0x0000000000000000000000000000000000000001'])
+})
+```
+
+### `mobileLink`
+
+Mobile session over deep links or universal links. The consumer opens the host link with an ephemeral key share, verifies the host identity signature, then exchanges encrypted URL frames.
+
+[See example →](./examples/mobileLink)
+
+#### Consumer
+
+```ts
+import { Wata, mobileLink } from 'wata'
+
+const wata = Wata.create({
+  transports: [
+    mobileLink({
+      callbackUrl: 'exampleapp://callback',
+      host: 'https://wallet.example',
+      open: (url) => Linking.openURL(url),
+    }),
+  ],
+})
+
+const { result } = await wata.send({
+  method: 'wallet_connect',
+  params: [],
+})
+```
+
+#### Host
+
+```ts
+import { Wata, mobileLink } from 'wata/host'
+
+const wata = Wata.create({
+  baseUrl: 'https://wallet.example',
+  meta: { name: 'Example Wallet' },
+  privateKey,
+  transports: [
+    mobileLink({
+      path: '/auth/mobile-link',
+      scheme: 'examplewallet',
     }),
   ],
 })

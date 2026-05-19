@@ -1,0 +1,28 @@
+{
+  "name": "mobile-link-playground",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "scripts": {
+    "check:types": "tsc -p tsconfig.consumer.json && tsc -p tsconfig.host.json",
+    "dev": "pnpm /^dev:/",
+    "dev:consumer": "expo start",
+    "dev:host": "node --import tsx src/host.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "expo": "latest",
+    "expo-linking": "latest",
+    "hono": "^4.6.14",
+    "ox": "catalog:",
+    "react": "latest",
+    "react-native": "latest",
+    "wata": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "latest",
+    "tsx": "^4.19.2",
+    "typescript": "catalog:"
+  }
+}
