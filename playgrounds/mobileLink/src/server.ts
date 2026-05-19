@@ -29,8 +29,8 @@ console.log(`[server] set EXPO_PUBLIC_HOST_PUBLIC_KEY=${publicKey} if PRIVATE_KE
 const wata = HostWata.create({
   baseUrl,
   meta: {
-    description: 'Mobile-link playground wallet',
-    name: 'Example Wallet',
+    description: 'Mobile-link playground bank',
+    name: 'Ironbank',
     websiteUrl: baseUrl,
   },
   privateKey,
@@ -47,8 +47,14 @@ const wata = HostWata.create({
 
 wata.on('request', (event) => {
   console.log(`[server] request: ${event.method}`, event.params)
-  if (event.method === 'ping')
-    return { at: new Date().toISOString(), message: `pong: ${event.params[0]}`, transport: event.transport }
+  if (event.method === 'authorizeAccountAccess')
+    return {
+      accountName: 'Ironbank Everyday',
+      approved: true,
+      at: new Date().toISOString(),
+      message: `${event.params[0].appName} can now view your Ironbank account.`,
+      permissions: event.params[0].permissions,
+    }
   return undefined
 })
 

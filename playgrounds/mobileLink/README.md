@@ -2,16 +2,16 @@
 
 This playground runs two Expo apps:
 
-- consumer app: `exampleapp`
-- wallet app: `examplewallet`
+- Spendlet: `spendlet`
+- Ironbank: `ironbank`
 
-Run the wallet app:
+Run Ironbank:
 
 ```sh
 pnpm --filter mobile-link-playground dev:host
 ```
 
-Run the consumer app:
+Run Spendlet:
 
 ```sh
 pnpm --filter mobile-link-playground dev:consumer
@@ -20,14 +20,14 @@ pnpm --filter mobile-link-playground dev:consumer
 The dev scripts use LAN hosting so iOS Simulator receives a reachable IPv4
 Metro URL instead of a `127.0.0.1` URL that may not match Metro's local bind.
 
-Open the wallet app first, then open the consumer app and press "Send". The
-consumer opens `examplewallet:///auth/mobile-link`, the wallet shows the request
-payload, then tapping "Send" opens the consumer callback URL with the response.
+Open Ironbank first, then open Spendlet and press "Connect Ironbank". Spendlet
+opens `ironbank:///auth/mobile-link`, Ironbank shows an account access request,
+then tapping "Allow access" opens the Spendlet callback URL with the response.
 
 Expo Go can smoke-load each role, but it cannot complete the custom-scheme
-handoff because only installed apps/development builds register `examplewallet`
-and `exampleapp`. Use development builds or installed simulator apps for the
-full two-app ping flow.
+handoff because only installed apps/development builds register `ironbank` and
+`spendlet`. Use development builds or installed simulator apps for the full
+two-app authorization flow.
 
 An optional Hono discovery server is still available:
 
@@ -35,6 +35,6 @@ An optional Hono discovery server is still available:
 pnpm --filter mobile-link-playground serve:discovery
 ```
 
-If you point the consumer at the server instead of the wallet app, set
+If you point Spendlet at the server instead of Ironbank, set
 `EXPO_PUBLIC_HOST_URL` to your server URL, for example
 `http://192.168.1.10:4748/auth/mobile-link`.
