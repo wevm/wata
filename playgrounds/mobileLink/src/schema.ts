@@ -5,10 +5,10 @@ import * as Schema from '../../../src/core/Schema.js'
 export const schema = Schema.create({
   methods: {
     ping: Schema.method({
-      params: z.tuple([]),
+      params: z.tuple([z.string()]),
       result: z.object({
         at: z.string(),
-        ok: z.literal(true),
+        message: z.string(),
         transport: z.string(),
       }),
     }),

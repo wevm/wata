@@ -48,7 +48,7 @@ const wata = HostWata.create({
 wata.on('request', (event) => {
   console.log(`[server] request: ${event.method}`, event.params)
   if (event.method === 'ping')
-    return { at: new Date().toISOString(), ok: true, transport: event.transport }
+    return { at: new Date().toISOString(), message: `pong: ${event.params[0]}`, transport: event.transport }
   return undefined
 })
 
