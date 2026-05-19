@@ -18,6 +18,7 @@ import * as Events from '../../core/Events.js'
 import * as Http from '../../core/Http.js'
 import * as MobileLink from '../../core/internal/mobileLink.js'
 import * as SecureChannel from '../../core/internal/secureChannel.js'
+import * as Rpc from '../../core/Rpc.js'
 import * as Session from '../../core/Session.js'
 import * as Transport from '../../core/Transport.js'
 
@@ -60,6 +61,7 @@ export function mobileLink(options: Options): MobileLinkTransport {
   const emitter = Events.create<Transport.EventMap>()
   const path = normalizePath(options.path ?? '/auth/mobile-link')
   const responseTimeout = Math.max(0, options.responseTimeout ?? 10_000)
+  const requests = new Map<string, { id: Rpc.Id; session: string }>()
   const sessions = new Map<string, HostSession>()
   const state: State = {
     activeSession: undefined,
@@ -162,7 +164,7 @@ export function mobileLink(options: Options): MobileLinkTransport {
     if (!session) throw new Transport.ClosedError('unknown mobileLink session')
     state.activeSession = frame.session
     const response = options_handle.wait ? waitForResponse(frame.session) : undefined
-    emitter.emit('message', session.channel.open(frame.message))
+    emitter.emit('message', routeRequests(frame.session, session.channel.open(frame.message)))
     return response ? await response : undefined
   }
 
@@ -191,6 +193,7 @@ export function mobileLink(options: Options): MobileLinkTransport {
     async close(cause) {
       if (state.closed) return
       state.closed = true
+      requests.clear()
       sessions.clear()
       for (const waiter of waiters.values()) waiter(undefined)
       waiters.clear()
@@ -213,20 +216,71 @@ export function mobileLink(options: Options): MobileLinkTransport {
     routes: [path],
     async send(envelope: Envelope.Envelope) {
       if (state.closed) throw new Transport.ClosedError('mobileLink transport already closed')
-      const sessionId = state.activeSession
-      const session = sessionId ? sessions.get(sessionId) : undefined
-      if (!session) throw new Transport.ClosedError('mobileLink transport has no active session')
-      await deliver(
-        session.session,
-        MobileLink.append(session.callbackUrl, {
-          message: session.channel.seal(envelope),
-          session: session.session,
-          type: 'message',
-        }),
-      )
+      for (const [sessionId, envelope_session] of routeResponses(envelope)) {
+        const session = sessions.get(sessionId)
+        if (!session) throw new Transport.ClosedError('mobileLink transport has no active session')
+        await deliver(
+          session.session,
+          MobileLink.append(session.callbackUrl, {
+            message: session.channel.seal(envelope_session),
+            session: session.session,
+            type: 'message',
+          }),
+        )
+      }
     },
     start,
   }
+
+  function routeRequests(session: string, envelope: Envelope.Envelope): Envelope.Envelope {
+    if (envelope.type !== 'rpc-requests') return envelope
+    return Envelope.rpcRequests(
+      envelope.payload.map((message) => {
+        if (!('id' in message)) return message
+        const id = requestId(session, message.id)
+        requests.set(id, { id: message.id, session })
+        return { ...message, id }
+      }),
+    )
+  }
+
+  function routeResponses(envelope: Envelope.Envelope): Map<string, Envelope.Envelope> {
+    if (envelope.type !== 'rpc-responses') {
+      const session = activeSession()
+      return new Map([[session.session, envelope]])
+    }
+
+    const grouped = new Map<string, Rpc.Response[]>()
+    for (const response of envelope.payload) {
+      const routed = routeResponse(response)
+      const responses = grouped.get(routed.session) ?? []
+      responses.push(routed.response)
+      grouped.set(routed.session, responses)
+    }
+
+    return new Map(
+      Array.from(grouped, ([session, responses]) => [session, Envelope.rpcResponses(responses)]),
+    )
+  }
+
+  function routeResponse(response: Rpc.Response): { response: Rpc.Response; session: string } {
+    if (response.id === null) return { response, session: activeSession().session }
+    const request = requests.get(String(response.id))
+    if (!request) return { response, session: activeSession().session }
+    requests.delete(String(response.id))
+    return { response: { ...response, id: request.id }, session: request.session }
+  }
+
+  function activeSession(): HostSession {
+    const sessionId = state.activeSession
+    const session = sessionId ? sessions.get(sessionId) : undefined
+    if (!session) throw new Transport.ClosedError('mobileLink transport has no active session')
+    return session
+  }
+}
+
+function requestId(session: string, id: Rpc.Id): string {
+  return `mobileLink:${session}:${JSON.stringify(id)}`
 }
 
 function defaultOpen(url: string): void {

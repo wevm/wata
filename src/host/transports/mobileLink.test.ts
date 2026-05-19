@@ -28,6 +28,8 @@ type Pair = {
   opened: string[]
 }
 
+type PingResult = { ok: true; transport: string }
+
 function createPair(options: createPair.Options = {}): Pair {
   const keypair = Ed25519.createKeyPair()
   const publicKey = identityPublicKey(keypair.privateKey)
@@ -94,6 +96,97 @@ describe('mobileLink', () => {
     `)
 
     await consumer.close()
+    await host.close()
+  })
+
+  test('routes delayed responses to the requesting mobile-link session', async () => {
+    const keypair = Ed25519.createKeyPair()
+    const publicKey = identityPublicKey(keypair.privateKey)
+    const callbackUrl_a = 'exampleapp-a://callback'
+    const callbackUrl_b = 'exampleapp-b://callback'
+    const replies: ((result: PingResult) => Promise<void>)[] = []
+
+    const open_host = async (url: string) => {
+      if (url.startsWith(callbackUrl_a)) {
+        await consumer_a.mobileLink.handle(url)
+        return
+      }
+      if (url.startsWith(callbackUrl_b)) {
+        await consumer_b.mobileLink.handle(url)
+        return
+      }
+      throw new Error(`unexpected host open URL: ${url}`)
+    }
+    const open_consumer = async (url: string) => {
+      await host.mobileLink.handle(url)
+    }
+
+    const consumer_a = Wata.create({
+      schema,
+      transports: [
+        mobileLink({
+          callbackUrl: callbackUrl_a,
+          identity: { deepLinkUrl: hostUrl, publicKey },
+          open: open_consumer,
+        }),
+      ],
+    })
+    const consumer_b = Wata.create({
+      schema,
+      transports: [
+        mobileLink({
+          callbackUrl: callbackUrl_b,
+          identity: { deepLinkUrl: hostUrl, publicKey },
+          open: open_consumer,
+        }),
+      ],
+    })
+    const host = HostWata.create({
+      privateKey: keypair.privateKey,
+      schema,
+      transports: [
+        hostMobileLink({
+          open: open_host,
+          responseTimeout: 50,
+          scheme: 'examplewallet',
+          universalLink: hostUrl,
+        }),
+      ],
+    })
+    host.on('request', (event) => {
+      replies.push(event.respond)
+      return undefined
+    })
+
+    const pending_a = consumer_a.send({ id: 1, method: 'ping', params: [] })
+    await waitFor(() => replies.length === 1)
+    const pending_b = consumer_b.send({ id: 1, method: 'ping', params: [] })
+    await waitFor(() => replies.length === 2)
+
+    await replies[1]!({ ok: true, transport: 'second' })
+    await replies[0]!({ ok: true, transport: 'first' })
+
+    expect(await Promise.all([pending_a, pending_b])).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "result": {
+            "ok": true,
+            "transport": "first",
+          },
+        },
+        {
+          "id": 1,
+          "result": {
+            "ok": true,
+            "transport": "second",
+          },
+        },
+      ]
+    `)
+
+    await consumer_a.close()
+    await consumer_b.close()
     await host.close()
   })
 
@@ -186,6 +279,25 @@ describe('mobileLink', () => {
 
     await consumer.close()
     await host.close()
+  })
+
+  test('pinned mode can be constructed without global fetch', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'fetch')
+    Object.defineProperty(globalThis, 'fetch', { configurable: true, value: undefined })
+    try {
+      expect(() =>
+        mobileLink({
+          callbackUrl,
+          identity: {
+            deepLinkUrl: hostUrl,
+            publicKey: '0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc',
+          },
+        }),
+      ).not.toThrow()
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'fetch', descriptor)
+      else delete (globalThis as { fetch?: unknown }).fetch
+    }
   })
 
   test('host discovery publishes the mobile-link binding', async () => {

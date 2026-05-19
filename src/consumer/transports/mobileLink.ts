@@ -80,8 +80,6 @@ type State = {
 /** Create a consumer-side `mobileLink` transport. */
 export function mobileLink(options: Options): MobileLinkTransport {
   const emitter = Events.create<Transport.EventMap>()
-  const fetchImpl =
-    'fetch' in options && options.fetch ? options.fetch : globalThis.fetch.bind(globalThis)
   const state: State = {
     channel: undefined,
     closed: false,
@@ -106,7 +104,7 @@ export function mobileLink(options: Options): MobileLinkTransport {
 
     const document =
       typeof options.host === 'string'
-        ? await Discovery.fetchHost(options.host, { fetch: fetchImpl })
+        ? await Discovery.fetchHost(options.host, { fetch: resolveFetch(options.fetch) })
         : options.host
     const binding = document.transports['mobile-link']
     if (!binding)
@@ -271,6 +269,13 @@ export function mobileLink(options: Options): MobileLinkTransport {
     },
     start,
   }
+}
+
+function resolveFetch(fetch_option: typeof fetch | undefined): typeof fetch {
+  const fetch =
+    fetch_option ?? (globalThis as { fetch?: typeof globalThis.fetch | undefined }).fetch
+  if (!fetch) throw new Transport.TransportError('`fetch` is required for mobileLink discovery')
+  return fetch.bind(globalThis)
 }
 
 function defaultOpen(url: string): void {

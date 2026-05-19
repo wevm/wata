@@ -49,21 +49,14 @@ export function create(options: create.Options): Channel {
         throw new Errors.ProtocolError(
           `encrypted envelope came from \`${encrypted.from}\`, expected \`${peerFrom}\``,
         )
+      const plaintext = Aead.open({
+        aad: openAad,
+        ciphertext: encrypted.ciphertext,
+        key: openKey,
+        nonce: encrypted.nonce,
+      })
       inbound.accept(encrypted.nonce)
-      return Envelope.parse(
-        JSON.parse(
-          decoder.decode(
-            Bytes.from(
-              Aead.open({
-                aad: openAad,
-                ciphertext: encrypted.ciphertext,
-                key: openKey,
-                nonce: encrypted.nonce,
-              }),
-            ),
-          ),
-        ),
-      )
+      return Envelope.parse(JSON.parse(decoder.decode(Bytes.from(plaintext))))
     },
     seal(envelope) {
       const nonce = outbound.next()
