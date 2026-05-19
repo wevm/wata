@@ -1,15 +1,35 @@
 # mobileLink playground
 
-Run the host:
+This playground runs two Expo apps:
+
+- consumer app: `exampleapp`
+- wallet app: `examplewallet`
+
+Run the wallet app:
 
 ```sh
 pnpm --filter mobile-link-playground dev:host
 ```
 
-Run the Expo consumer:
+Run the consumer app:
 
 ```sh
 pnpm --filter mobile-link-playground dev:consumer
 ```
 
-For a physical device, set `BASE_URL` on the host and `EXPO_PUBLIC_HOST_URL` on the consumer to your machine's LAN URL, for example `http://192.168.1.10:4748/auth/mobile-link`.
+Open the wallet app first, then open the consumer app and press "Ping wallet".
+The consumer opens `examplewallet:///auth/mobile-link`, the wallet handles the
+request, then the wallet opens the consumer callback URL with the response.
+
+Expo Go can launch each role during development, but true two-app custom-scheme
+handoff is best tested with development builds or installed simulator apps.
+
+An optional Hono discovery server is still available:
+
+```sh
+pnpm --filter mobile-link-playground serve:discovery
+```
+
+If you point the consumer at the server instead of the wallet app, set
+`EXPO_PUBLIC_HOST_URL` to your server URL, for example
+`http://192.168.1.10:4748/auth/mobile-link`.

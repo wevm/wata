@@ -1,12 +1,19 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "jsx": "react-jsx",
     "lib": ["esnext", "dom", "dom.iterable"],
     "module": "esnext",
     "moduleResolution": "bundler",
     "noEmit": true,
     "target": "esnext",
-    "types": ["node"]
+    "types": ["node", "react"]
   },
-  "include": ["src/env.d.ts", "src/host.ts"]
+  "include": [
+    "src/constants.ts",
+    "src/env.d.ts",
+    "src/hostApp.tsx",
+    "src/schema.ts",
+    "src/server.ts"
+  ]
 }

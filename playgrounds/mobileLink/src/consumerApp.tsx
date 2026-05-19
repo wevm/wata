@@ -1,48 +1,52 @@
 import * as ExpoLinking from 'expo-linking'
 import { useEffect, useState } from 'react'
 import { Button, Linking, ScrollView, Text, View } from 'react-native'
-import { Wata, mobileLink } from 'wata'
 
-const callbackUrl = ExpoLinking.createURL('/callback')
-const hostUrl = process.env.EXPO_PUBLIC_HOST_URL ?? 'http://localhost:4748/auth/mobile-link'
-const publicKey =
-  process.env.EXPO_PUBLIC_HOST_PUBLIC_KEY ?? 'oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA'
+import * as MobileLink from '../../../src/consumer/transports/mobileLink.js'
+import * as Wata from '../../../src/Wata.js'
+import { callbackPath, hostPublicKey, hostUrl } from './constants'
+import { schema } from './schema'
+
+const callbackUrl = ExpoLinking.createURL(callbackPath)
 
 const wata = Wata.create({
+  schema,
   transports: [
-    mobileLink({
+    MobileLink.mobileLink({
       callbackUrl,
-      identity: { deepLinkUrl: hostUrl, publicKey },
+      identity: { deepLinkUrl: hostUrl, publicKey: hostPublicKey },
       open: (url) => Linking.openURL(url),
     }),
   ],
 })
 
-export default function App() {
-  const [log, setLog] = useState(`callback: ${callbackUrl}\nhost: ${hostUrl}`)
+export default function ConsumerApp() {
+  const [log, setLog] = useState(`consumer callback: ${callbackUrl}\nhost app: ${hostUrl}`)
 
   useEffect(() => {
     const subscription = Linking.addEventListener('url', ({ url }) => {
-      setLog((value) => `${value}\ncallback ${url}`)
+      setLog((value) => `${value}\nconsumer received ${url}`)
       wata.mobileLink
         .handle(url)
         .catch((error: Error) => setLog((value) => `${value}\n${error.message}`))
     })
     Linking.getInitialURL().then((url) => {
-      if (url)
-        wata.mobileLink
-          .handle(url)
-          .catch((error: Error) => setLog((value) => `${value}\n${error.message}`))
+      if (!url) return
+      setLog((value) => `${value}\nconsumer initial ${url}`)
+      wata.mobileLink
+        .handle(url)
+        .catch((error: Error) => setLog((value) => `${value}\n${error.message}`))
     })
     return () => subscription.remove()
   }, [])
 
   return (
     <View style={{ flex: 1, gap: 12, padding: 24, paddingTop: 64 }}>
+      <Text>Consumer app</Text>
       <Button
-        title="Ping"
+        title="Ping wallet"
         onPress={() => {
-          setLog(`callback: ${callbackUrl}\nhost: ${hostUrl}\nwaiting...`)
+          setLog(`consumer callback: ${callbackUrl}\nhost app: ${hostUrl}\nwaiting...`)
           wata
             .send({ method: 'ping', params: [] })
             .then(({ result }) => setLog((value) => `${value}\n${JSON.stringify(result, null, 2)}`))
