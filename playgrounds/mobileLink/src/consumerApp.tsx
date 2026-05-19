@@ -22,7 +22,6 @@ const wata = Wata.create({
 
 export default function ConsumerApp() {
   const [message, setMessage] = useState('ping')
-  const [request, setRequest] = useState<string | undefined>()
   const [response, setResponse] = useState<
     { at: string; message: string; transport: string } | undefined
   >()
@@ -60,7 +59,6 @@ export default function ConsumerApp() {
       <Button
         title="Send"
         onPress={() => {
-          setRequest(message)
           setResponse(undefined)
           setStatus('Opening wallet...')
           wata
@@ -73,14 +71,6 @@ export default function ConsumerApp() {
         }}
       />
       <ScrollView contentContainerStyle={styles.stack}>
-        <View style={styles.panel}>
-          <Text style={styles.panelTitle}>Sent</Text>
-          <Text selectable style={styles.payload}>
-            {request
-              ? `method: ping\nmessage: ${request}`
-              : `method: ping\nmessage: ${message}`}
-          </Text>
-        </View>
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>Received</Text>
           <Text selectable style={styles.payload}>

@@ -25,7 +25,6 @@ export default function HostApp() {
   const [request, setRequest] = useState<
     { message: string; method: string; transport: string } | undefined
   >()
-  const [response, setResponse] = useState<string | undefined>()
   const [status, setStatus] = useState('Waiting for request')
 
   useEffect(() => {
@@ -39,7 +38,6 @@ export default function HostApp() {
           method: event.method,
           transport: event.transport,
         })
-        setResponse(undefined)
       }
       return undefined
     })
@@ -82,7 +80,6 @@ export default function HostApp() {
           const event = pending
           const value = message
           setPending(undefined)
-          setResponse(value)
           setStatus('Sending response...')
           event
             .respond({ at: new Date().toISOString(), message: value, transport: event.transport })
@@ -96,13 +93,7 @@ export default function HostApp() {
           <Text selectable style={styles.payload}>
             {request
               ? `method: ${request.method}\nmessage: ${request.message}\ntransport: ${request.transport}`
-              : 'No request yet'}
-          </Text>
-        </View>
-        <View style={styles.panel}>
-          <Text style={styles.panelTitle}>Sent</Text>
-          <Text selectable style={styles.payload}>
-            {response ? `message: ${response}` : `message: ${message}`}
+            : 'No request yet'}
           </Text>
         </View>
         <Text selectable style={styles.meta}>
