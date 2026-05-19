@@ -2,18 +2,25 @@
   "name": "example-mobile-link",
   "private": true,
   "type": "module",
+  "main": "./index.js",
   "scripts": {
-    "build": "vite build",
+    "build": "pnpm check:types",
     "check:types": "tsc",
-    "dev": "vite dev",
-    "preview": "vite preview"
+    "dev": "pnpm /^dev:/",
+    "dev:consumer": "EXPO_PUBLIC_MOBILE_LINK_ROLE=consumer expo start --lan --port 8091 --clear",
+    "dev:host": "EXPO_PUBLIC_MOBILE_LINK_ROLE=host expo start --lan --port 8092 --clear"
   },
   "dependencies": {
+    "expo": "55.0.24",
+    "expo-crypto": "~55.0.15",
+    "expo-linking": "latest",
+    "react": "19.2.0",
+    "react-native": "0.83.6",
     "wata": "latest"
   },
   "devDependencies": {
     "@types/node": "latest",
-    "typescript": "latest",
-    "vite": "latest"
+    "@types/react": "latest",
+    "typescript": "~5.9.2"
   }
 }

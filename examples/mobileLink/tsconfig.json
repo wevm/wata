@@ -1,12 +1,17 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "jsx": "react-jsx",
     "lib": ["esnext", "dom", "dom.iterable"],
     "module": "esnext",
     "moduleResolution": "bundler",
     "noEmit": true,
+    "paths": {
+      "wata": ["../../dist/index.d.ts"],
+      "wata/host": ["../../dist/host/index.d.ts"]
+    },
     "target": "esnext",
-    "types": ["node"]
+    "types": ["node", "react"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }
