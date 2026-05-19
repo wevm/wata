@@ -21,8 +21,9 @@ The dev scripts use LAN hosting so iOS Simulator receives a reachable IPv4
 Metro URL instead of a `127.0.0.1` URL that may not match Metro's local bind.
 
 Open the wallet app first, then open the consumer app and press "Ping wallet".
-The consumer opens `examplewallet:///auth/mobile-link`, the wallet handles the
-request, then the wallet opens the consumer callback URL with the response.
+The consumer opens `examplewallet:///auth/mobile-link`, the wallet shows a
+pending request, then tapping "Respond to ping" opens the consumer callback URL
+with the response.
 
 Expo Go can smoke-load each role, but it cannot complete the custom-scheme
 handoff because only installed apps/development builds register `examplewallet`
