@@ -131,6 +131,8 @@ export type ConsumerSession<
 type ConsumerTransportExtras<transport extends Transport.Transport<'consumer', string>> =
   transport extends { handle: infer handle } ? { handle: handle } : {}
 
+type LiteralName<name extends string> = string extends name ? never : name
+
 /** Consumer surface shared by single and multi-transport instances. */
 export type ConsumerBase<
   schema extends Schema.Schema | undefined,
@@ -167,12 +169,14 @@ export type ConsumerBase<
 export type ConsumerChildMap<
   schema extends Schema.Schema | undefined,
   transports extends ConsumerTransports,
-> = {
-  [name in transports[number]['name']]: ConsumerSession<
-    schema,
-    Extract<transports[number], { name: name }>
-  >
-}
+> = string extends transports[number]['name']
+  ? {}
+  : {
+      [transport in transports[number] as LiteralName<transport['name']>]: ConsumerSession<
+        schema,
+        transport
+      >
+    }
 
 /**
  * Consumer-side `Wata`. Returned by {@link create}. Every transport exposes

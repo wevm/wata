@@ -221,9 +221,12 @@ type HostBase<
   transports: transports
 }
 
-type HostTransportMap<transports extends HostTransports> = {
-  [name in transports[number]['name']]: Extract<transports[number], { name: name }>
-}
+type HostTransportMap<transports extends HostTransports> =
+  string extends transports[number]['name']
+    ? {}
+    : { [transport in transports[number] as LiteralName<transport['name']>]: transport }
+
+type LiteralName<name extends string> = string extends name ? never : name
 
 export declare namespace reject {
   /** Error payload accepted by {@link Host.reject} / `event.reject`. */

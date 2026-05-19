@@ -7,19 +7,13 @@ const callbackUrl = 'exampleapp://callback'
 const privateKey = `0x${'11'.repeat(32)}` as `0x${string}`
 const publicKey = '0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc'
 
-type Consumer = Wata.Consumer<undefined, readonly [ReturnType<typeof mobileLink>]>
-type Host = HostWata.Host<undefined, readonly [ReturnType<typeof hostMobileLink>]>
-
-let consumer!: Consumer
-let host!: Host
-
 const open = async (url: string) => {
   log.textContent += `open ${url}\n`
   if (url.startsWith(hostUrl)) await host.mobileLink.handle(url)
   else await consumer.mobileLink.handle(url)
 }
 
-consumer = Wata.create({
+const consumer = Wata.create({
   transports: [
     mobileLink({
       callbackUrl,
@@ -29,7 +23,7 @@ consumer = Wata.create({
   ],
 })
 
-host = HostWata.create({
+const host = HostWata.create({
   privateKey,
   transports: [
     hostMobileLink({

@@ -32,8 +32,6 @@ function createPair(options: createPair.Options = {}): Pair {
   const keypair = Ed25519.createKeyPair()
   const publicKey = identityPublicKey(keypair.privateKey)
   const opened: string[] = []
-  let consumer!: Wata.Consumer<typeof schema, readonly [ReturnType<typeof mobileLink>]>
-  let host!: HostWata.Host<typeof schema, readonly [ReturnType<typeof hostMobileLink>]>
 
   const open = async (url: string) => {
     const next = options.tamper?.(url) ?? url
@@ -42,7 +40,7 @@ function createPair(options: createPair.Options = {}): Pair {
     else await consumer.mobileLink.handle(next)
   }
 
-  consumer = Wata.create({
+  const consumer = Wata.create({
     schema,
     transports: [
       mobileLink({
@@ -52,7 +50,7 @@ function createPair(options: createPair.Options = {}): Pair {
       }),
     ],
   })
-  host = HostWata.create({
+  const host = HostWata.create({
     privateKey: keypair.privateKey,
     schema,
     transports: [
@@ -116,13 +114,11 @@ describe('mobileLink', () => {
       version: '1.0',
     }
     const fetched: string[] = []
-    let consumer!: Wata.Consumer<typeof schema, readonly [ReturnType<typeof mobileLink>]>
-    let host!: HostWata.Host<typeof schema, readonly [ReturnType<typeof hostMobileLink>]>
     const open = async (url: string) => {
       if (url.startsWith(hostUrl)) await host.mobileLink.handle(url)
       else await consumer.mobileLink.handle(url)
     }
-    consumer = Wata.create({
+    const consumer = Wata.create({
       schema,
       transports: [
         mobileLink({
@@ -138,7 +134,7 @@ describe('mobileLink', () => {
         }),
       ],
     })
-    host = HostWata.create({
+    const host = HostWata.create({
       privateKey: keypair.privateKey,
       schema,
       transports: [
@@ -278,9 +274,7 @@ describe('mobileLink', () => {
     const keypair = Ed25519.createKeyPair()
     const publicKey = identityPublicKey(keypair.privateKey)
     const redirects: unknown[] = []
-    let consumer!: Wata.Consumer<typeof schema, readonly [ReturnType<typeof mobileLink>]>
-    let host!: HostWata.Host<typeof schema, readonly [ReturnType<typeof hostMobileLink>]>
-    consumer = Wata.create({
+    const consumer = Wata.create({
       schema,
       transports: [
         mobileLink({
@@ -298,7 +292,7 @@ describe('mobileLink', () => {
         }),
       ],
     })
-    host = HostWata.create({
+    const host = HostWata.create({
       privateKey: keypair.privateKey,
       schema,
       transports: [
