@@ -8,6 +8,12 @@ const resolve = config.resolver.resolveRequest
 
 config.watchFolders = [root]
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === '@hono/node-server')
+    return {
+      filePath: path.join(__dirname, 'src/nodeServer.stub.ts'),
+      type: 'sourceFile',
+    }
+
   if (moduleName.endsWith('.js') && moduleName.startsWith('.')) {
     const filePath = path.resolve(context.originModulePath, '..', moduleName.replace(/\.js$/, '.ts'))
     if (fs.existsSync(filePath)) return { filePath, type: 'sourceFile' }

@@ -13,6 +13,7 @@
     "src/constants.ts",
     "src/consumerApp.tsx",
     "src/env.d.ts",
+    "src/nodeServer.stub.ts",
     "src/polyfills.ts",
     "src/schema.ts"
   ]
