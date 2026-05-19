@@ -5,7 +5,7 @@ import { Aead, Discovery, Schema, Wata, mobileLink } from 'wata'
 import { Wata as HostWata, mobileLink as hostMobileLink } from 'wata/host'
 import { z } from 'zod/mini'
 
-import type * as MobileLink from '../../core/internal/MobileLink.js'
+import type * as MobileLink from '../../core/internal/mobileLink.js'
 
 const callbackUrl = 'exampleapp://callback'
 const hostUrl = 'https://wallet.example/auth/mobile-link'
