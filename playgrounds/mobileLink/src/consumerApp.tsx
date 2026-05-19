@@ -25,6 +25,7 @@ export default function ConsumerApp() {
 
   useEffect(() => {
     const subscription = Linking.addEventListener('url', ({ url }) => {
+      if (!url.includes('urpc=')) return
       setLog((value) => `${value}\nconsumer received ${url}`)
       wata.mobileLink
         .handle(url)
@@ -32,6 +33,7 @@ export default function ConsumerApp() {
     })
     Linking.getInitialURL().then((url) => {
       if (!url) return
+      if (!url.includes('urpc=')) return
       setLog((value) => `${value}\nconsumer initial ${url}`)
       wata.mobileLink
         .handle(url)

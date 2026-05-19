@@ -48,3 +48,6 @@ trustPolicy: no-downgrade
 trustPolicyExclude:
   - reselect
   - semver
+
+patchedDependencies:
+  expo-modules-core: patches/expo-modules-core.patch

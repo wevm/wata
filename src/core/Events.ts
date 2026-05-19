@@ -14,6 +14,8 @@
  * them into the rettime-shaped `TypedEvent` map internally.
  */
 
+import './internal/messageEvent.js'
+
 import { Emitter as RettimeEmitter, TypedEvent as RettimeTypedEvent } from 'rettime'
 
 /**

@@ -30,6 +30,7 @@ export default function HostApp() {
       return undefined
     })
     const subscription = Linking.addEventListener('url', ({ url }) => {
+      if (!url.includes('urpc=')) return
       setLog((value) => `${value}\nwallet link ${url}`)
       wata.mobileLink
         .handle(url)
@@ -37,6 +38,7 @@ export default function HostApp() {
     })
     Linking.getInitialURL().then((url) => {
       if (!url) return
+      if (!url.includes('urpc=')) return
       setLog((value) => `${value}\nwallet initial ${url}`)
       wata.mobileLink
         .handle(url)

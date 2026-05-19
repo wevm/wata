@@ -9,5 +9,11 @@
     "target": "esnext",
     "types": ["node", "react"]
   },
-  "include": ["src/constants.ts", "src/consumerApp.tsx", "src/env.d.ts", "src/schema.ts"]
+  "include": [
+    "src/constants.ts",
+    "src/consumerApp.tsx",
+    "src/env.d.ts",
+    "src/polyfills.ts",
+    "src/schema.ts"
+  ]
 }

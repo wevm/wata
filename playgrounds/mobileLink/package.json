@@ -6,13 +6,14 @@
   "scripts": {
     "check:types": "tsc -p tsconfig.consumer.json && tsc -p tsconfig.host.json",
     "dev": "pnpm /^dev:/",
-    "dev:consumer": "EXPO_PUBLIC_MOBILE_LINK_ROLE=consumer expo start --localhost --port 8081 --clear",
-    "dev:host": "EXPO_PUBLIC_MOBILE_LINK_ROLE=host expo start --localhost --port 8082 --clear",
+    "dev:consumer": "EXPO_PUBLIC_MOBILE_LINK_ROLE=consumer expo start --lan --port 8081 --clear",
+    "dev:host": "EXPO_PUBLIC_MOBILE_LINK_ROLE=host expo start --lan --port 8082 --clear",
     "serve:discovery": "node --import tsx src/server.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
-    "expo": "55.0.24",
+    "expo": "55.0.25",
+    "expo-crypto": "~55.0.15",
     "expo-linking": "latest",
     "hono": "^4.6.14",
     "ox": "catalog:",
