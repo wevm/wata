@@ -13,6 +13,14 @@ let serverState: ServerState = { status: 'idle' }
 
 const app = new Hono()
 
+consumer.on('rpc-responses', (responses, meta) => {
+  if (meta.transport !== 'webhookCallback') return
+  const response = responses[0]
+  if (!response) return
+  if ('error' in response) serverState = { error: response.error.message, status: 'error' }
+  else serverState = { result: response.result, status: 'done' }
+})
+
 app.all('/.well-known/*', async (c) => {
   const response = await host.fetch(c.req.raw)
   if (response.status !== 404) return response
@@ -27,15 +35,6 @@ app.post('/demo/server', async (c) => {
 
   serverState = { status: 'pending' }
 
-  const controller = consumer.on('rpc-responses', (responses, meta) => {
-    if (meta.transport !== 'webhookCallback') return
-    const response = responses[0]
-    if (!response) return
-    controller.abort()
-    if ('error' in response) serverState = { error: response.error.message, status: 'error' }
-    else serverState = { result: response.result, status: 'done' }
-  })
-
   try {
     const registration = await consumer.webhookCallback.send({
       method: 'ping',
@@ -44,7 +43,6 @@ app.post('/demo/server', async (c) => {
     serverState = { status: 'pending', verificationUri: registration.verificationUri }
     return c.json(serverState)
   } catch (error) {
-    controller.abort()
     serverState = { error: (error as Error).message, status: 'error' }
     return c.json(serverState, 500)
   }
