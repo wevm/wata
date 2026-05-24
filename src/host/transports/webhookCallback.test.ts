@@ -188,13 +188,17 @@ function pair(options: PairOptions = {}) {
   })
 
   async function findActiveCode(): Promise<string> {
+    return (await findActiveCodes(1))[0]!
+  }
+
+  async function findActiveCodes(count: number): Promise<string[]> {
     const start = Date.now()
     while (Date.now() - start < 2000) {
       const keys = hostStore.scanKeys('webhook:code:')
-      if (keys.length > 0) return keys[0]!.slice('webhook:code:'.length)
+      if (keys.length >= count) return keys.map((key) => key.slice('webhook:code:'.length))
       await new Promise((r) => setTimeout(r, 5))
     }
-    throw new Error('timed out waiting for pending code')
+    throw new Error('timed out waiting for pending codes')
   }
 
   async function postApproval(code: string, body: string): Promise<Response> {
@@ -275,6 +279,10 @@ function pair(options: PairOptions = {}) {
     )
   }
 
+  function replaceConsumerTransport(transport: ReturnType<typeof webhookCallback>): void {
+    consumerTransport = transport
+  }
+
   function getDeliveryBody(): string | undefined {
     return deliveryBody
   }
@@ -292,6 +300,7 @@ function pair(options: PairOptions = {}) {
   }
 
   return {
+    approvalBody,
     approve,
     consumerKeypair,
     consumerOrigin,
@@ -300,6 +309,7 @@ function pair(options: PairOptions = {}) {
     consumerWk,
     deny,
     findActiveCode,
+    findActiveCodes,
     getApprovalSession,
     getDeliveryAttempts,
     getDeliveryBody,
@@ -312,6 +322,8 @@ function pair(options: PairOptions = {}) {
     hostTransport,
     hostWk,
     postApproval,
+    replaceConsumerTransport,
+    submitApproval,
     webhookUrl,
   }
 }
@@ -424,6 +436,107 @@ describe('webhookCallback end-to-end', () => {
             },
           ],
         },
+      ]
+    `)
+  })
+
+  test('one consumer handles multiple pending webhook callback sessions', async () => {
+    const setup = pair()
+    const { consumerTransport, hostTransport } = setup
+    const wata = Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transports: [consumerTransport],
+    })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [hostTransport] })
+    const events: Wata.RpcResponsesPayload[] = []
+    wata.on('rpc-responses', (responses) => events.push(responses))
+
+    const first = await wata.send({ id: 'first', method: 'ping', params: [] })
+    const second = await wata.send({ id: 'second', method: 'pong', params: [] })
+    const codes = await setup.findActiveCodes(2)
+
+    await setup.submitApproval(
+      codes[1]!,
+      await setup.approvalBody(codes[1]!, (id) => Rpc.success({ id, result: { order: 2 } })),
+    )
+    await setup.submitApproval(
+      codes[0]!,
+      await setup.approvalBody(codes[0]!, (id) => Rpc.success({ id, result: { order: 1 } })),
+    )
+    await waitFor(() => events.length === 2)
+
+    expect(first.verificationUri).not.toBe(second.verificationUri)
+    expect(events).toMatchInlineSnapshot(`
+      [
+        [
+          {
+            "id": "second",
+            "jsonrpc": "2.0",
+            "result": {
+              "order": 2,
+            },
+          },
+        ],
+        [
+          {
+            "id": "first",
+            "jsonrpc": "2.0",
+            "result": {
+              "order": 1,
+            },
+          },
+        ],
+      ]
+    `)
+  })
+
+  test('recreated consumer handles webhook callback from persisted session metadata', async () => {
+    const setup = pair()
+    const { consumerTransport, hostTransport } = setup
+    const wata = Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transports: [consumerTransport],
+    })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [hostTransport] })
+
+    await wata.send({ id: 'durable', method: 'ping', params: [] })
+    const code = await setup.findActiveCode()
+    const replacement = webhookCallback({
+      fetch: (async () => {
+        throw new Error('unexpected restarted consumer fetch')
+      }) as typeof fetch,
+      host: setup.hostOrigin,
+      path: '/cb',
+      store: setup.consumerStore,
+    })
+    setup.replaceConsumerTransport(replacement)
+    const restarted = Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transports: [replacement],
+    })
+    const events: Wata.RpcResponsesPayload[] = []
+    restarted.on('rpc-responses', (responses) => events.push(responses))
+
+    await setup.submitApproval(
+      code,
+      await setup.approvalBody(code, (id) => Rpc.success({ id, result: { restarted: true } })),
+    )
+    await waitFor(() => events.length === 1)
+
+    expect(events).toMatchInlineSnapshot(`
+      [
+        [
+          {
+            "id": "durable",
+            "jsonrpc": "2.0",
+            "result": {
+              "restarted": true,
+            },
+          },
+        ],
       ]
     `)
   })

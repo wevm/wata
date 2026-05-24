@@ -10,7 +10,7 @@ describe('webhookCallback (consumer)', () => {
       store: Kv.memory(),
     })
     expectTypeOf(transport.role).toEqualTypeOf<'consumer'>()
-    expectTypeOf(transport.exchange).toEqualTypeOf<Transport.Exchange>()
+    expectTypeOf(transport.exchange).toEqualTypeOf<'single_exchange'>()
     expectTypeOf(transport).toMatchTypeOf<
       Transport.Transport<'consumer', 'webhookCallback', WebhookCallback.Registration>
     >()

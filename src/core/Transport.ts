@@ -11,7 +11,8 @@
  *   discriminates ongoing transports (`window`, `mobileLink`, `relay`) from
  *   single-exchange transports (`deviceCode`, `webhookCallback`,
  *   `mobileWebAuth`) and gates the `auto-close after terminal response`
- *   behaviour.
+ *   behaviour. A server-shaped single-exchange transport can still keep
+ *   its listener open and carry many independent exchange sessions.
  * - `start` / `send` / `close` — wire lifecycle.
  * - `on` — single typed event surface for inbound delivery and failure
  *   propagation. Listeners receive the typed payload directly (the parsed

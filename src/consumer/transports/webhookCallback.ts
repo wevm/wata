@@ -1,6 +1,6 @@
 /**
  * Consumer-side `webhook-callback` transport — HTTP-server-shaped,
- * single-exchange.
+ * single-exchange per `auth_req_id`.
  *
  * Implements the consumer half of the uRPC `webhook-callback` spec.
  * `transport.send(envelope)`:
@@ -18,11 +18,12 @@
  *    protection, then emit the `rpc-responses` envelope as
  *    `'message'` so the wrapping `Wata` resolves the pending
  *    `send()`.
- * 4. Auto-closes on terminal response (single-exchange).
+ * 4. Removes the matching pending session on terminal response while
+ *    keeping the listener open for other sessions.
  *
- * Optional cancellation: {@link Cancel} is exposed on the returned
- * transport for callers who need to abort an in-flight intent. Sends
- * an RFC 9421-signed `DELETE <registerUrl>/<auth_req_id>`.
+ * Optional cancellation: {@link cancel} is exposed on the returned
+ * transport for callers who need to abort tracked in-flight intents.
+ * Sends RFC 9421-signed `DELETE <registerUrl>/<auth_req_id>` requests.
  *
  * @example
  * ```ts
@@ -120,14 +121,22 @@ export type Options = {
  * plus the `.fetch` / `.listener` pair the consumer needs to serve
  * incoming webhook deliveries, plus an explicit {@link cancel} hook.
  */
-export type WebhookCallback = Transport.Transport<'consumer', 'webhookCallback', Registration> &
+export type WebhookCallback = Omit<
+  Transport.Transport<'consumer', 'webhookCallback', Registration>,
+  'exchange'
+> &
   Http.Server & {
     /**
-     * RFC 9421-signed cancellation of the in-flight `auth_req_id`
-     * (no-op when no request is pending). Mirrors the spec's
+     * RFC 9421-signed cancellation of tracked in-flight `auth_req_id`
+     * values (no-op when no request is pending). Mirrors the spec's
      * `DELETE <register_url>/<auth_req_id>` route.
      */
     cancel: () => Promise<void>
+    /**
+     * Lifetime model. Each `auth_req_id` exchange is terminal, while the
+     * listener can carry many pending webhook sessions.
+     */
+    exchange: 'single_exchange'
   }
 
 /**
@@ -181,22 +190,22 @@ export function webhookCallback(options: Options): WebhookCallback {
 
   const emitter = Events.create<Transport.EventMap>()
 
-  // Single-exchange state. `inFlight` guards concurrent `send()`
-  // calls; `closed` flips once the terminal response arrives.
+  // Multi-session state. Each successful registration is tracked by
+  // `auth_req_id`, and persisted so a restarted consumer can still
+  // verify a later webhook delivery.
+  type Session = {
+    authReqId: string
+    hostPubkey: string
+    registerUrl: string
+  }
   type State = {
-    activeAuthReqId: string | undefined
-    activeHostPubkey: string | undefined
-    activeRegisterUrl: string | undefined
     closed: boolean
-    inFlight: boolean
+    sessions: Map<string, Session>
     started: boolean
   }
   const state: State = {
-    activeAuthReqId: undefined,
-    activeHostPubkey: undefined,
-    activeRegisterUrl: undefined,
     closed: false,
-    inFlight: false,
+    sessions: new Map(),
     started: false,
   }
 
@@ -233,19 +242,33 @@ export function webhookCallback(options: Options): WebhookCallback {
     return binding.register_url
   }
 
-  function settle(message: Envelope.Envelope | undefined, cause?: Error) {
+  async function deleteSession(authReqId: string): Promise<void> {
+    state.sessions.delete(authReqId)
+    await store.delete(sessionKey(authReqId))
+  }
+
+  async function getSession(authReqId: string): Promise<Session | undefined> {
+    const cached = state.sessions.get(authReqId)
+    if (cached) return cached
+    const stored = await store.get<Session>(sessionKey(authReqId))
+    if (!stored) return undefined
+    state.sessions.set(authReqId, stored)
+    return stored
+  }
+
+  async function setSession(session: Session, options: { ttl: number }): Promise<void> {
+    state.sessions.set(session.authReqId, session)
+    await store.set(sessionKey(session.authReqId), session, { ttl: options.ttl })
+  }
+
+  async function settle(authReqId: string, message: Envelope.Envelope): Promise<void> {
     if (state.closed) return
-    state.inFlight = false
-    state.closed = true
-    // Clear the active intent so any subsequent inbound webhook for
-    // the same `auth_req_id` is treated as a no-op (idempotent 200)
-    // rather than re-emitting `message`.
-    state.activeAuthReqId = undefined
-    state.activeHostPubkey = undefined
-    state.activeRegisterUrl = undefined
-    if (cause) emitter.emit('error', cause)
-    if (message) emitter.emit('message', message)
-    emitter.emit('close', cause)
+    await deleteSession(authReqId)
+    emitter.emit('message', message)
+  }
+
+  function fail(cause: Error): void {
+    emitter.emit('error', cause)
   }
 
   const fetchWithTimeout = Fetch.withTimeout(fetchImpl, fetchTimeout)
@@ -376,9 +399,14 @@ export function webhookCallback(options: Options): WebhookCallback {
     if (codeValues[0] === data.auth_req_id)
       throw new Errors.ProtocolError('verification_uri code must not equal `auth_req_id`')
 
-    state.activeAuthReqId = data.auth_req_id
-    state.activeHostPubkey = hostDoc.identity_pubkey
-    state.activeRegisterUrl = registerUrl
+    await setSession(
+      {
+        authReqId: data.auth_req_id,
+        hostPubkey: hostDoc.identity_pubkey,
+        registerUrl,
+      },
+      { ttl: data.expires_in + data.retry_seconds },
+    )
 
     return {
       expiresIn: data.expires_in,
@@ -399,9 +427,10 @@ export function webhookCallback(options: Options): WebhookCallback {
     const request = c.req.raw
     const authReqId = request.headers.get('urpc-auth-req-id')
     if (!authReqId) return c.json({ error: 'missing `uRPC-Auth-Req-Id`' }, { status: 400 })
-    // §3.4.2 step 1: not the active intent → idempotent 200.
-    if (state.activeAuthReqId !== authReqId)
-      return c.json({ idempotent: true, ok: true }, { status: 200 })
+    if (state.closed) return c.json({ idempotent: true, ok: true }, { status: 200 })
+    const session = await getSession(authReqId)
+    // §3.4.2 step 1: not an active intent → idempotent 200.
+    if (!session) return c.json({ idempotent: true, ok: true }, { status: 200 })
 
     const contentEncoding = request.headers.get('content-encoding')
     if (contentEncoding && contentEncoding.toLowerCase() !== 'identity')
@@ -411,9 +440,7 @@ export function webhookCallback(options: Options): WebhookCallback {
 
     const bodyText = await request.text()
     const declaredPubkey = request.headers.get('urpc-public-key')
-    const pinned = state.activeHostPubkey
-    if (!pinned)
-      return c.json({ error: 'webhook arrived before register completed' }, { status: 401 })
+    const pinned = session.hostPubkey
     if (!declaredPubkey || !constantTimeEqual(declaredPubkey, pinned))
       return c.json(
         { error: 'uRPC-Public-Key does not match pinned host identity' },
@@ -499,52 +526,60 @@ export function webhookCallback(options: Options): WebhookCallback {
       return c.json({ error: 'expected `rpc-responses` envelope' }, { status: 400 })
 
     await store.set(dedupKey, true, { ttl: 86400 })
-    settle(envelope)
+    await settle(authReqId, envelope)
     return c.json({ ok: true }, { status: 200 })
   })
 
   const { fetch, listener } = Http.fromHono(app)
 
   async function cancel(): Promise<void> {
-    if (!state.activeAuthReqId) return
-    const authReqId = state.activeAuthReqId
-    const registerUrl =
-      state.activeRegisterUrl ?? resolveRegisterUrl(resolveWebhookBinding(await resolveHost()))
-    const url = `${registerUrl}/${encodeURIComponent(authReqId)}`
-    const nonce = generateNonce()
-    const created = Math.floor(Date.now() / 1000)
+    const sessions = Array.from(state.sessions.values())
+    if (sessions.length === 0) return
     const identity = getIdentity()
-    const components = ['@method', '@target-uri', '@authority', 'urpc-public-key']
-    const signedHeaders = MessageSig.sign({
-      components,
-      message: { headers: { 'urpc-public-key': identity.publicKey }, method: 'DELETE', url },
-      parameters: { alg: 'ed25519', created, keyid: getKeyid(), nonce },
-      privateKey: identity.privateKey,
-    })
-    let response: Response
-    try {
-      response = await fetchWithTimeout(url, {
-        headers: {
-          signature: signedHeaders.signature,
-          'signature-input': signedHeaders.signatureInput,
-          'urpc-public-key': identity.publicKey,
-        },
-        method: 'DELETE',
-        redirect: 'manual',
+    for (const session of sessions) {
+      const nonce = generateNonce()
+      const created = Math.floor(Date.now() / 1000)
+      const url = `${session.registerUrl}/${encodeURIComponent(session.authReqId)}`
+      const components = ['@method', '@target-uri', '@authority', 'urpc-public-key']
+      const signedHeaders = MessageSig.sign({
+        components,
+        message: { headers: { 'urpc-public-key': identity.publicKey }, method: 'DELETE', url },
+        parameters: { alg: 'ed25519', created, keyid: getKeyid(), nonce },
+        privateKey: identity.privateKey,
       })
-    } catch (cause) {
-      throw new Transport.TransportError(
-        `webhook-callback cancel failed: ${(cause as Error).message}`,
-        { cause: cause as Error },
-      )
+      let response: Response
+      try {
+        response = await fetchWithTimeout(url, {
+          headers: {
+            signature: signedHeaders.signature,
+            'signature-input': signedHeaders.signatureInput,
+            'urpc-public-key': identity.publicKey,
+          },
+          method: 'DELETE',
+          redirect: 'manual',
+        })
+      } catch (cause) {
+        throw new Transport.TransportError(
+          `webhook-callback cancel failed: ${(cause as Error).message}`,
+          { cause: cause as Error },
+        )
+      }
+      if (response.status !== 204) {
+        const text = await response.text().catch(() => '<no body>')
+        throw new Transport.TransportError(
+          `webhook-callback cancel returned status ${response.status}: ${text}`,
+        )
+      }
+      await deleteSession(session.authReqId)
     }
-    if (response.status !== 204) {
-      const text = await response.text().catch(() => '<no body>')
-      throw new Transport.TransportError(
-        `webhook-callback cancel returned status ${response.status}: ${text}`,
-      )
-    }
-    settle(undefined, new Transport.ClosedError('webhook-callback cancelled'))
+    await close(new Transport.ClosedError('webhook-callback cancelled'))
+  }
+
+  async function close(cause?: Error): Promise<void> {
+    if (state.closed) return
+    state.closed = true
+    state.sessions.clear()
+    emitter.emit('close', cause)
   }
 
   return {
@@ -557,12 +592,10 @@ export function webhookCallback(options: Options): WebhookCallback {
       return getCallbackUrls()
     },
     cancel,
-    async close(cause) {
-      if (state.closed) return
-      state.inFlight = false
-      state.closed = true
-      emitter.emit('close', cause)
-    },
+    close,
+    // `single_exchange` is per `auth_req_id`, not per transport
+    // lifetime: the app server is long-running and can carry many
+    // pending approval sessions over one webhook listener.
     exchange: 'single_exchange',
     fetch,
     listener,
@@ -575,14 +608,9 @@ export function webhookCallback(options: Options): WebhookCallback {
     routes: [webhookPath],
     async send(envelope) {
       if (state.closed) throw new Transport.ClosedError('webhook-callback transport already closed')
-      if (state.inFlight)
-        throw new Transport.TransportError(
-          'webhook-callback is single-exchange; a previous send is still in flight',
-        )
       if (!state.started) state.started = true
-      state.inFlight = true
       const registration = await runRegister(envelope).catch((cause) => {
-        settle(undefined, cause as Error)
+        fail(cause as Error)
         throw cause
       })
       // `send()` resolves with registration metadata once `/register`
@@ -605,6 +633,10 @@ function generateNonce(): string {
 
 function identityKeyid(url: string): string {
   return `${new URL(url).origin}#identity`
+}
+
+function sessionKey(authReqId: string): string {
+  return `webhook:session:${authReqId}`
 }
 
 function assertWebhookBindingOrigin(
