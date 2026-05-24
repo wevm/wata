@@ -11,7 +11,9 @@ describe('webhookCallback (consumer)', () => {
     })
     expectTypeOf(transport.role).toEqualTypeOf<'consumer'>()
     expectTypeOf(transport.exchange).toEqualTypeOf<Transport.Exchange>()
-    expectTypeOf(transport).toMatchTypeOf<Transport.Transport<'consumer'>>()
+    expectTypeOf(transport).toMatchTypeOf<
+      Transport.Transport<'consumer', 'webhookCallback', WebhookCallback.Registration>
+    >()
     expectTypeOf(transport.fetch).toEqualTypeOf<(request: Request) => Promise<Response>>()
     expectTypeOf(transport.listener).toBeFunction()
     expectTypeOf(transport.cancel).toEqualTypeOf<() => Promise<void>>()
@@ -33,12 +35,30 @@ describe('webhookCallback (consumer)', () => {
     expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
   })
 
+  test('Wata.send returns registration metadata for a single webhookCallback transport', async () => {
+    const transport = webhookCallback({
+      host: 'https://wallet.example',
+      path: '/cb',
+      store: Kv.memory(),
+    })
+    const wata = Wata.create({
+      baseUrl: 'https://acme.dev',
+      meta: { name: 'Acme CLI' },
+      privateKey: '0x' as Hex.Hex,
+      transports: [transport],
+    })
+    const registration = await wata.send({ method: 'ping', params: [] })
+    expectTypeOf(registration).toEqualTypeOf<WebhookCallback.Registration>()
+    expectTypeOf(registration.verificationUri).toEqualTypeOf<string>()
+  })
+
   test('path is the consumer callback path', () => {
     expectTypeOf<WebhookCallback.Options['path']>().toEqualTypeOf<string>()
   })
 
   test('public options omit derived signature and callback URL fields', () => {
     expectTypeOf<WebhookCallback.Options>().not.toHaveProperty('keyid')
+    expectTypeOf<WebhookCallback.Options>().not.toHaveProperty('onPrompt')
     expectTypeOf<WebhookCallback.Options>().not.toHaveProperty('privateKey')
     expectTypeOf<WebhookCallback.Options>().not.toHaveProperty('webhookUrl')
   })
@@ -51,7 +71,7 @@ describe('webhookCallback (consumer)', () => {
     expectTypeOf<WebhookCallback.Options['host']>().toMatchTypeOf<string | object>()
   })
 
-  test('prompt omits consumer-facing correlation handles', () => {
-    expectTypeOf<WebhookCallback.Prompt>().not.toHaveProperty('authReqId')
+  test('registration omits consumer-facing correlation handles', () => {
+    expectTypeOf<WebhookCallback.Registration>().not.toHaveProperty('authReqId')
   })
 })

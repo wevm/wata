@@ -1,6 +1,16 @@
 import type { Hex } from 'ox'
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Discovery, Rpc, Schema, Transport, Wata, loopback } from 'wata'
+import {
+  Discovery,
+  Kv,
+  Rpc,
+  Schema,
+  Transport,
+  Wata,
+  WebhookCallback,
+  loopback,
+  webhookCallback,
+} from 'wata'
 import { Discovery as HostDiscovery, Schema as HostSchema, Wata as HostWata } from 'wata/host'
 import { z } from 'zod/mini'
 
@@ -176,6 +186,14 @@ describe('Host events', () => {
     wata.on('error', (payload) => {
       expectTypeOf(payload).toEqualTypeOf<Error>()
     })
+    wata.on('rpc-requests', (requests, meta) => {
+      expectTypeOf(requests).toEqualTypeOf<Wata.RpcRequestsPayload<typeof schema>>()
+      expectTypeOf(meta).toEqualTypeOf<Wata.RpcEnvelopeMeta<'rpc-requests'>>()
+    })
+    wata.on('rpc-responses', (responses, meta) => {
+      expectTypeOf(responses).toEqualTypeOf<Wata.RpcResponsesPayload<typeof schema>>()
+      expectTypeOf(meta).toEqualTypeOf<Wata.RpcEnvelopeMeta<'rpc-responses'>>()
+    })
   })
 
   test('rejects unknown event types at compile time', () => {
@@ -187,16 +205,46 @@ describe('Host events', () => {
 })
 
 describe('Consumer events', () => {
-  test('only exposes lifecycle events (no `request` / `notification`)', () => {
+  test('exposes lifecycle and rpc response events (no `request` / `notification`)', () => {
     const { consumer } = loopback()
     const wata = Wata.create({ transports: [consumer], schema })
     wata.on('open', () => {})
     wata.on('close', () => {})
     wata.on('error', () => {})
+    wata.on('rpc-requests', (requests, meta) => {
+      expectTypeOf(requests).toEqualTypeOf<Wata.RpcRequestsPayload<typeof schema>>()
+      expectTypeOf(meta).toEqualTypeOf<Wata.RpcEnvelopeMeta<'rpc-requests'>>()
+      expectTypeOf(meta.direction).toEqualTypeOf<'incoming' | 'outgoing'>()
+      expectTypeOf(meta.transport).toEqualTypeOf<string>()
+    })
+    wata.on('rpc-responses', (responses, meta) => {
+      expectTypeOf(responses).toEqualTypeOf<Wata.RpcResponsesPayload<typeof schema>>()
+      expectTypeOf(meta).toEqualTypeOf<Wata.RpcEnvelopeMeta<'rpc-responses'>>()
+      expectTypeOf(meta.direction).toEqualTypeOf<'incoming' | 'outgoing'>()
+      expectTypeOf(meta.transport).toEqualTypeOf<string>()
+    })
     // @ts-expect-error consumers don't receive `request`
     wata.on('request', () => {})
     // @ts-expect-error consumers don't receive `notification`
     wata.on('notification', () => {})
+  })
+
+  test('multiple transports keep webhook registration metadata on its child session', async () => {
+    const { consumer } = loopback()
+    const transport = webhookCallback({
+      host: 'https://wallet.example',
+      path: '/cb',
+      store: Kv.memory(),
+    })
+    const wata = Wata.create({
+      baseUrl: 'https://acme.dev',
+      privateKey: privateKey,
+      transports: [consumer, transport],
+    })
+    const registration = await wata.webhookCallback.send({ method: 'ping', params: [] })
+    expectTypeOf(registration).toEqualTypeOf<WebhookCallback.Registration>()
+    const out = await wata.loopback.send({ method: 'ping', params: [] })
+    expectTypeOf(out).toEqualTypeOf<Wata.SendResult<unknown>>()
   })
 })
 

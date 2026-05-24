@@ -71,7 +71,6 @@ function memoryWithScan(): Kv.AtomicKv & { scanKeys: (prefix: string) => string[
 }
 
 type PairOptions = {
-  consumerOnPrompt?: Parameters<typeof webhookCallback>[0]['onPrompt'] | undefined
   consumerDiscoveryPublicKey?: string | null | undefined
   hostAuthenticate?:
     | NonNullable<Parameters<typeof hostWebhookCallback>[0]['html']['authenticate']>
@@ -184,7 +183,6 @@ function pair(options: PairOptions = {}) {
   consumerTransport = webhookCallback({
     fetch: consumerFetchOverride,
     host: hostOrigin,
-    onPrompt: options.consumerOnPrompt,
     path: '/cb',
     store: consumerStore,
   })
@@ -357,6 +355,15 @@ function signedRequest(options: signedRequest.Options): Request {
   return new Request(url, { body, headers: signedHeaders, method })
 }
 
+async function waitFor(predicate: () => boolean, timeout = 2_000): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    if (predicate()) return
+    await new Promise((r) => setTimeout(r, 5))
+  }
+  throw new Error('waitFor timed out')
+}
+
 declare namespace signedRequest {
   type Options = {
     body?: string | undefined
@@ -383,21 +390,41 @@ describe('webhookCallback end-to-end', () => {
       transports: [consumerTransport],
     })
     HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [hostTransport] })
+    const events: Array<{ meta: Wata.RpcEnvelopeMeta; responses: Wata.RpcResponsesPayload }> = []
+    wata.on('rpc-responses', (responses, meta) => events.push({ meta, responses }))
 
-    const sendPromise = wata.send({ method: 'ping', params: [] })
+    const registration = await wata.send({ method: 'ping', params: [] })
     const approvalBody =
       '{\n  "payload": [\n    { "jsonrpc": "2.0", "result": { "ok": true }, "id": 1 }\n  ],\n  "type": "rpc-responses"\n}'
     await approve(approvalBody)
-    const { result } = await sendPromise
+    await waitFor(() => events.length === 1)
     const register = MessageSig.parseSignatureInput(setup.getRegisterSignatureInput() ?? '')
     const delivery = MessageSig.parseSignatureInput(setup.getDeliverySignatureInput() ?? '')
     expect(register.parameters.keyid).toMatchInlineSnapshot(`"https://acme.dev#identity"`)
     expect(delivery.parameters.keyid).toMatchInlineSnapshot(`"https://wallet.example#identity"`)
     expect(setup.getDeliveryBody()).toBe(approvalBody)
-    expect(result).toMatchInlineSnapshot(`
-      {
-        "ok": true,
-      }
+    expect(registration.verificationUri).toContain(
+      'https://wallet.example/auth/webhook/verify?code=',
+    )
+    expect(events).toMatchInlineSnapshot(`
+      [
+        {
+          "meta": {
+            "direction": "incoming",
+            "transport": "webhookCallback",
+            "type": "rpc-responses",
+          },
+          "responses": [
+            {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "result": {
+                "ok": true,
+              },
+            },
+          ],
+        },
+      ]
     `)
   })
 
@@ -598,24 +625,32 @@ describe('webhookCallback end-to-end', () => {
       transports: [setup.consumerTransport],
     })
     HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
+    const events: Wata.RpcResponsesPayload[] = []
+    wata.on('rpc-responses', (responses) => events.push(responses))
 
-    const sendPromise = wata.send({ method: 'ping', params: [] })
+    const registration = await wata.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
     const response = await setup.postApproval(
       code,
       JSON.stringify(Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })])),
     )
-    const result = await sendPromise
+    await waitFor(() => events.length === 1)
 
     expect(response.status).toBe(200)
     expect(setup.getDeliveryAttempts()).toBe(2)
-    expect(result).toMatchInlineSnapshot(`
-      {
-        "id": 1,
-        "result": {
-          "ok": true,
+    expect(registration.verificationUri).toContain(
+      'https://wallet.example/auth/webhook/verify?code=',
+    )
+    expect(events[0]).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "jsonrpc": "2.0",
+          "result": {
+            "ok": true,
+          },
         },
-      }
+      ]
     `)
   })
 
@@ -722,13 +757,28 @@ describe('webhookCallback end-to-end', () => {
       transports: [consumerTransport],
     })
     HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
+    const events: Wata.RpcResponsesPayload[] = []
+    wata.on('rpc-responses', (responses) => events.push(responses))
 
-    const sendPromise = wata.send({ method: 'ping', params: [] })
+    const registration = await wata.send({ method: 'ping', params: [] })
     await deny()
+    await waitFor(() => events.length === 1)
 
-    await expect(sendPromise).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Rpc.RpcError: denied by user]`,
+    expect(registration.verificationUri).toContain(
+      'https://wallet.example/auth/webhook/verify?code=',
     )
+    expect(events[0]).toMatchInlineSnapshot(`
+      [
+        {
+          "error": {
+            "code": -32000,
+            "message": "denied by user",
+          },
+          "id": 1,
+          "jsonrpc": "2.0",
+        },
+      ]
+    `)
   })
 
   test('form authenticate actions can approve through the host request listener', async () => {
@@ -757,8 +807,10 @@ describe('webhookCallback end-to-end', () => {
     })
     host.on('request', (event) => event.respond({ ok: true }))
     await host.start()
+    const events: Wata.RpcResponsesPayload[] = []
+    consumer.on('rpc-responses', (responses) => events.push(responses))
 
-    const sendPromise = consumer.send({ method: 'ping', params: [] })
+    await consumer.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
     const session = await setup.getApprovalSession(code)
     if (!session) throw new Error('approval session missing')
@@ -780,7 +832,18 @@ describe('webhookCallback end-to-end', () => {
 
     expect(response.status).toBe(200)
     await expect(response.text()).resolves.toBe('Approved')
-    await expect(sendPromise).resolves.toMatchObject({ result: { ok: true } })
+    await waitFor(() => events.length === 1)
+    expect(events[0]).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "jsonrpc": "2.0",
+          "result": {
+            "ok": true,
+          },
+        },
+      ]
+    `)
   })
 
   test('form authenticate actions accept opaque-origin approval submissions', async () => {
@@ -804,8 +867,10 @@ describe('webhookCallback end-to-end', () => {
     })
     host.on('request', (event) => event.respond({ ok: true }))
     await host.start()
+    const events: Wata.RpcResponsesPayload[] = []
+    consumer.on('rpc-responses', (responses) => events.push(responses))
 
-    const sendPromise = consumer.send({ method: 'ping', params: [] })
+    await consumer.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
     const session = await setup.getApprovalSession(code)
     if (!session) throw new Error('approval session missing')
@@ -827,7 +892,18 @@ describe('webhookCallback end-to-end', () => {
 
     expect(response.status).toBe(200)
     await expect(response.text()).resolves.toBe('Approved')
-    await expect(sendPromise).resolves.toMatchObject({ result: { ok: true } })
+    await waitFor(() => events.length === 1)
+    expect(events[0]).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "jsonrpc": "2.0",
+          "result": {
+            "ok": true,
+          },
+        },
+      ]
+    `)
   })
 
   test('sets approval-surface hardening headers', async () => {
@@ -1150,11 +1226,7 @@ describe('webhookCallback end-to-end', () => {
 
   test('clamps advertised retry_seconds to the spec bounds', async () => {
     async function registerWith(retrySeconds: number) {
-      const prompts: Array<{ retrySeconds: number | undefined }> = []
       const setup = pair({
-        consumerOnPrompt: (prompt) => {
-          prompts.push(prompt)
-        },
         hostRetrySeconds: retrySeconds,
       })
       Wata.create({
@@ -1163,7 +1235,7 @@ describe('webhookCallback end-to-end', () => {
         transports: [setup.consumerTransport],
       })
 
-      await setup.consumerTransport.send(
+      const registration = await setup.consumerTransport.send(
         Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
       )
       const code = await setup.findActiveCode()
@@ -1171,24 +1243,20 @@ describe('webhookCallback end-to-end', () => {
         `webhook:code:${code}`,
       )) as HostWebhookCallback.PendingRecord
 
-      return { prompt: prompts[0], record }
+      return { registration, record }
     }
 
     const low = await registerWith(1)
     const high = await registerWith(100_000)
 
-    expect(low.prompt?.retrySeconds).toBe(300)
+    expect(low.registration.retrySeconds).toBe(300)
     expect(low.record.retrySeconds).toBe(300)
-    expect(high.prompt?.retrySeconds).toBe(86400)
+    expect(high.registration.retrySeconds).toBe(86400)
     expect(high.record.retrySeconds).toBe(86400)
   })
 
   test('clamps advertised expires_in to the spec approval-window ceiling', async () => {
-    const prompts: Array<{ expiresIn: number | undefined }> = []
     const setup = pair({
-      consumerOnPrompt: (prompt) => {
-        prompts.push(prompt)
-      },
       hostExpiresIn: 1_000,
     })
     Wata.create({
@@ -1197,7 +1265,7 @@ describe('webhookCallback end-to-end', () => {
       transports: [setup.consumerTransport],
     })
 
-    await setup.consumerTransport.send(
+    const registration = await setup.consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
     )
     const code = await setup.findActiveCode()
@@ -1205,30 +1273,23 @@ describe('webhookCallback end-to-end', () => {
       `webhook:code:${code}`,
     )) as HostWebhookCallback.PendingRecord
 
-    expect(prompts[0]?.expiresIn).toBe(600)
+    expect(registration.expiresIn).toBe(600)
     expect(record.expiresAt - record.createdAt).toBe(600_000)
   })
 
   test('host returns distinct auth_req_id and verification code handles', async () => {
-    const prompts: Array<{ verificationUri: string }> = []
-    const setup = pair({
-      consumerOnPrompt: (prompt) => {
-        prompts.push(prompt)
-      },
-    })
+    const setup = pair()
     Wata.create({
       baseUrl: setup.consumerOrigin,
       privateKey: setup.consumerKeypair.privateKey,
       transports: [setup.consumerTransport],
     })
 
-    await setup.consumerTransport.send(
+    const registration = await setup.consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
     )
 
-    const prompt = prompts[0]
-    if (!prompt) throw new Error('prompt missing')
-    const code = new URL(prompt.verificationUri).searchParams.get('code')
+    const code = new URL(registration.verificationUri).searchParams.get('code')
     if (!code) throw new Error('code missing')
     const record = await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
       `webhook:code:${code}`,
@@ -1643,8 +1704,10 @@ describe('webhookCallback end-to-end', () => {
       transports: [setup.consumerTransport],
     })
     HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
+    const events: Wata.RpcResponsesPayload[] = []
+    consumer.on('rpc-responses', (responses) => events.push(responses))
 
-    const sendPromise = consumer.send({ method: 'ping', params: [] })
+    await consumer.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
     const body = JSON.stringify(
       Envelope.rpcResponses([Rpc.success({ id: 1, result: { ok: true } })]),
@@ -1660,7 +1723,18 @@ describe('webhookCallback end-to-end', () => {
         "error_description": "approval request is no longer pending",
       }
     `)
-    await expect(sendPromise).resolves.toMatchObject({ result: { ok: true } })
+    await waitFor(() => events.length === 1)
+    expect(events[0]).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "jsonrpc": "2.0",
+          "result": {
+            "ok": true,
+          },
+        },
+      ]
+    `)
   })
 
   test('rejects cross-origin approval submissions before consuming the intent', async () => {
@@ -2717,7 +2791,7 @@ describe('webhookCallback end-to-end', () => {
       transports: [consumerTransport],
     })
 
-    const sendPromise = consumer.send({ method: 'ping', params: [] })
+    const registration = await consumer.send({ method: 'ping', params: [] })
     const code = await findActiveCode()
     const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
       `webhook:code:${code}`,
@@ -2725,8 +2799,8 @@ describe('webhookCallback end-to-end', () => {
 
     await consumerTransport.cancel()
 
-    await expect(sendPromise).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Transport.ClosedError: webhook-callback cancelled]`,
+    expect(registration.verificationUri).toContain(
+      'https://wallet.example/auth/webhook/verify?code=',
     )
     const late = await consumerTransport.fetch(
       new Request(webhookUrl, {
@@ -3402,8 +3476,10 @@ describe('webhookCallback end-to-end', () => {
       privateKey: consumerKeypair.privateKey,
       transports: [consumerTransport],
     })
+    const events: Wata.RpcResponsesPayload[] = []
+    consumer.on('rpc-responses', (responses) => events.push(responses))
 
-    const sendPromise = consumer.send({ method: 'ping', params: [] })
+    await consumer.send({ method: 'ping', params: [] })
     const code = await findActiveCode()
     const record = (await hostStore.get<HostWebhookCallback.PendingRecord>(
       `webhook:code:${code}`,
@@ -3459,7 +3535,18 @@ describe('webhookCallback end-to-end', () => {
 
     expect(invalid.status).toBe(400)
     expect(valid.status).toBe(200)
-    await expect(sendPromise).resolves.toMatchObject({ result: { ok: true } })
+    await waitFor(() => events.length === 1)
+    expect(events[0]).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "jsonrpc": "2.0",
+          "result": {
+            "ok": true,
+          },
+        },
+      ]
+    `)
   })
 
   test('consumer rejects webhook delivery without a signature nonce', async () => {
@@ -3605,8 +3692,10 @@ describe('webhookCallback end-to-end', () => {
       transports: [consumerTransport],
     })
     HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
+    const events: Wata.RpcResponsesPayload[] = []
+    wata.on('rpc-responses', (responses) => events.push(responses))
 
-    const sendPromise = wata.send({ method: 'ping', params: [] })
+    await wata.send({ method: 'ping', params: [] })
     // Wait until the consumer has registered + we have a code,
     // so we can extract the auth_req_id for the replay payload below.
     const code = await findActiveCode()
@@ -3614,7 +3703,7 @@ describe('webhookCallback end-to-end', () => {
       `webhook:code:${code}`,
     )) as HostWebhookCallback.PendingRecord
     await approve()
-    await sendPromise
+    await waitFor(() => events.length === 1)
 
     // Build a hand-rolled "replay" of the original delivery by
     // POSTing arbitrary bytes back to the consumer's webhook

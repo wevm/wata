@@ -102,7 +102,7 @@ export type DiscoveryBinding = {
  * The normalized transport contract. Every adapter — consumer-side,
  * host-side, role-agnostic loopback — implements this shape.
  */
-export type Transport<role extends Role = Role, name extends string = string> = {
+export type Transport<role extends Role = Role, name extends string = string, sendValue = void> = {
   /**
    * Apply parent application context to this transport. Lazy-bound by
    * `Wata.create({ baseUrl, meta, privateKey })` so transports can
@@ -156,10 +156,15 @@ export type Transport<role extends Role = Role, name extends string = string> = 
    */
   routes?: readonly string[] | undefined
   /** Send a single envelope frame to the peer. */
-  send: (envelope: Envelope.Envelope) => Promise<void>
+  send: (envelope: Envelope.Envelope) => Promise<sendValue>
   /** Open the transport. Resolves once the wire is ready to send and receive. */
   start: () => Promise<void>
 }
+
+/** Value resolved by a transport's {@link Transport.send}. */
+export type SendValue<transport extends Transport<Role, string, unknown>> = Awaited<
+  ReturnType<transport['send']>
+>
 
 /**
  * Thrown when the underlying transport fails (network error, peer

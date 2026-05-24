@@ -21,9 +21,6 @@ const wata = Wata.create({
   transports: [
     webhookCallback({
       host: hostUrl,
-      onPrompt({ verificationUri }) {
-        console.log(`open ${verificationUri}`)
-      },
       path: '/cb',
       store: Kv.memory(),
     }),
@@ -41,10 +38,20 @@ await new Promise<void>((resolve) =>
   }),
 )
 
-const { result } = await wata.send({
+const result = new Promise<unknown>((resolve, reject) => {
+  wata.on('rpc-responses', (responses) => {
+    const response = responses[0]
+    if (!response) return
+    if ('error' in response) reject(new Error(response.error.message))
+    else resolve(response.result)
+  })
+})
+
+const registration = await wata.send({
   method: 'ping',
   params: [{ message: 'hello from consumer' }],
 })
 
-console.log('result:', result)
+console.log(`open ${registration.verificationUri}`)
+console.log('result:', await result)
 process.exit(0)

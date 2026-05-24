@@ -160,19 +160,23 @@ const wata = Wata.create({
   transports: [
     webhookCallback({
       host: 'https://wallet.example',
-      onPrompt({ verificationUri }) {
-        console.log(`Visit ${verificationUri}`)
-      },
       path: '/callback',
       store: Kv.memory(),
     }),
   ],
 })
 
-const { result } = await wata.send({
+wata.on('rpc-responses', (responses, meta) => {
+  console.log(responses)
+  console.log(meta)
+})
+
+const registration = await wata.send({
   method: 'wallet_connect',
   params: [],
 })
+
+console.log(`Visit ${registration.verificationUri}`)
 ```
 
 #### Host

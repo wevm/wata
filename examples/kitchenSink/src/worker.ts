@@ -1,7 +1,6 @@
 import { Hono } from 'hono'
-import type { WebhookCallback } from 'wata'
 
-import { consumer, prompts } from './consumer.js'
+import { consumer } from './consumer.js'
 import { host } from './host.js'
 
 type ServerState =
@@ -26,41 +25,29 @@ app.all('/consumer/callback', (c) => consumer.fetch(c.req.raw))
 app.post('/demo/server', async (c) => {
   if (serverState.status !== 'idle') return c.json(serverState)
 
-  prompts.resolveWebhook = undefined
-  prompts.webhook = undefined
   serverState = { status: 'pending' }
 
-  const promptDeferred = Promise.withResolvers<WebhookCallback.Prompt>()
-  prompts.resolveWebhook = promptDeferred.resolve
+  const controller = consumer.on('rpc-responses', (responses, meta) => {
+    if (meta.transport !== 'webhookCallback') return
+    const response = responses[0]
+    if (!response) return
+    controller.abort()
+    if ('error' in response) serverState = { error: response.error.message, status: 'error' }
+    else serverState = { result: response.result, status: 'done' }
+  })
 
-  void consumer.webhookCallback
-    .send({
+  try {
+    const registration = await consumer.webhookCallback.send({
       method: 'ping',
       params: [{ message: 'hello from server consumer' }],
     })
-    .then(
-      ({ result }) => {
-        serverState = { result, status: 'done' }
-      },
-      (error: Error) => {
-        serverState = { error: error.message, status: 'error' }
-      },
-    )
-
-  const prompt = await Promise.race([
-    promptDeferred.promise,
-    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 10_000)),
-  ])
-
-  prompts.resolveWebhook = undefined
-
-  if (!prompt) {
-    serverState = { error: 'webhook prompt was not created', status: 'error' }
+    serverState = { status: 'pending', verificationUri: registration.verificationUri }
+    return c.json(serverState)
+  } catch (error) {
+    controller.abort()
+    serverState = { error: (error as Error).message, status: 'error' }
     return c.json(serverState, 500)
   }
-
-  serverState = { status: 'pending', verificationUri: prompt.verificationUri }
-  return c.json(serverState)
 })
 
 app.get('/demo/server/result', (c) => c.json(serverState))

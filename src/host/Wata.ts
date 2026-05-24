@@ -119,12 +119,13 @@ export type SchemaNotificationEvent<schema extends Schema.Schema | undefined> =
     : NotificationEvent
 
 /** Host-side event map (lifecycle + request/notification dispatch). */
-export type HostEventMap<schema extends Schema.Schema | undefined> = Wata.LifecycleEventMap & {
-  /** Inbound JSON-RPC notification. Fire-and-forget. */
-  notification: SchemaNotificationEvent<schema>
-  /** Inbound JSON-RPC request. First non-`undefined` listener return wins. */
-  request: SchemaRequestEvent<schema>
-}
+export type HostEventMap<schema extends Schema.Schema | undefined> =
+  Wata.LifecycleEventMap<schema> & {
+    /** Inbound JSON-RPC notification. Fire-and-forget. */
+    notification: SchemaNotificationEvent<schema>
+    /** Inbound JSON-RPC request. First non-`undefined` listener return wins. */
+    request: SchemaRequestEvent<schema>
+  }
 
 /** Non-empty tuple of host transports accepted by {@link create}. */
 export type HostTransports = readonly [
@@ -297,7 +298,7 @@ export function create<
   // first-non-undefined-wins resolution semantics. Tracked here rather
   // than via `emitter.on('request', ...)` because the wrapper swallows
   // listener errors and never surfaces return values back to the caller.
-  const requestListeners = new Set<Wata.Listener<HostEventMap<schema>['request']>>()
+  const requestListeners = new Set<(payload: HostEventMap<schema>['request']) => unknown>()
 
   type Runtime = {
     phase: 'pre-key' | 'keyed'
@@ -329,7 +330,7 @@ export function create<
     const entry = pending.get(key)
     if (!entry) return Promise.resolve(false)
     pending.delete(key)
-    return safeSend(transport, [response]).then(() => true)
+    return sendResponses(transport, [response]).then(() => true)
   }
 
   function resolvePending(id: Rpc.Id): PendingRequest | undefined {
@@ -394,12 +395,41 @@ export function create<
     void start().catch((error: Error) => emitter.emit('error', error))
   }
 
+  async function sendResponses(
+    transport: Transport.Transport<'host', string>,
+    responses: ReadonlyArray<Rpc.Response>,
+  ): Promise<void> {
+    const envelope = Envelope.rpcResponses(responses)
+    emitter.emit('rpc-responses', envelope.payload as Wata.RpcResponsesPayload<schema>, {
+      direction: 'outgoing',
+      transport: transport.name,
+      type: 'rpc-responses',
+    })
+    try {
+      await transport.send(envelope)
+    } catch {
+      // The transport surfaces its own error to listeners; swallow here so
+      // the host loop doesn't blow up after a peer disconnect.
+    }
+  }
+
+  function emitRpcRequests(
+    transport: Transport.Transport<'host', string>,
+    envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>,
+  ): void {
+    emitter.emit('rpc-requests', envelope.payload as unknown as Wata.RpcRequestsPayload<schema>, {
+      direction: 'incoming',
+      transport: transport.name,
+      type: 'rpc-requests',
+    })
+  }
+
   async function dispatchRequest(runtime: Runtime, request: Rpc.Request) {
     if (schema) {
       try {
         Wata.validateParamsIfKnown(schema, request.method, request.params)
       } catch (cause) {
-        await safeSend(runtime.transport, [
+        await sendResponses(runtime.transport, [
           Rpc.error({
             code: -32602,
             data: (cause as Error).message,
@@ -414,7 +444,7 @@ export function create<
     // No listener has any chance of answering this request. Fall through
     // to JSON-RPC `method not found` so the consumer doesn't hang.
     if (requestListeners.size === 0) {
-      await safeSend(runtime.transport, [
+      await sendResponses(runtime.transport, [
         Rpc.error({
           code: -32601,
           data: request.method,
@@ -523,12 +553,16 @@ export function create<
         return
       }
     }
-    emitter.emit('notification', {
+    const payload = {
       method: message.method,
       notification: message,
       params: message.params,
       transport: runtime.transport.name,
-    } as HostEventMap<schema>['notification'])
+    } as HostEventMap<schema>['notification']
+    emitter.emit(
+      'notification',
+      ...([payload] as Events.EventArgs<HostEventMap<schema>['notification']>),
+    )
   }
 
   /**
@@ -540,7 +574,7 @@ export function create<
   function rejectModeViolation(runtime: Runtime, reason: string): void {
     const error = new Errors.ProtocolError(reason)
     void (async () => {
-      await safeSend(runtime.transport, [
+      await sendResponses(runtime.transport, [
         Rpc.error({ code: -32600, data: reason, id: null, message: 'invalid request' }),
       ])
       try {
@@ -563,6 +597,7 @@ export function create<
         return
       }
       if (envelope.type === 'rpc-requests') {
+        emitRpcRequests(runtime.transport, envelope)
         for (const message of envelope.payload) {
           if ('id' in message) await dispatchRequest(runtime, message)
           else dispatchNotification(runtime, message)
@@ -619,7 +654,7 @@ export function create<
     listener: httpListener as Host<schema, transports>['listener'],
     off(type, listener) {
       if (type === 'request') {
-        requestListeners.delete(listener as Wata.Listener<HostEventMap<schema>['request']>)
+        requestListeners.delete(listener as (payload: HostEventMap<schema>['request']) => unknown)
         return
       }
       emitter.off(type, listener)
@@ -627,11 +662,13 @@ export function create<
     on(type, listener) {
       const controller = new AbortController()
       if (type === 'request') {
-        requestListeners.add(listener as Wata.Listener<HostEventMap<schema>['request']>)
+        requestListeners.add(listener as (payload: HostEventMap<schema>['request']) => unknown)
         controller.signal.addEventListener(
           'abort',
           () => {
-            requestListeners.delete(listener as Wata.Listener<HostEventMap<schema>['request']>)
+            requestListeners.delete(
+              listener as (payload: HostEventMap<schema>['request']) => unknown,
+            )
           },
           { once: true },
         )
@@ -736,18 +773,6 @@ export function collectTransports(
     documentTransports[discovery.id] = discovery.binding(baseUrl)
   }
   return documentTransports
-}
-
-async function safeSend(
-  transport: Transport.Transport,
-  responses: ReadonlyArray<Rpc.Response>,
-): Promise<void> {
-  try {
-    await transport.send(Envelope.rpcResponses(responses))
-  } catch {
-    // The transport surfaces its own error to listeners; swallow here so
-    // the host loop doesn't blow up after a peer disconnect.
-  }
 }
 
 function pendingKey(transport: Transport.Transport<'host', string>, id: Rpc.Id): string {

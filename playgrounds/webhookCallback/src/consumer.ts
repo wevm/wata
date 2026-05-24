@@ -54,9 +54,6 @@ const wata = Wata.create({
   transports: [
     webhookCallback({
       host: hostUrl,
-      onPrompt({ verificationUri }) {
-        Clack.note(verificationUri, 'Open this URL in your browser to approve')
-      },
       path: webhookPath,
       store: Kv.memory(),
     }),
@@ -94,15 +91,27 @@ if (Clack.isCancel(method)) {
 const params = method === 'echo' ? [{ hello: 'world' }] : []
 
 const spinner = Clack.spinner()
-spinner.start('waiting for approval...')
 
 try {
-  const response = await wata.send({
+  const result = new Promise<unknown>((resolve, reject) => {
+    wata.on('rpc-responses', (responses) => {
+      const response = responses[0]
+      if (!response) return
+      if ('error' in response) reject(new Error(response.error.message))
+      else resolve(response.result)
+    })
+  })
+  spinner.start('registering...')
+  const registration = await wata.send({
     method: method as string,
     params: params as never,
   })
+  spinner.stop('registered')
+  Clack.note(registration.verificationUri, 'Open this URL in your browser to approve')
+  spinner.start('waiting for callback...')
+  const response = await result
   spinner.stop('approved')
-  Clack.outro(`response: ${JSON.stringify(response.result)}`)
+  Clack.outro(`response: ${JSON.stringify(response)}`)
 } catch (cause) {
   spinner.stop('failed')
   Clack.outro(`error: ${(cause as Error).name}: ${(cause as Error).message}`)

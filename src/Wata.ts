@@ -42,28 +42,76 @@ export type SendResult<result> = {
   result: result
 }
 
-/**
- * Listener supplied to {@link Consumer.on} (and to {@link "./host/Wata".Host.on}).
- * Receives the typed payload for the subscribed event directly. The
- * underlying `rettime` `TypedEvent` is unwrapped to keep call sites
- * focused on the data they care about.
- */
-export type Listener<payload> = (payload: payload) => unknown
+/** Listener supplied to `Wata.on`. */
+export type Listener<payload> = Events.Listener<payload>
+
+/** Raw RPC envelope types surfaced through lifecycle events. */
+export type RpcEnvelopeType = 'rpc-requests' | 'rpc-responses'
+
+/** Metadata passed as the second argument to raw RPC envelope listeners. */
+export type RpcEnvelopeMeta<type extends RpcEnvelopeType = RpcEnvelopeType> = {
+  /** Direction relative to the local `Wata` instance. */
+  direction: 'incoming' | 'outgoing'
+  /** SDK-facing transport name that carried this envelope. */
+  transport: string
+  /** Raw uRPC envelope type. */
+  type: type
+}
+
+type RpcRequestMessageOf<schema extends Schema.Schema | undefined> = schema extends Schema.Schema
+  ? {
+      [method in Schema.MethodName<schema>]:
+        | Rpc.Notification<method, Rpc.Params & Schema.ParamsOf<schema, method>>
+        | Rpc.Request<method, Rpc.Params & Schema.ParamsOf<schema, method>>
+    }[Schema.MethodName<schema>]
+  : Envelope.RpcRequestMessage
+
+type RpcResponseMessageOf<schema extends Schema.Schema | undefined> = Rpc.Response<
+  RpcResponseResultOf<schema>
+>
+
+type RpcResponseResultOf<schema extends Schema.Schema | undefined> = schema extends Schema.Schema
+  ? {
+      [method in Schema.MethodName<schema>]: Schema.ResultOf<schema, method>
+    }[Schema.MethodName<schema>]
+  : unknown
+
+/** Payload passed to `'rpc-requests'` listeners. */
+export type RpcRequestsPayload<schema extends Schema.Schema | undefined = undefined> =
+  readonly RpcRequestMessageOf<schema>[]
+
+/** Payload passed to `'rpc-responses'` listeners. */
+export type RpcResponsesPayload<schema extends Schema.Schema | undefined = undefined> =
+  readonly RpcResponseMessageOf<schema>[]
 
 /** Lifecycle events emitted on every `Wata` (consumer + host). */
-export type LifecycleEventMap = {
+export type LifecycleEventMap<schema extends Schema.Schema | undefined = undefined> = {
   /** Emitted exactly once when the session closes, cleanly or with cause. */
   close: Error | undefined
   /** Emitted when the transport surfaces an error (network, parse, AEAD). */
   error: Error
   /** Emitted after `start()` completes (both consumer and host). */
   open: void
+  /** Observed `rpc-requests` envelope. */
+  'rpc-requests': [
+    /** JSON-RPC request/notification payloads carried by the envelope. */
+    requests: RpcRequestsPayload<schema>,
+    /** Direction and transport metadata for the envelope. */
+    meta: RpcEnvelopeMeta<'rpc-requests'>,
+  ]
+  /** Observed `rpc-responses` envelope. */
+  'rpc-responses': [
+    /** JSON-RPC response payloads carried by the envelope. */
+    responses: RpcResponsesPayload<schema>,
+    /** Direction and transport metadata for the envelope. */
+    meta: RpcEnvelopeMeta<'rpc-responses'>,
+  ]
 }
 
 /** Non-empty tuple of consumer transports accepted by {@link create}. */
 export type ConsumerTransports = readonly [
-  Transport.Transport<'consumer', string>,
-  ...Transport.Transport<'consumer', string>[],
+  Transport.Transport<'consumer', string, unknown>,
+  ...Transport.Transport<'consumer', string, unknown>[],
 ]
 
 /** Default single-transport tuple used by the broad {@link Consumer} type. */
@@ -72,7 +120,7 @@ export type SingleConsumerTransports = readonly [Transport.Transport<'consumer',
 /** Transport-specific consumer session exposed on `wata.<transportName>`. */
 export type ConsumerSession<
   schema extends Schema.Schema | undefined,
-  transport extends Transport.Transport<'consumer', string>,
+  transport extends Transport.Transport<'consumer', string, unknown>,
 > = {
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
@@ -87,17 +135,17 @@ export type ConsumerSession<
     options: Consumer.NotifyOptions<method, params>,
   ) => Promise<void>
   /** Remove a previously subscribed listener. */
-  off: <type extends keyof LifecycleEventMap>(
+  off: <type extends keyof LifecycleEventMap<schema>>(
     type: type,
-    listener: Listener<LifecycleEventMap[type]>,
+    listener: Listener<LifecycleEventMap<schema>[type]>,
   ) => void
   /**
-   * Subscribe to a lifecycle event. Returns an `AbortController` so the
+   * Subscribe to a consumer event. Returns an `AbortController` so the
    * subscription can be cancelled (or composed with an external signal).
    */
-  on: <type extends keyof LifecycleEventMap>(
+  on: <type extends keyof LifecycleEventMap<schema>>(
     type: type,
-    listener: Listener<LifecycleEventMap[type]>,
+    listener: Listener<LifecycleEventMap<schema>[type]>,
   ) => AbortController
   /** Side of the protocol this wata speaks for. */
   role: 'consumer'
@@ -105,15 +153,16 @@ export type ConsumerSession<
   schema: schema
   /**
    * Send a typed JSON-RPC request over this transport. Auto-starts on
-   * first use. Resolves with the host's `result` (or rejects with
-   * {@link Rpc.RpcError} if the host returned an error response).
+   * first use. Ongoing transports resolve with the host's `result`.
+   * Out-of-band transports may resolve with registration metadata and emit
+   * the eventual host result through `'rpc-responses'`.
    */
   send: <
     const method extends Consumer.MethodName<schema>,
     const params extends Consumer.ParamsOf<schema, method>,
   >(
     options: Consumer.SendOptions<method, params>,
-  ) => Promise<SendResult<Consumer.ResultOf<schema, method>>>
+  ) => Promise<Consumer.SendReturn<schema, transport, method>>
   /**
    * Explicitly bring the session up. Starts the transport and resolves
    * once it is ready to send and receive frames. Emits `'open'` on success.
@@ -142,15 +191,15 @@ export type ConsumerBase<
   fetch: Http.HandlersForTransports<transports>['fetch']
   /** See {@link fetch}. */
   listener: Http.HandlersForTransports<transports>['listener']
-  /** Remove a previously subscribed lifecycle listener. */
-  off: <type extends keyof LifecycleEventMap>(
+  /** Remove a previously subscribed consumer listener. */
+  off: <type extends keyof LifecycleEventMap<schema>>(
     type: type,
-    listener: Listener<LifecycleEventMap[type]>,
+    listener: Listener<LifecycleEventMap<schema>[type]>,
   ) => void
-  /** Subscribe to aggregate lifecycle events. */
-  on: <type extends keyof LifecycleEventMap>(
+  /** Subscribe to aggregate consumer events. */
+  on: <type extends keyof LifecycleEventMap<schema>>(
     type: type,
-    listener: Listener<LifecycleEventMap[type]>,
+    listener: Listener<LifecycleEventMap<schema>[type]>,
   ) => AbortController
   /** Side of the protocol this wata speaks for. */
   role: 'consumer'
@@ -180,7 +229,9 @@ export type Consumer<
   schema extends Schema.Schema | undefined = undefined,
   transports extends ConsumerTransports = SingleConsumerTransports,
 > = ConsumerBase<schema, transports> &
-  (transports extends readonly [infer transport extends Transport.Transport<'consumer', string>]
+  (transports extends readonly [
+    infer transport extends Transport.Transport<'consumer', string, unknown>,
+  ]
     ? ConsumerSession<schema, transport>
     : ConsumerChildMap<schema, transports>)
 
@@ -209,6 +260,18 @@ export declare namespace Consumer {
       ? Schema.ResultOf<schema, method>
       : unknown
     : unknown
+
+  /** Return type of `send`, preserving transport-specific registration metadata. */
+  type SendReturn<
+    schema extends Schema.Schema | undefined,
+    transport extends Transport.Transport<'consumer', string, unknown>,
+    method extends string,
+  > =
+    transport extends Transport.Transport<'consumer', string, infer value>
+      ? [value] extends [void]
+        ? SendResult<ResultOf<schema, method>>
+        : value
+      : never
 
   /** Options for {@link Consumer.send}. */
   type SendOptions<method extends string, params extends Rpc.Params> = {
@@ -300,9 +363,11 @@ export function create<
     } as unknown as Consumer<schema, transports>
   }
 
-  const emitter = Events.create<LifecycleEventMap>()
+  const emitter = Events.create<LifecycleEventMap<schema>>()
   for (const session of sessions) {
     session.on('error', (error) => emitter.emit('error', error))
+    session.on('rpc-requests', (payload, meta) => emitter.emit('rpc-requests', payload, meta))
+    session.on('rpc-responses', (payload, meta) => emitter.emit('rpc-responses', payload, meta))
   }
   const consumer = {
     async close(cause?: Error) {
@@ -312,7 +377,10 @@ export function create<
     fetch: httpFetch as Consumer<schema, transports>['fetch'],
     listener: httpListener as Consumer<schema, transports>['listener'],
     off: emitter.off,
-    on(type: keyof LifecycleEventMap, listener: Listener<LifecycleEventMap[typeof type]>) {
+    on(
+      type: keyof LifecycleEventMap<schema>,
+      listener: Listener<LifecycleEventMap<schema>[typeof type]>,
+    ) {
       const controller = new AbortController()
       emitter.on(type, listener as never, { signal: controller.signal })
       return controller
@@ -327,11 +395,11 @@ export function create<
 
 function createConsumerSession<
   const schema extends Schema.Schema | undefined,
-  const transport extends Transport.Transport<'consumer', string>,
+  const transport extends Transport.Transport<'consumer', string, unknown>,
 >(parameters: { schema: schema; transport: transport }): ConsumerSession<schema, transport> {
   const { schema, transport } = parameters
 
-  const emitter = Events.create<LifecycleEventMap>()
+  const emitter = Events.create<LifecycleEventMap<schema>>()
 
   const pending = new Map<Rpc.Id, Pending>()
   const methodById = new Map<Rpc.Id, string>()
@@ -360,7 +428,35 @@ function createConsumerSession<
     methodById.clear()
   }
 
-  function handleResponse(message: Rpc.Response) {
+  function rejectResponseValidation(message: Rpc.Response, cause: unknown): void {
+    if ('error' in message || message.id === null) {
+      emitter.emit('error', cause as Error)
+      return
+    }
+    const deferred = pending.get(message.id)
+    if (!deferred) {
+      emitter.emit('error', cause as Error)
+      return
+    }
+    pending.delete(message.id)
+    methodById.delete(message.id)
+    emitter.emit('error', cause as Error)
+    deferred.reject(cause as Error)
+  }
+
+  function validateResponseMessage(message: Rpc.Response): Rpc.Response {
+    if ('error' in message) return message
+    if (!schema) return message
+    const method = message.id === null ? undefined : methodById.get(message.id)
+    const result = validateResultIfKnown(schema, method, message.result)
+    return {
+      id: message.id,
+      jsonrpc: message.jsonrpc,
+      result,
+    }
+  }
+
+  function handleResponse(message: Rpc.Response, options: { validated?: boolean } = {}) {
     if ('error' in message) {
       const id = message.id
       if (id === null) return
@@ -380,13 +476,37 @@ function createConsumerSession<
     const method = methodById.get(id)
     methodById.delete(id)
     try {
-      const validated = schema
-        ? validateResultIfKnown(schema, method, message.result)
-        : message.result
+      const validated = options.validated
+        ? message.result
+        : schema
+          ? validateResultIfKnown(schema, method, message.result)
+          : message.result
       deferred.resolve({ id, result: validated })
     } catch (cause) {
       deferred.reject(cause as Error)
     }
+  }
+
+  function emitRpcResponses(
+    envelope: Extract<Envelope.Envelope, { type: 'rpc-responses' }>,
+    direction: RpcEnvelopeMeta['direction'],
+  ): void {
+    emitter.emit('rpc-responses', envelope.payload as RpcResponsesPayload<schema>, {
+      direction,
+      transport: transport.name,
+      type: 'rpc-responses',
+    })
+  }
+
+  function emitRpcRequests(
+    envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>,
+    direction: RpcEnvelopeMeta['direction'],
+  ): void {
+    emitter.emit('rpc-requests', envelope.payload as unknown as RpcRequestsPayload<schema>, {
+      direction,
+      transport: transport.name,
+      type: 'rpc-requests',
+    })
   }
 
   /**
@@ -399,11 +519,11 @@ function createConsumerSession<
     const error = new Errors.ProtocolError(reason)
     void (async () => {
       try {
-        await transport.send(
-          Envelope.rpcResponses([
-            Rpc.error({ code: -32600, data: reason, id: null, message: 'invalid request' }),
-          ]),
-        )
+        const envelope = Envelope.rpcResponses([
+          Rpc.error({ code: -32600, data: reason, id: null, message: 'invalid request' }),
+        ])
+        emitRpcResponses(envelope, 'outgoing')
+        await transport.send(envelope)
       } catch {
         // Peer may already be unreachable; the teardown below is what matters.
       }
@@ -433,12 +553,25 @@ function createConsumerSession<
       return
     }
     if (envelope.type === 'rpc-responses') {
-      for (const message of envelope.payload) handleResponse(message)
+      const payload: Rpc.Response[] = []
+      for (const message of envelope.payload) {
+        try {
+          payload.push(validateResponseMessage(message))
+        } catch (cause) {
+          rejectResponseValidation(message, cause)
+        }
+      }
+      if (payload.length === 0) return
+      const envelope_validated = Envelope.rpcResponses(payload)
+      emitRpcResponses(envelope_validated, 'incoming')
+      for (const message of envelope_validated.payload) handleResponse(message, { validated: true })
       return
     }
-    // `rpc-requests`, `ready`, `hello` are not currently routed into the
-    // consumer-side surface; ignored. (Hosts don't issue requests today;
-    // `ready`/`hello` ride at the transport layer.)
+    if (envelope.type === 'rpc-requests') {
+      emitRpcRequests(envelope, 'incoming')
+      return
+    }
+    // `ready` / `hello` ride at the transport layer.
   })
 
   transport.on('close', (cause) => {
@@ -478,9 +611,11 @@ function createConsumerSession<
     async notify(opts) {
       if (!state.started) await start()
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
-      await transport.send(
-        Envelope.rpcRequests([Rpc.notification({ method: opts.method, params: opts.params })]),
-      )
+      const envelope = Envelope.rpcRequests([
+        Rpc.notification({ method: opts.method, params: opts.params }),
+      ])
+      emitRpcRequests(envelope, 'outgoing')
+      await transport.send(envelope)
     },
     off: emitter.off,
     on(type, listener) {
@@ -502,16 +637,22 @@ function createConsumerSession<
       methodById.set(id, opts.method)
 
       try {
-        await transport.send(
-          Envelope.rpcRequests([Rpc.request({ id, method: opts.method, params: opts.params })]),
-        )
+        const envelope = Envelope.rpcRequests([
+          Rpc.request({ id, method: opts.method, params: opts.params }),
+        ])
+        emitRpcRequests(envelope, 'outgoing')
+        const metadata = await transport.send(envelope)
+        if (metadata !== undefined) {
+          void deferred.catch(() => undefined)
+          return metadata as Consumer.SendReturn<schema, transport, typeof opts.method>
+        }
       } catch (cause) {
         pending.delete(id)
         methodById.delete(id)
         throw cause
       }
 
-      return (await deferred) as SendResult<Consumer.ResultOf<schema, typeof opts.method>>
+      return (await deferred) as Consumer.SendReturn<schema, transport, typeof opts.method>
     },
     start,
     transport,
@@ -559,7 +700,9 @@ export declare namespace create {
   }
 }
 
-function assertUniqueTransportNames(transports: readonly Transport.Transport[]): void {
+function assertUniqueTransportNames(
+  transports: readonly Transport.Transport<Transport.Role, string, unknown>[],
+): void {
   const seen = new Set<string>()
   for (const transport of transports) {
     if (seen.has(transport.name))
@@ -568,13 +711,17 @@ function assertUniqueTransportNames(transports: readonly Transport.Transport[]):
   }
 }
 
-function collectCallbackUrls(transports: readonly Transport.Transport[]): readonly string[] {
+function collectCallbackUrls(
+  transports: readonly Transport.Transport<Transport.Role, string, unknown>[],
+): readonly string[] {
   const urls = new Set<string>()
   for (const transport of transports) for (const url of transport.callbackUrls ?? []) urls.add(url)
   return Array.from(urls)
 }
 
-function collectPublicKey(transports: readonly Transport.Transport[]): string | undefined {
+function collectPublicKey(
+  transports: readonly Transport.Transport<Transport.Role, string, unknown>[],
+): string | undefined {
   let publicKey: string | undefined
   for (const transport of transports) {
     if (!transport.publicKey) continue
@@ -585,7 +732,7 @@ function collectPublicKey(transports: readonly Transport.Transport[]): string | 
   return publicKey
 }
 
-function isHttpServer<transport extends Transport.Transport>(
+function isHttpServer<transport extends Transport.Transport<Transport.Role, string, unknown>>(
   transport: transport,
 ): transport is transport & Http.RoutedServer {
   const candidate = transport as Partial<Http.RoutedServer>

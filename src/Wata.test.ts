@@ -202,6 +202,130 @@ describe('send', () => {
     `)
   })
 
+  test('emits rpc-responses with transport metadata', async () => {
+    const { consumer, host } = pair()
+    const events: Array<{ direction: string; results: unknown[]; transport: string }> = []
+    consumer.on('rpc-responses', (responses, meta) => {
+      events.push({
+        direction: meta.direction,
+        results: responses.map((response) =>
+          'error' in response ? response.error.message : response.result,
+        ),
+        transport: meta.transport,
+      })
+    })
+    host.on('request', (event) => {
+      if (event.method === 'ping') event.respond({ ok: true })
+    })
+
+    await consumer.send({ method: 'ping', params: [] })
+
+    expect(events).toMatchInlineSnapshot(`
+      [
+        {
+          "direction": "incoming",
+          "results": [
+            {
+              "ok": true,
+            },
+          ],
+          "transport": "loopback",
+        },
+      ]
+    `)
+  })
+
+  test('emits consumer rpc-requests with transport metadata', async () => {
+    const { consumer, host } = pair()
+    const events: Array<{ direction: string; methods: string[]; transport: string }> = []
+    consumer.on('rpc-requests', (requests, meta) => {
+      events.push({
+        direction: meta.direction,
+        methods: requests.map((request) => request.method),
+        transport: meta.transport,
+      })
+    })
+    host.on('request', (event) => {
+      if (event.method === 'ping') event.respond({ ok: true })
+    })
+
+    await consumer.send({ method: 'ping', params: [] })
+
+    expect(events).toMatchInlineSnapshot(`
+      [
+        {
+          "direction": "outgoing",
+          "methods": [
+            "ping",
+          ],
+          "transport": "loopback",
+        },
+      ]
+    `)
+  })
+
+  test('emits host rpc-requests with transport metadata', async () => {
+    const { consumer, host } = pair()
+    const events: Array<{ direction: string; methods: string[]; transport: string }> = []
+    host.on('rpc-requests', (requests, meta) => {
+      events.push({
+        direction: meta.direction,
+        methods: requests.map((request) => request.method),
+        transport: meta.transport,
+      })
+    })
+    host.on('request', (event) => {
+      if (event.method === 'ping') event.respond({ ok: true })
+    })
+
+    await consumer.send({ method: 'ping', params: [] })
+
+    expect(events).toMatchInlineSnapshot(`
+      [
+        {
+          "direction": "incoming",
+          "methods": [
+            "ping",
+          ],
+          "transport": "loopback",
+        },
+      ]
+    `)
+  })
+
+  test('emits host rpc-responses with transport metadata', async () => {
+    const { consumer, host } = pair()
+    const events: Array<{ direction: string; results: unknown[]; transport: string }> = []
+    host.on('rpc-responses', (responses, meta) => {
+      events.push({
+        direction: meta.direction,
+        results: responses.map((response) =>
+          'error' in response ? response.error.message : response.result,
+        ),
+        transport: meta.transport,
+      })
+    })
+    host.on('request', (event) => {
+      if (event.method === 'ping') event.respond({ ok: true })
+    })
+
+    await consumer.send({ method: 'ping', params: [] })
+
+    expect(events).toMatchInlineSnapshot(`
+      [
+        {
+          "direction": "outgoing",
+          "results": [
+            {
+              "ok": true,
+            },
+          ],
+          "transport": "loopback",
+        },
+      ]
+    `)
+  })
+
   test('first non-undefined listener return wins', async () => {
     const { consumer, host } = pair()
     await consumer.start()
