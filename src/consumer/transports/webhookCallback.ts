@@ -8,10 +8,9 @@
  * 1. RFC 9421-signs `POST <registerUrl>` with the consumer's
  *    long-term Ed25519 identity key, carrying the queued
  *    `rpc-requests` envelope and the consumer's `webhook_url`.
- * 2. Returns immediately once the host accepts (`200 OK`, with
- *    `auth_req_id` / `verification_uri`); the user is fanned out
- *    to the verification URI through the consumer's out-of-band
- *    channel.
+ * 2. Resolves once the host accepts (`200 OK`, with
+ *    `auth_req_id` / `verification_uri`) and returns registration metadata
+ *    so the caller can fan the user out to the verification URI.
  * 3. The transport's `.fetch` / `.listener` handle the incoming
  *    `POST <baseUrl><path>` from the host: verify RFC 9421 signature
  *    against the host's pinned `identity_pubkey`, verify the
@@ -42,7 +41,12 @@
  *   ],
  * })
  *
- * const { result } = await wata.send({ method: 'wallet_connect', params: [] })
+ * wata.on('rpc-responses', (responses, meta) => {
+ *   console.log(responses, meta)
+ * })
+ *
+ * const registration = await wata.send({ method: 'wallet_connect', params: [] })
+ * console.log(`Visit ${registration.verificationUri}`)
  * ```
  */
 
@@ -60,8 +64,8 @@ import * as MessageSig from '../../core/MessageSig.js'
 import * as Transport from '../../core/Transport.js'
 import * as Uri from '../../internal/Uri.js'
 
-/** Information surfaced to {@link Options.onPrompt} once `/register` succeeds. */
-export type Prompt = {
+/** Information returned by `send()` once `/register` succeeds. */
+export type Registration = {
   /** Approval-window lifetime (seconds) advertised by the host. */
   expiresIn: number
   /** Retry-budget hint (seconds) advertised by the host. */
@@ -91,14 +95,6 @@ export type Options = {
    */
   host: string | Discovery.HostDocument
   /**
-   * Optional callback invoked once `POST /register` succeeds and the
-   * host returns a `verification_uri`. Use this to fan the URL out
-   * to the user (CLI prompt, in-app overlay, QR code, etc.) so they
-   * can approve the request out of band. The transport itself never
-   * displays anything.
-   */
-  onPrompt?: ((prompt: Prompt) => void | Promise<void>) | undefined
-  /**
    * Path the webhook listener responds on. Combined with the bound
    * `Wata.create({ baseUrl })` to derive the callback URL advertised
    * in `consumer.json` and sent to host `/register`.
@@ -124,7 +120,7 @@ export type Options = {
  * plus the `.fetch` / `.listener` pair the consumer needs to serve
  * incoming webhook deliveries, plus an explicit {@link cancel} hook.
  */
-export type WebhookCallback = Transport.Transport<'consumer', 'webhookCallback'> &
+export type WebhookCallback = Transport.Transport<'consumer', 'webhookCallback', Registration> &
   Http.Server & {
     /**
      * RFC 9421-signed cancellation of the in-flight `auth_req_id`
@@ -143,9 +139,6 @@ export type WebhookCallback = Transport.Transport<'consumer', 'webhookCallback'>
  *
  * const transport = webhookCallback({
  *   host: 'https://wallet.example',
- *   onPrompt({ verificationUri }) {
- *     console.log(`Visit ${verificationUri}`)
- *   },
  *   path: '/cb',
  *   store: Kv.memory(),
  * })
@@ -156,7 +149,6 @@ export function webhookCallback(options: Options): WebhookCallback {
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
     fetchTimeout = 30_000,
     host,
-    onPrompt,
     path,
     store,
   } = options
@@ -258,7 +250,7 @@ export function webhookCallback(options: Options): WebhookCallback {
 
   const fetchWithTimeout = Fetch.withTimeout(fetchImpl, fetchTimeout)
 
-  async function runRegister(envelope: Envelope.Envelope): Promise<void> {
+  async function runRegister(envelope: Envelope.Envelope): Promise<Registration> {
     if (envelope.type !== 'rpc-requests')
       throw new Transport.UnsupportedError(
         `webhook-callback transport only carries rpc-requests envelopes; received \`${envelope.type}\``,
@@ -388,12 +380,11 @@ export function webhookCallback(options: Options): WebhookCallback {
     state.activeHostPubkey = hostDoc.identity_pubkey
     state.activeRegisterUrl = registerUrl
 
-    if (onPrompt)
-      await onPrompt({
-        expiresIn: data.expires_in,
-        retrySeconds: data.retry_seconds,
-        verificationUri,
-      })
+    return {
+      expiresIn: data.expires_in,
+      retrySeconds: data.retry_seconds,
+      verificationUri,
+    }
   }
 
   // Inbound webhook listener. RFC 9421 §3.4.2 verification order:
@@ -590,15 +581,15 @@ export function webhookCallback(options: Options): WebhookCallback {
         )
       if (!state.started) state.started = true
       state.inFlight = true
-      try {
-        await runRegister(envelope)
-      } catch (cause) {
+      const registration = await runRegister(envelope).catch((cause) => {
         settle(undefined, cause as Error)
         throw cause
-      }
-      // `send()` returns once `/register` succeeded; the actual
-      // `rpc-responses` envelope arrives later via the webhook
-      // listener and is dispatched as a `'message'` event.
+      })
+      // `send()` resolves with registration metadata once `/register`
+      // succeeds; the actual `rpc-responses` envelope arrives later
+      // via the webhook listener and is dispatched as a `'message'`
+      // event.
+      return registration
     },
     async start() {
       if (state.closed) throw new Transport.ClosedError('webhook-callback transport already closed')

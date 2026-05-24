@@ -148,7 +148,7 @@ Server-to-server session where the consumer registers a signed intent with the h
 
 #### Consumer
 
-Publishes `consumer.json`, starts a webhook listener, opens the host's verification URL for the user, then waits for the callback response.
+Publishes `consumer.json`, serves a web page that starts the request, opens the host's verification URL for the user, then receives the callback response at its webhook endpoint.
 
 ```ts
 import { Kv, Wata, webhookCallback } from 'wata'
@@ -160,19 +160,23 @@ const wata = Wata.create({
   transports: [
     webhookCallback({
       host: 'https://wallet.example',
-      onPrompt({ verificationUri }) {
-        console.log(`Visit ${verificationUri}`)
-      },
       path: '/callback',
       store: Kv.memory(),
     }),
   ],
 })
 
-const { result } = await wata.send({
+wata.on('rpc-responses', (responses, meta) => {
+  console.log(responses)
+  console.log(meta)
+})
+
+const registration = await wata.send({
   method: 'wallet_connect',
   params: [],
 })
+
+console.log(`Visit ${registration.verificationUri}`)
 ```
 
 #### Host

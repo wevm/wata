@@ -1,19 +1,6 @@
-import {
-  Kv,
-  PostMessage,
-  Wata,
-  WebhookCallback,
-  deviceCode,
-  postMessage,
-  webhookCallback,
-} from 'wata'
+import { Kv, PostMessage, Wata, deviceCode, postMessage, webhookCallback } from 'wata'
 
 export const baseUrl = 'http://localhost:5173'
-
-export const prompts = {
-  resolveWebhook: undefined as ((prompt: WebhookCallback.Prompt) => void) | undefined,
-  webhook: undefined as WebhookCallback.Prompt | undefined,
-}
 
 export const consumer = Wata.create({
   baseUrl,
@@ -40,11 +27,6 @@ export const consumer = Wata.create({
     }),
     webhookCallback({
       host: `${baseUrl}/.well-known/urpc/host.json`,
-      onPrompt(prompt) {
-        prompts.webhook = prompt
-        prompts.resolveWebhook?.(prompt)
-        console.log(`open ${prompt.verificationUri}`)
-      },
       path: '/consumer/callback',
       store: Kv.memory(),
     }),

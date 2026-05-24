@@ -1,11 +1,3 @@
-/**
- * Minimal host-side example for the `webhookCallback` transport.
- *
- * Runs a tiny Hono server that publishes `host.json`, accepts webhook
- * registrations at `/auth/webhook/register`, and serves a small HTML
- * approval page at `/auth/webhook/verify`.
- */
-
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { Kv, Wata, webhookCallback } from 'wata/host'
@@ -16,34 +8,34 @@ const privateKey = '0x2222222222222222222222222222222222222222222222222222222222
 
 const wata = Wata.create({
   baseUrl,
-  meta: { name: 'Example Wallet' },
+  meta: { name: 'Example Host' },
   privateKey,
   transports: [
     webhookCallback({
       html: {
-        async authenticate({ request, actions }) {
+        async authenticate({ actions, request }) {
           const form = await request.formData()
           const code = String(form.get('code') ?? '')
-          const decision = String(form.get('decision') ?? '')
-          if (decision === 'approve') {
+          if (form.get('decision') === 'approve') {
             await actions.approve(code)
-            return html('<p>Approved</p>')
+            return html('<p>Approved. Return to the consumer.</p>')
           }
           await actions.deny(code)
-          return html('<p>Denied</p>')
+          return html('<p>Denied. Return to the consumer.</p>')
         },
-        render({ approvalToken, record, code }) {
-          if (!record) return html('<h1>No pending request</h1>')
+        render({ approvalToken, code, record }) {
+          if (!record) return html('<p>No pending request.</p>', 404)
           return html(`
-          <h1>Approve request?</h1>
-          <p>Consumer: <code>${escape(record.consumer.origin)}</code></p>
-          <form method="post" action="/auth/webhook/verify">
-            <input type="hidden" name="approval_token" value="${escape(approvalToken ?? '')}" />
-            <input type="hidden" name="code" value="${escape(code ?? '')}" />
-            <button type="submit" name="decision" value="approve">Approve</button>
-            <button type="submit" name="decision" value="deny">Deny</button>
-          </form>
-        `)
+            <h1>Host</h1>
+            <p>Consumer: ${escapeHtml(record.consumer.origin)}</p>
+            <pre>${escapeHtml(JSON.stringify(record.message.payload, null, 2))}</pre>
+            <form method="post" action="/auth/webhook/verify">
+              <input type="hidden" name="approval_token" value="${escapeHtml(approvalToken ?? '')}" />
+              <input type="hidden" name="code" value="${escapeHtml(code ?? '')}" />
+              <button name="decision" value="approve">Approve</button>
+              <button name="decision" value="deny">Deny</button>
+            </form>
+          `)
         },
       },
       path: '/auth/webhook',
@@ -53,26 +45,39 @@ const wata = Wata.create({
 })
 
 wata.on('request', async (event) => {
-  console.log(`request: ${event.method}`, event.params)
-  await event.respond({ message: 'pong from host' })
+  if (event.method !== 'message.send') {
+    await event.reject({ code: -32601, data: event.method, message: 'method not found' })
+    return
+  }
+  await event.respond({ echo: messageFrom(event.params) })
 })
 
 const app = new Hono()
+  .get('/', (c) => c.html('<h1>Host</h1>'))
   .all('/.well-known/*', (c) => wata.fetch(c.req.raw))
   .all('/auth/*', (c) => wata.fetch(c.req.raw))
 
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`listening on http://localhost:${info.port}`)
+serve({ fetch: app.fetch, port }, () => {
+  console.log(`host: ${baseUrl}`)
 })
 
+function messageFrom(params: unknown): string {
+  const first = Array.isArray(params) ? params[0] : undefined
+  if (first && typeof first === 'object') {
+    const text = (first as { text?: unknown }).text
+    if (typeof text === 'string') return text
+  }
+  return JSON.stringify(params)
+}
+
 function html(body: string, status = 200): Response {
-  return new Response(`<!doctype html><meta charset="utf-8">${body}`, {
+  return new Response(`<!doctype html>${body}`, {
     headers: { 'content-type': 'text/html; charset=utf-8' },
     status,
   })
 }
 
-function escape(value: string): string {
+function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
