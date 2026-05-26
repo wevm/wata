@@ -408,6 +408,17 @@ export function webhookCallback(options: Options): WebhookCallback {
     return baseUrl_bound
   }
 
+  function publicRequestUrl(requestUrl: string): string {
+    const publicBaseUrl = baseUrl_ctor ?? baseUrl_bound
+    if (!publicBaseUrl) return requestUrl
+    const url = new URL(requestUrl)
+    const publicUrl = new URL(publicBaseUrl)
+    url.protocol = publicUrl.protocol
+    url.hostname = publicUrl.hostname
+    url.port = publicUrl.port
+    return url.toString()
+  }
+
   function resolveKeyid(): string {
     const baseUrl = baseUrl_ctor ?? baseUrl_bound
     if (!baseUrl)
@@ -728,7 +739,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     const httpMessage: MessageSig.HttpMessage = {
       headers: collectHeaders(request.headers),
       method: 'POST',
-      url: c.req.url,
+      url: publicRequestUrl(c.req.url),
     }
     let verified: boolean
     try {
@@ -882,7 +893,7 @@ export function webhookCallback(options: Options): WebhookCallback {
         message: {
           headers: collectHeaders(request.headers),
           method: 'DELETE',
-          url: c.req.url,
+          url: publicRequestUrl(c.req.url),
         },
         publicKey: base64urlToHex(record.consumer.publicKey),
         requiredComponents: ['@method', '@target-uri', '@authority', 'urpc-public-key'],

@@ -82,6 +82,7 @@ type PairOptions = {
       ) => Promise<Response> | Response)
     | undefined
   hostExpiresIn?: number | undefined
+  hostIncomingOrigin?: string | undefined
   hostPendingIntentLimit?: HostWebhookCallback.Options['pendingIntentLimit'] | undefined
   hostRegistrationRateLimit?: HostWebhookCallback.Options['registrationRateLimit'] | undefined
   hostRetrySeconds?: number | undefined
@@ -159,7 +160,10 @@ function pair(options: PairOptions = {}) {
     if (url.startsWith(hostOrigin)) {
       if (url.endsWith('/.well-known/urpc/host.json')) return hostWk.fetch(request)
       registerSignatureInput = request.headers.get('signature-input') ?? undefined
-      return hostTransport.fetch(request)
+      if (!options.hostIncomingOrigin) return hostTransport.fetch(request)
+      return hostTransport.fetch(
+        new Request(url.replace(hostOrigin, options.hostIncomingOrigin), request),
+      )
     }
     throw new Error(`unexpected consumer->* fetch to ${url}`)
   }) as typeof fetch
@@ -426,6 +430,31 @@ describe('webhookCallback end-to-end', () => {
         },
       ]
     `)
+  })
+
+  test('verifies signed register and cancel requests against public baseUrl behind an internal request URL', async () => {
+    const setup = pair({ hostIncomingOrigin: 'http://internal.local:8787' })
+    Wata.create({
+      baseUrl: setup.consumerOrigin,
+      privateKey: setup.consumerKeypair.privateKey,
+      transports: [setup.consumerTransport],
+    })
+    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
+
+    await setup.consumerTransport.send(
+      Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+    )
+    const code = await setup.findActiveCode()
+    const record = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:code:${code}`,
+    )) as HostWebhookCallback.PendingRecord
+
+    await setup.consumerTransport.cancel()
+
+    const after = (await setup.hostStore.get<HostWebhookCallback.PendingRecord>(
+      `webhook:authReqId:${record.authReqId}`,
+    )) as HostWebhookCallback.PendingRecord
+    expect(after.status).toBe('cancelled')
   })
 
   test('calls outbound request guard before discovery and delivery fetches', async () => {
