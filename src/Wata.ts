@@ -670,6 +670,10 @@ function createConsumerSession<
       emitter.emit('close', cause)
     },
     async notify(opts) {
+      if (!transport.capabilities.notifications.consumer)
+        throw new Transport.UnsupportedError(
+          `transport \`${transport.name}\` does not support consumer notifications`,
+        )
       if (!state.started) await start()
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
       const envelope = Envelope.rpcRequests([

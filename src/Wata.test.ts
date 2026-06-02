@@ -600,6 +600,18 @@ describe('notify', () => {
       ]
     `)
   })
+
+  test('rejects when the transport does not support standalone consumer notifications', async () => {
+    const consumer = Wata.create({
+      transports: [deviceCode({ url: 'https://wallet.example/auth/device' })],
+    })
+
+    await expect(
+      consumer.notify({ method: 'ping', params: [] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Transport.UnsupportedError: transport \`deviceCode\` does not support consumer notifications]`,
+    )
+  })
 })
 
 describe('host notify', () => {

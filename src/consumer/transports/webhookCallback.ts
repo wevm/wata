@@ -558,7 +558,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     },
     cancel,
     capabilities: {
-      notifications: { consumer: true, host: false },
+      notifications: { consumer: false, host: false },
       requests: { consumer: true, host: false },
     },
     async close(cause) {

@@ -629,7 +629,7 @@ export function deviceCode(options: Options): DeviceCode {
       baseUrl_bound = Uri.trimTrailingSlash(baseUrl)
     },
     capabilities: {
-      notifications: { consumer: true, host: false },
+      notifications: { consumer: false, host: false },
       requests: { consumer: true, host: false },
     },
     async close(cause) {

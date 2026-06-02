@@ -378,7 +378,7 @@ export function deviceCode(options: Options): Transport.Transport<'consumer', 'd
       if (meta && !meta_ctor && !meta_bound) meta_bound = meta as Discovery.Meta
     },
     capabilities: {
-      notifications: { consumer: true, host: false },
+      notifications: { consumer: false, host: false },
       requests: { consumer: true, host: false },
     },
     async close(cause) {
