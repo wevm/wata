@@ -39,7 +39,7 @@ describe('postMessage (host)', () => {
     await transport.close()
   })
 
-  test('drains buffered frames once the consumer hello arrives', async () => {
+  test('replays ready before draining buffered frames once the consumer hello arrives', async () => {
     const { port1, port2 } = new MessageChannel()
     const transport = postMessage({ target: () => port1 })
 
@@ -68,6 +68,9 @@ describe('postMessage (host)', () => {
 
     expect(peerSeen).toMatchInlineSnapshot(`
     	[
+    	  {
+    	    "type": "urpc.ready",
+    	  },
     	  {
     	    "payload": [
     	      {
