@@ -31,6 +31,7 @@
 
 import { z } from 'zod/mini'
 
+import * as Uri from '../internal/Uri.js'
 import * as Errors from './Errors.js'
 
 const wellKnownPath = '/.well-known/urpc'
@@ -82,13 +83,7 @@ export namespace schema {
     z.refine(
       (value) => {
         const url = new URL(value)
-        if (url.protocol === 'https:') return true
-        if (url.protocol === 'http:')
-          return (
-            url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]'
-          )
-        const scheme = url.protocol.slice(0, -1)
-        return /^[a-z][a-z0-9+.-]*$/.test(scheme) && scheme.includes('.')
+        return Uri.isAllowedAppCallback(url)
       },
       {
         error:

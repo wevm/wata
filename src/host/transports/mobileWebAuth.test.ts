@@ -35,7 +35,11 @@ function consumerDocument(callbackUrls: readonly string[] = [callback]): unknown
 }
 
 function pair(
-  options: { callbackUrls?: readonly string[] | undefined; tamperState?: boolean } = {},
+  options: {
+    callbackResult?: ((url: URL) => void) | undefined
+    callbackUrls?: readonly string[] | undefined
+    tamperState?: boolean
+  } = {},
 ) {
   let authorizationUrl: string | undefined
   let authResponse: { location: string | null; status: number } | undefined
@@ -61,6 +65,11 @@ function pair(
       const location = response.headers.get('location')
       authResponse = { location, status: response.status }
       if (!location) return undefined
+      if (options.callbackResult) {
+        const url = new URL(location)
+        options.callbackResult(url)
+        return url.toString()
+      }
       if (!options.tamperState) return location
       const url = new URL(location)
       url.searchParams.set('state', 'mismatched')
@@ -262,6 +271,39 @@ describe('mobileWebAuth', () => {
     await expect(
       wata.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: Mobile-web-auth state mismatch.]`)
+  })
+
+  test('consumer rejects duplicate callback protocol parameters', async () => {
+    const results: string[] = []
+    for (const key of ['message', 'pubkey', 'state', 'version'] as const) {
+      const { consumer, host } = pair({
+        callbackResult(url) {
+          url.searchParams.append(key, url.searchParams.get(key) ?? 'duplicate')
+        },
+      })
+      const wata = Wata.create({
+        baseUrl: consumerOrigin,
+        meta: { name: 'App' },
+        transports: [consumer],
+      })
+      const hostWata = HostWata.create({ transports: [host] })
+      hostWata.on('request', (event) => {
+        if (event.method === 'ping') event.respond({ ok: true })
+      })
+
+      await wata.send({ method: 'ping', params: [] }).catch((cause) => {
+        results.push(`${key}: ${String(cause)}`)
+      })
+    }
+
+    expect(results).toMatchInlineSnapshot(`
+      [
+        "message: Rpc.RpcError: Mobile-web-auth callback missing fields.",
+        "pubkey: Rpc.RpcError: Mobile-web-auth callback missing fields.",
+        "state: Rpc.RpcError: Mobile-web-auth state mismatch.",
+        "version: Rpc.RpcError: Unsupported mobile-web-auth version.",
+      ]
+    `)
   })
 
   test('consumer discovery accepts private-use callback URI allowlist entries', () => {

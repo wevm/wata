@@ -174,7 +174,7 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
 
   async function parseAuthorization(request: Request): Promise<AuthorizationRequest> {
     const url = new URL(request.url)
-    if (url.searchParams.get('version') !== '1')
+    if (Uri.requiredSearchParam(url, 'version') !== '1')
       throw new PreVerificationError('unsupported mobile-web-auth version', { status: 400 })
     const id = assertConsumerId(required(url, 'id'))
     const callback = assertCallback(required(url, 'callback'))
@@ -337,7 +337,7 @@ function assertCallback(value: string): string {
   }
   if (url.hash)
     throw new PreVerificationError('callback must not contain a fragment', { status: 400 })
-  if (!isAllowedCallback(url))
+  if (!Uri.isAllowedAppCallback(url))
     throw new PreVerificationError(
       'callback must be HTTPS, loopback HTTP, or reverse-DNS private-use URI',
       { status: 400 },
@@ -352,7 +352,7 @@ function assertConsumerId(value: string): string {
   } catch (cause) {
     throw new PreVerificationError('id is not a valid URL', { cause: cause as Error, status: 400 })
   }
-  if (url.protocol !== 'https:' && !isLoopbackHttp(url))
+  if (url.protocol !== 'https:' && !Uri.isLoopbackHttp(url))
     throw new PreVerificationError('id must be an HTTPS origin', { status: 400 })
   if (url.pathname !== '/' || url.search || url.hash)
     throw new PreVerificationError('id must not include path, query, or fragment', { status: 400 })
@@ -371,21 +371,6 @@ function firstRequestId(envelope: Envelope.Envelope): Rpc.Id | null {
 
 function isBase64Url(value: string): boolean {
   return /^[A-Za-z0-9_-]*={0,2}$/.test(value)
-}
-
-function isLoopbackHttp(url: URL): boolean {
-  return (
-    url.protocol === 'http:' &&
-    (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]')
-  )
-}
-
-function isAllowedCallback(url: URL): boolean {
-  if (url.protocol === 'https:') return true
-  if (isLoopbackHttp(url)) return true
-  if (url.protocol === 'http:') return false
-  const scheme = url.protocol.slice(0, -1)
-  return /^[a-z][a-z0-9+.-]*$/.test(scheme) && scheme.includes('.')
 }
 
 function parseMessage(value: string): Envelope.Envelope {
@@ -413,10 +398,10 @@ function parsePublicKey(value: string): Hex.Hex {
 }
 
 function required(url: URL, key: string): string {
-  const values = url.searchParams.getAll(key)
-  if (values.length !== 1 || !values[0])
+  const value = Uri.requiredSearchParam(url, key)
+  if (!value)
     throw new PreVerificationError(`missing required \`${key}\` parameter`, { status: 400 })
-  return values[0]
+  return value
 }
 
 class PreVerificationError<

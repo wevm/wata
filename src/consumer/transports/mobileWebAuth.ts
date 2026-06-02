@@ -23,6 +23,7 @@ import * as Nonce from '../../core/Nonce.js'
 import * as Rpc from '../../core/Rpc.js'
 import * as Session from '../../core/Session.js'
 import * as Transport from '../../core/Transport.js'
+import * as Uri from '../../internal/Uri.js'
 
 /** Result returned by the platform browser-auth session. */
 export type AuthSessionResult = string | URL | undefined
@@ -201,20 +202,20 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
       )
       return
     }
-    if (!matchesCallback(url, pending.callback)) {
+    if (!Uri.matchesCallback(url, pending.callback)) {
       settle(errorEnvelope(pending.requestId, -32600, 'Mobile-web-auth callback URI mismatch.'))
       return
     }
-    if (url.searchParams.get('version') !== '1') {
+    if (Uri.requiredSearchParam(url, 'version') !== '1') {
       settle(errorEnvelope(pending.requestId, -32600, 'Unsupported mobile-web-auth version.'))
       return
     }
-    if (url.searchParams.get('state') !== pending.state) {
+    if (Uri.requiredSearchParam(url, 'state') !== pending.state) {
       settle(errorEnvelope(pending.requestId, -32600, 'Mobile-web-auth state mismatch.'))
       return
     }
-    const pubkey = url.searchParams.get('pubkey')
-    const message = url.searchParams.get('message')
+    const pubkey = Uri.requiredSearchParam(url, 'pubkey')
+    const message = Uri.requiredSearchParam(url, 'message')
     if (!pubkey || !message) {
       settle(errorEnvelope(pending.requestId, -32600, 'Mobile-web-auth callback missing fields.'))
       return
@@ -296,7 +297,7 @@ function assertCallback(value: string): string {
   const url = new URL(value)
   if (url.hash)
     throw new Errors.ProtocolError('mobile-web-auth callback must not contain a fragment')
-  if (!isAllowedCallback(url))
+  if (!Uri.isAllowedAppCallback(url))
     throw new Errors.ProtocolError(
       'mobile-web-auth callback must be HTTPS, loopback HTTP, or reverse-DNS private-use URI',
     )
@@ -305,7 +306,7 @@ function assertCallback(value: string): string {
 
 function assertConsumerId(value: string): string {
   const url = new URL(value)
-  if (url.protocol !== 'https:' && !isLoopbackHttp(url))
+  if (url.protocol !== 'https:' && !Uri.isLoopbackHttp(url))
     throw new Errors.ProtocolError('mobile-web-auth id must be an HTTPS origin')
   if (url.pathname !== '/' || url.search || url.hash)
     throw new Errors.ProtocolError('mobile-web-auth id must not include path, query, or fragment')
@@ -358,33 +359,4 @@ function firstRequestId(
 
 function generateState(): string {
   return Base64.fromBytes(Bytes.random(32), { pad: false, url: true })
-}
-
-function isLoopbackHttp(url: URL): boolean {
-  return (
-    url.protocol === 'http:' &&
-    (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]')
-  )
-}
-
-function isAllowedCallback(url: URL): boolean {
-  if (url.protocol === 'https:') return true
-  if (isLoopbackHttp(url)) return true
-  if (url.protocol === 'http:') return false
-  const scheme = url.protocol.slice(0, -1)
-  return /^[a-z][a-z0-9+.-]*$/.test(scheme) && scheme.includes('.')
-}
-
-function matchesCallback(url: URL, callback: string): boolean {
-  const expected = new URL(callback)
-  const actualBase =
-    url.origin === 'null' ? `${url.protocol}${url.pathname}` : `${url.origin}${url.pathname}`
-  const expectedBase =
-    expected.origin === 'null'
-      ? `${expected.protocol}${expected.pathname}`
-      : `${expected.origin}${expected.pathname}`
-  if (actualBase !== expectedBase) return false
-  for (const [key, value] of expected.searchParams)
-    if (!url.searchParams.getAll(key).includes(value)) return false
-  return true
 }
