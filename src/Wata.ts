@@ -18,8 +18,9 @@
  * HTTP handlers through the wrapped transport.
  */
 
-import { Base64, Bytes, Ed25519, type Hex } from 'ox'
+import { Ed25519, type Hex } from 'ox'
 
+import * as Crypto from './core/Crypto.js'
 import * as Discovery from './core/Discovery.js'
 import * as Envelope from './core/Envelope.js'
 import * as Errors from './core/Errors.js'
@@ -870,10 +871,7 @@ type Pending = {
 }
 
 function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {
-  const publicKey = Base64.fromBytes(Bytes.from(Ed25519.getPublicKey({ privateKey })), {
-    pad: false,
-    url: true,
-  })
+  const publicKey = Crypto.encodePublicKey(Ed25519.getPublicKey({ privateKey }))
   return { privateKey, publicKey }
 }
 

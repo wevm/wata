@@ -20,11 +20,11 @@ import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
 import * as Rpc from '../../core/Rpc.js'
 import * as Transport from '../../core/Transport.js'
-import * as core_mobileWebAuth from '../../internal/MobileWebAuth.js'
+import * as MobileWebAuthEnvelope from '../../internal/MobileWebAuthEnvelope.js'
 import * as Uri from '../../internal/Uri.js'
 
 /** Result returned by the platform browser-auth session. */
-export type AuthSessionResult = string | URL | undefined
+export type AuthSessionResult = string | undefined
 
 /** Options accepted by {@link mobileWebAuth}. */
 export type Options = {
@@ -126,13 +126,11 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     closed: boolean
     inFlight: boolean
     pending: Pending | undefined
-    started: boolean
   }
   const state: State = {
     closed: false,
     inFlight: false,
     pending: undefined,
-    started: false,
   }
 
   function settle(message: Envelope.Envelope | undefined, cause?: Error) {
@@ -178,7 +176,7 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
       settle(cancelledEnvelope(requestId))
       return
     }
-    await handleCallback(String(result))
+    await handleCallback(result)
   }
 
   async function handleCallback(callbackResult: string): Promise<void> {
@@ -216,11 +214,10 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
       return
     }
     try {
-      const publicKey_host = Hex.fromBytes(Base64.toBytes(pubkey)) as Hex.Hex
       settle(
-        core_mobileWebAuth.openResponse({
+        MobileWebAuthEnvelope.openResponse({
           message,
-          publicKey: publicKey_host,
+          publicKey: Crypto.decodePublicKey(pubkey),
           self: pending.keypair.x25519,
         }),
       )
@@ -257,7 +254,6 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
         throw new Transport.TransportError(
           'mobile-web-auth is single-exchange; a previous send is still in flight',
         )
-      if (!state.started) state.started = true
       state.inFlight = true
       return await run(envelope).catch((cause) => {
         settle(undefined, cause as Error)
@@ -266,7 +262,6 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     },
     async start() {
       if (state.closed) throw new Transport.ClosedError('mobile-web-auth transport already closed')
-      state.started = true
     },
   }
 }
@@ -302,11 +297,8 @@ function buildAuthorizationUrl(options: {
   const url = new URL(options.authUrl)
   url.searchParams.set('callback', options.callback)
   url.searchParams.set('id', options.id)
-  url.searchParams.set('message', core_mobileWebAuth.encodeJson(options.envelope))
-  url.searchParams.set(
-    'pubkey',
-    Base64.fromBytes(Bytes.from(options.publicKey), { pad: false, url: true }),
-  )
+  url.searchParams.set('message', MobileWebAuthEnvelope.encodeJson(options.envelope))
+  url.searchParams.set('pubkey', Crypto.encodePublicKey(options.publicKey))
   url.searchParams.set('state', options.state)
   url.searchParams.set('version', '1')
   return url.toString()

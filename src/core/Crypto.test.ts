@@ -2,6 +2,34 @@ import { Ed25519, Hex, X25519 } from 'ox'
 import { describe, expect, test } from 'vp/test'
 import { Crypto } from 'wata'
 
+describe('decodePublicKey', () => {
+  test('decodes a 32-byte unpadded base64url public key', () => {
+    expect(Crypto.decodePublicKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')).toMatchInlineSnapshot(
+      `"0x0000000000000000000000000000000000000000000000000000000000000000"`,
+    )
+  })
+
+  test('rejects malformed public keys', () => {
+    expect(() => Crypto.decodePublicKey('too-short')).toThrowErrorMatchingInlineSnapshot(
+      `[ProtocolError: public key must be 32-byte unpadded base64url]`,
+    )
+  })
+})
+
+describe('encodePublicKey', () => {
+  test('encodes a 32-byte hex public key as unpadded base64url', () => {
+    expect(Crypto.encodePublicKey(`0x${'00'.repeat(32)}`)).toMatchInlineSnapshot(
+      `"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"`,
+    )
+  })
+
+  test('rejects non-32-byte public keys', () => {
+    expect(() => Crypto.encodePublicKey('0xdead')).toThrowErrorMatchingInlineSnapshot(
+      `[ProtocolError: public key must be 32 bytes]`,
+    )
+  })
+})
+
 describe('randomKeypair', () => {
   test('returns 32-byte Ed25519 keypair plus derived X25519 keypair', () => {
     const keypair = Crypto.randomKeypair()

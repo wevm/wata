@@ -60,8 +60,9 @@
  */
 
 import { Hono } from 'hono'
-import { Base64, Bytes, Hex } from 'ox'
+import { Base64, Bytes } from 'ox'
 
+import * as Crypto from '../../core/Crypto.js'
 import * as Discovery from '../../core/Discovery.js'
 import * as Envelope from '../../core/Envelope.js'
 import * as Errors from '../../core/Errors.js'
@@ -745,7 +746,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     try {
       verified = MessageSig.verify({
         message: httpMessage,
-        publicKey: base64urlToHex(consumerDoc.identity_pubkey),
+        publicKey: Crypto.decodePublicKey(consumerDoc.identity_pubkey),
         requiredComponents: [
           '@method',
           '@target-uri',
@@ -895,7 +896,7 @@ export function webhookCallback(options: Options): WebhookCallback {
           method: 'DELETE',
           url: publicRequestUrl(c.req.url),
         },
-        publicKey: base64urlToHex(record.consumer.publicKey),
+        publicKey: Crypto.decodePublicKey(record.consumer.publicKey),
         requiredComponents: ['@method', '@target-uri', '@authority', 'urpc-public-key'],
       })
     } catch (cause) {
@@ -2155,10 +2156,6 @@ function assertSignatureKeyid(request: Request, expectedKeyid: string): void {
     throw new MessageSig.InvalidSignatureError(
       `signature keyid mismatch: expected \`${expectedKeyid}\`, received \`${parsedInput.parameters.keyid ?? '<missing>'}\``,
     )
-}
-
-function base64urlToHex(value: string): Hex.Hex {
-  return Hex.fromBytes(Base64.toBytes(value))
 }
 
 /** Thrown when a supplied code does not match any pending record. */

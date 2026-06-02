@@ -9,7 +9,7 @@
  */
 
 import { Hono } from 'hono'
-import { Base64, Bytes, Hex } from 'ox'
+import { Base64, Hex } from 'ox'
 
 import * as Crypto from '../../core/Crypto.js'
 import * as Discovery from '../../core/Discovery.js'
@@ -19,7 +19,7 @@ import * as Events from '../../core/Events.js'
 import * as Http from '../../core/Http.js'
 import * as Rpc from '../../core/Rpc.js'
 import * as Transport from '../../core/Transport.js'
-import * as core_mobileWebAuth from '../../internal/MobileWebAuth.js'
+import * as MobileWebAuthEnvelope from '../../internal/MobileWebAuthEnvelope.js'
 import * as Uri from '../../internal/Uri.js'
 
 /** Verified authorization request passed to host approval UI hooks. */
@@ -113,10 +113,6 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
   const { fetch: fetchImpl = globalThis.fetch.bind(globalThis), html, path } = options
   const authPath = path ? Uri.normalizePath(path) : '/'
 
-  function authUrlFor(baseUrl: string): string {
-    return `${Uri.trimTrailingSlash(baseUrl)}${authPath === '/' ? '' : authPath}`
-  }
-
   const emitter = Events.create<Transport.EventMap>()
   type Active = {
     reject: (cause: Error) => void
@@ -164,16 +160,16 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     const url = new URL(request.url)
     if (Uri.requiredSearchParam(url, 'version') !== '1')
       throw new PreVerificationError('unsupported mobile-web-auth version', { status: 400 })
-    const id = assertConsumerId(requiredSearchParam(url, 'id'))
-    const callback = assertCallback(requiredSearchParam(url, 'callback'))
-    const stateValue = requiredSearchParam(url, 'state')
+    const id = assertConsumerId(requiredParam(url, 'id'))
+    const callback = assertCallback(requiredParam(url, 'callback'))
+    const stateValue = requiredParam(url, 'state')
     if (!isBase64Url(stateValue) || Base64.toBytes(stateValue).length < 16)
       throw new PreVerificationError('state must contain at least 128 bits', { status: 400 })
-    const publicKey = parsePublicKey(requiredSearchParam(url, 'pubkey'))
+    const publicKey = parsePublicKey(requiredParam(url, 'pubkey'))
     const consumer = await fetchConsumer(id)
     if (!consumer.callback_urls?.includes(callback))
       throw new PreVerificationError('callback is not registered by consumer', { status: 403 })
-    const message = parseMessage(requiredSearchParam(url, 'message'))
+    const message = parseMessage(requiredParam(url, 'message'))
     if (message.type !== 'rpc-requests')
       throw new PreVerificationError('message must be an rpc-requests envelope', { status: 400 })
     return {
@@ -219,17 +215,14 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     response: Envelope.Envelope,
   ): Promise<Response> {
     const keypair = Crypto.randomKeypair()
-    const message = core_mobileWebAuth.sealResponse({
+    const message = MobileWebAuthEnvelope.sealResponse({
       publicKey: authorization.publicKey,
       response,
       self: keypair.x25519,
     })
     const url = new URL(authorization.callback)
-    url.searchParams.set('message', core_mobileWebAuth.encodeJson(message))
-    url.searchParams.set(
-      'pubkey',
-      Base64.fromBytes(Bytes.from(keypair.x25519.publicKey), { pad: false, url: true }),
-    )
+    url.searchParams.set('message', MobileWebAuthEnvelope.encodeJson(message))
+    url.searchParams.set('pubkey', Crypto.encodePublicKey(keypair.x25519.publicKey))
     url.searchParams.set('state', authorization.state)
     url.searchParams.set('version', '1')
     state.closed = true
@@ -261,7 +254,9 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     },
     discovery: {
       binding(baseUrl) {
-        return { auth_url: authUrlFor(baseUrl) }
+        return {
+          auth_url: `${Uri.trimTrailingSlash(baseUrl)}${authPath === '/' ? '' : authPath}`,
+        }
       },
       id: 'mobile-web-auth',
     },
@@ -335,7 +330,7 @@ function isBase64Url(value: string): boolean {
 
 function parseMessage(value: string): Envelope.Envelope {
   try {
-    return Envelope.parse(core_mobileWebAuth.decodeJson(value))
+    return Envelope.parse(MobileWebAuthEnvelope.decodeJson(value))
   } catch (cause) {
     throw new PreVerificationError('message is not a valid envelope', {
       cause: cause as Error,
@@ -346,9 +341,7 @@ function parseMessage(value: string): Envelope.Envelope {
 
 function parsePublicKey(value: string): Hex.Hex {
   try {
-    const bytes = Base64.toBytes(value)
-    if (bytes.length !== 32) throw new Error('expected 32 bytes')
-    return Hex.fromBytes(bytes) as Hex.Hex
+    return Crypto.decodePublicKey(value)
   } catch (cause) {
     throw new PreVerificationError('pubkey is not a valid X25519 public key', {
       cause: cause as Error,
@@ -357,7 +350,7 @@ function parsePublicKey(value: string): Hex.Hex {
   }
 }
 
-function requiredSearchParam(url: URL, key: string): string {
+function requiredParam(url: URL, key: string): string {
   const value = Uri.requiredSearchParam(url, key)
   if (!value)
     throw new PreVerificationError(`missing required \`${key}\` parameter`, { status: 400 })
