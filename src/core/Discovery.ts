@@ -73,11 +73,28 @@ export namespace schema {
   )
 
   /**
-   * `https://`-only URL that additionally rejects wildcard glob tokens
-   * (`*`) anywhere in the URL string. Used for `callback_urls`, where
-   * the spec mandates fully-qualified, exact-match entries.
+   * Callback URI allowlist entry. Claimed HTTPS URLs are preferred, but
+   * native-app transports can also publish private-use URI schemes. In
+   * all cases the value must be a concrete exact-match URI with no
+   * wildcard glob tokens.
    */
-  export const callbackUrl = httpsUrl.check(
+  export const callbackUrl = z.url().check(
+    z.refine(
+      (value) => {
+        const url = new URL(value)
+        if (url.protocol === 'https:') return true
+        if (url.protocol === 'http:')
+          return (
+            url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]'
+          )
+        const scheme = url.protocol.slice(0, -1)
+        return /^[a-z][a-z0-9+.-]*$/.test(scheme) && scheme.includes('.')
+      },
+      {
+        error:
+          'expected an https:// URL, loopback http:// URL, or reverse-DNS private-use URI scheme',
+      },
+    ),
     z.refine((value) => !value.includes('*'), {
       error: 'callback_urls must not contain wildcard tokens',
     }),

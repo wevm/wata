@@ -1,0 +1,435 @@
+/**
+ * Host-side `mobile-web-auth` transport — HTTP auth endpoint,
+ * single-exchange.
+ *
+ * Handles `GET <path>` authorization requests, verifies the consumer's
+ * callback URI against `consumer.json`, lets the host approval UI decide
+ * whether to approve or deny, then redirects exactly once to the
+ * callback with an encrypted `rpc-responses` envelope.
+ */
+
+import { Hono } from 'hono'
+import { Base64, Bytes, Hex } from 'ox'
+
+import * as Aad from '../../core/Aad.js'
+import * as Aead from '../../core/Aead.js'
+import * as Crypto from '../../core/Crypto.js'
+import * as Discovery from '../../core/Discovery.js'
+import * as Envelope from '../../core/Envelope.js'
+import * as Errors from '../../core/Errors.js'
+import * as Events from '../../core/Events.js'
+import * as Http from '../../core/Http.js'
+import * as Nonce from '../../core/Nonce.js'
+import * as Rpc from '../../core/Rpc.js'
+import * as Session from '../../core/Session.js'
+import * as Transport from '../../core/Transport.js'
+import * as Uri from '../../internal/Uri.js'
+
+/** Verified authorization request passed to host approval UI hooks. */
+export type AuthorizationRequest = {
+  /** Exact callback URI verified against the consumer's allowlist. */
+  callback: string
+  /** Parsed consumer discovery document. */
+  consumer: Discovery.ConsumerDocument
+  /** Whether the authorization URL carried an initial `message`. */
+  hasMessage: boolean
+  /** Consumer origin identifier supplied as `id`. */
+  id: string
+  /** Queued request envelope, or a no-op request when absent. */
+  message: Envelope.Envelope
+  /** Consumer's ephemeral X25519 public key. */
+  publicKey: Hex.Hex
+  /** Single-use state echoed on the callback. */
+  state: string
+}
+
+/** Options accepted by {@link mobileWebAuth}. */
+export type Options = {
+  /**
+   * Public origin of the host. Falls back to the request URL origin
+   * when omitted; `Wata.create({ baseUrl })` also lazy-injects it.
+   */
+  baseUrl?: string | undefined
+  /**
+   * Override the `fetch` implementation used for consumer discovery.
+   * Defaults to `globalThis.fetch`.
+   */
+  fetch?: typeof globalThis.fetch | undefined
+  /** Bring-your-own authorization UI hooks. */
+  html: html.Hooks
+  /**
+   * Path of the authorization endpoint. Defaults to `/`.
+   */
+  path?: string | undefined
+}
+
+export declare namespace html {
+  /** Bring-your-own approval UI hooks. */
+  type Hooks = {
+    /**
+     * Called after consumer verification. Call `actions.approve()` to
+     * dispatch the queued request through host `Wata`, or
+     * `actions.deny()` to return a callback-eligible JSON-RPC error.
+     */
+    authenticate: (options: authenticate.Options) => Response | Promise<Response>
+    /**
+     * Render a pre-verification browser error. The response must not
+     * redirect to the unverified callback. When omitted, the transport
+     * returns a plain text no-store error response.
+     */
+    renderError?: ((options: renderError.Options) => Response | Promise<Response>) | undefined
+  }
+
+  namespace authenticate {
+    /** Argument passed to {@link html.Hooks.authenticate}. */
+    type Options = {
+      /** Approval actions for this request-local authorization. */
+      actions: Actions
+      /** Verified authorization request. */
+      authorization: AuthorizationRequest
+      /** Browser request that reached the auth endpoint. */
+      request: Request
+    }
+  }
+
+  namespace renderError {
+    /** Argument passed to {@link html.Hooks.renderError}. */
+    type Options = {
+      /** Underlying validation error. */
+      cause: Error
+      /** Browser request that reached the auth endpoint. */
+      request: Request
+      /** HTTP status selected by the transport. */
+      status: number
+    }
+  }
+
+  /** Actions exposed inside {@link html.Hooks.authenticate}. */
+  type Actions = {
+    /** Approve and return a redirect response to the verified callback. */
+    approve: () => Promise<Response>
+    /** Deny and return a redirect response carrying JSON-RPC `-32600`. */
+    deny: (message?: string) => Promise<Response>
+  }
+}
+
+/** Host-side mobile-web-auth transport. */
+export type MobileWebAuth = Transport.Transport<'host', 'mobileWebAuth'> & Http.Server
+
+/**
+ * Create a host-side `mobile-web-auth` transport.
+ */
+export function mobileWebAuth(options: Options): MobileWebAuth {
+  const { fetch: fetchImpl = globalThis.fetch.bind(globalThis), html, path } = options
+  const authPath = path ? Uri.normalizePath(path) : '/'
+  const baseUrl_ctor = options.baseUrl ? Uri.trimTrailingSlash(options.baseUrl) : undefined
+  let baseUrl_bound: string | undefined
+
+  function authUrlFor(baseUrl: string): string {
+    return `${Uri.trimTrailingSlash(baseUrl)}${authPath === '/' ? '' : authPath}`
+  }
+
+  const emitter = Events.create<Transport.EventMap>()
+  type Active = {
+    reject: (cause: Error) => void
+    resolve: (envelope: Envelope.Envelope) => void
+  }
+  type State = { active: Active | undefined; closed: boolean; started: boolean }
+  const state: State = {
+    active: undefined,
+    closed: false,
+    started: false,
+  }
+
+  const app = new Hono()
+  app.use('*', async (c, next) => {
+    await next()
+    c.res.headers.set('Cache-Control', 'no-store')
+    c.res.headers.set('Pragma', 'no-cache')
+  })
+
+  app.get(authPath, async (c) => {
+    let authorization: AuthorizationRequest
+    try {
+      authorization = await parseAuthorization(c.req.raw)
+    } catch (cause) {
+      return await renderError(c.req.raw, cause as Error)
+    }
+    const actions: html.Actions = {
+      approve: () => approve(authorization),
+      deny: (message = 'User denied the request.') =>
+        redirectWithResponse(
+          authorization,
+          Envelope.rpcResponses([
+            Rpc.error({ code: -32600, id: firstRequestId(authorization.message), message }),
+          ]),
+        ),
+    }
+    return await html.authenticate({
+      actions,
+      authorization,
+      request: c.req.raw,
+    })
+  })
+
+  async function parseAuthorization(request: Request): Promise<AuthorizationRequest> {
+    const url = new URL(request.url)
+    if (url.searchParams.get('version') !== '1')
+      throw new PreVerificationError('unsupported mobile-web-auth version', { status: 400 })
+    const id = assertConsumerId(required(url, 'id'))
+    const callback = assertCallback(required(url, 'callback'))
+    const stateValue = required(url, 'state')
+    if (!isBase64Url(stateValue) || Base64.toBytes(stateValue).length < 16)
+      throw new PreVerificationError('state must contain at least 128 bits', { status: 400 })
+    const publicKey = parsePublicKey(required(url, 'pubkey'))
+    const consumer = await fetchConsumer(id)
+    if (!consumer.callback_urls?.includes(callback))
+      throw new PreVerificationError('callback is not registered by consumer', { status: 403 })
+    const hasMessage = url.searchParams.has('message')
+    const message = hasMessage ? parseMessage(required(url, 'message')) : Envelope.rpcRequests([])
+    if (message.type !== 'rpc-requests')
+      throw new PreVerificationError('message must be an rpc-requests envelope', { status: 400 })
+    return {
+      callback,
+      consumer,
+      hasMessage,
+      id,
+      message,
+      publicKey,
+      state: stateValue,
+    }
+  }
+
+  async function fetchConsumer(id: string): Promise<Discovery.ConsumerDocument> {
+    try {
+      return await Discovery.fetchConsumer(id, { fetch: fetchImpl })
+    } catch (cause) {
+      throw new PreVerificationError('consumer discovery failed', {
+        cause: cause as Error,
+        status: 403,
+      })
+    }
+  }
+
+  async function approve(authorization: AuthorizationRequest): Promise<Response> {
+    if (state.closed) throw new Transport.ClosedError('mobile-web-auth transport already closed')
+    if (!authorization.hasMessage)
+      return await redirectWithResponse(
+        authorization,
+        Envelope.rpcResponses([Rpc.success({ id: null, result: null })]),
+      )
+    if (state.active)
+      throw new Transport.TransportError(
+        'mobile-web-auth is single-exchange; a previous approval is still in flight',
+      )
+    const response = new Promise<Envelope.Envelope>((resolve, reject) => {
+      state.active = { reject, resolve }
+    })
+    emitter.emit('message', authorization.message)
+    try {
+      return await redirectWithResponse(authorization, await response)
+    } finally {
+      state.active = undefined
+    }
+  }
+
+  async function redirectWithResponse(
+    authorization: AuthorizationRequest,
+    response: Envelope.Envelope,
+  ): Promise<Response> {
+    const keypair = Crypto.randomKeypair()
+    const keys = Session.derive({
+      peer: { publicKey: authorization.publicKey },
+      role: 'host',
+      self: keypair.x25519,
+      transportId: 'mobile-web-auth',
+    })
+    const nonce = Nonce.fromCounter(1n)
+    const ciphertext = Aead.seal({
+      aad: Aad.encode({ publicKey: authorization.publicKey, role: Aad.role.host }),
+      key: keys.h2c,
+      nonce,
+      plaintext: Bytes.fromString(JSON.stringify(response)),
+    })
+    const message = Envelope.encrypted({
+      ciphertext,
+      from: 'host',
+      nonce,
+    })
+    const url = new URL(authorization.callback)
+    url.searchParams.set('message', encodeJson(message))
+    url.searchParams.set(
+      'pubkey',
+      Base64.fromBytes(Bytes.from(keypair.x25519.publicKey), { pad: false, url: true }),
+    )
+    url.searchParams.set('state', authorization.state)
+    url.searchParams.set('version', '1')
+    state.closed = true
+    emitter.emit('close', undefined)
+    return new Response(null, { headers: { location: url.toString() }, status: 302 })
+  }
+
+  async function renderError(request: Request, cause: Error): Promise<Response> {
+    const status = cause instanceof PreVerificationError ? cause.status : 500
+    if (html.renderError) {
+      const response = await html.renderError({ cause, request, status })
+      if (response.status < 300 || response.status >= 400) return response
+    }
+    return new Response(cause.message, {
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+      status,
+    })
+  }
+
+  const { fetch, listener } = Http.fromHono(app)
+
+  return {
+    bind(binding) {
+      const baseUrl = binding.baseUrl
+      if (baseUrl && !baseUrl_ctor && !baseUrl_bound) baseUrl_bound = Uri.trimTrailingSlash(baseUrl)
+    },
+    async close(cause) {
+      if (state.closed) return
+      state.closed = true
+      state.active?.reject(cause ?? new Transport.ClosedError('mobile-web-auth transport closed'))
+      state.active = undefined
+      emitter.emit('close', cause)
+    },
+    discovery: {
+      binding(baseUrl) {
+        return { auth_url: authUrlFor(baseUrl) }
+      },
+      id: 'mobile-web-auth',
+    },
+    exchange: 'single_exchange',
+    fetch,
+    listener,
+    name: 'mobileWebAuth',
+    on: emitter.on,
+    role: 'host',
+    routes: [authPath],
+    async send(envelope) {
+      if (state.closed) throw new Transport.ClosedError('mobile-web-auth transport already closed')
+      if (!state.started) throw new Transport.ClosedError('mobile-web-auth transport not started')
+      const active = state.active
+      if (!active)
+        throw new Transport.TransportError(
+          'no active mobile-web-auth approval; `transport.send` was called before approval',
+        )
+      active.resolve(envelope)
+    },
+    async start() {
+      if (state.closed) throw new Transport.ClosedError('mobile-web-auth transport already closed')
+      state.started = true
+    },
+  }
+}
+
+function assertCallback(value: string): string {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch (cause) {
+    throw new PreVerificationError('callback is not a valid URI', {
+      cause: cause as Error,
+      status: 400,
+    })
+  }
+  if (url.hash)
+    throw new PreVerificationError('callback must not contain a fragment', { status: 400 })
+  if (!isAllowedCallback(url))
+    throw new PreVerificationError(
+      'callback must be HTTPS, loopback HTTP, or reverse-DNS private-use URI',
+      { status: 400 },
+    )
+  return url.toString()
+}
+
+function assertConsumerId(value: string): string {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch (cause) {
+    throw new PreVerificationError('id is not a valid URL', { cause: cause as Error, status: 400 })
+  }
+  if (url.protocol !== 'https:' && !isLoopbackHttp(url))
+    throw new PreVerificationError('id must be an HTTPS origin', { status: 400 })
+  if (url.pathname !== '/' || url.search || url.hash)
+    throw new PreVerificationError('id must not include path, query, or fragment', { status: 400 })
+  return url.origin
+}
+
+function encodeJson(value: unknown): string {
+  return Base64.fromBytes(Bytes.fromString(JSON.stringify(value)), { pad: false, url: true })
+}
+
+function firstRequestId(envelope: Envelope.Envelope): Rpc.Id | null {
+  if (envelope.type !== 'rpc-requests') return null
+  for (const message of envelope.payload) if ('id' in message) return message.id
+  return null
+}
+
+function isBase64Url(value: string): boolean {
+  return /^[A-Za-z0-9_-]*={0,2}$/.test(value)
+}
+
+function isLoopbackHttp(url: URL): boolean {
+  return (
+    url.protocol === 'http:' &&
+    (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]')
+  )
+}
+
+function isAllowedCallback(url: URL): boolean {
+  if (url.protocol === 'https:') return true
+  if (isLoopbackHttp(url)) return true
+  if (url.protocol === 'http:') return false
+  const scheme = url.protocol.slice(0, -1)
+  return /^[a-z][a-z0-9+.-]*$/.test(scheme) && scheme.includes('.')
+}
+
+function parseMessage(value: string): Envelope.Envelope {
+  try {
+    return Envelope.parse(JSON.parse(Bytes.toString(Base64.toBytes(value))))
+  } catch (cause) {
+    throw new PreVerificationError('message is not a valid envelope', {
+      cause: cause as Error,
+      status: 400,
+    })
+  }
+}
+
+function parsePublicKey(value: string): Hex.Hex {
+  try {
+    const bytes = Base64.toBytes(value)
+    if (bytes.length !== 32) throw new Error('expected 32 bytes')
+    return Hex.fromBytes(bytes) as Hex.Hex
+  } catch (cause) {
+    throw new PreVerificationError('pubkey is not a valid X25519 public key', {
+      cause: cause as Error,
+      status: 400,
+    })
+  }
+}
+
+function required(url: URL, key: string): string {
+  const values = url.searchParams.getAll(key)
+  if (values.length !== 1 || !values[0])
+    throw new PreVerificationError(`missing required \`${key}\` parameter`, { status: 400 })
+  return values[0]
+}
+
+class PreVerificationError<
+  cause extends Error | undefined = Error | undefined,
+> extends Errors.BaseError<cause> {
+  override name = 'MobileWebAuth.PreVerificationError'
+  status: number
+
+  constructor(
+    message: string,
+    options: Errors.BaseError.Options<cause> & { status: number } = { status: 400 } as never,
+  ) {
+    super(message, options)
+    this.status = options.status
+  }
+}
