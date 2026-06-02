@@ -20,6 +20,7 @@ bun i wata
 | ----------------- | ------------------------------------------------------------------------------------------------------ | ----------------- |
 | `postMessage`     | Same-device browser session over a `Window`, `WindowProxy`, or `MessagePort` (popup, iframe, channel). | Browser ⇄ Browser |
 | `deviceCode`      | OAuth 2.0 Device Authorization Grant (RFC 8628) over HTTP, with PKCE and a bring-your-own approval UI. | CLI ⇄ Browser     |
+| `mobileWebAuth`   | Same-device mobile app to web host flow using browser auth and encrypted app-link callbacks.           | Mobile ⇄ Browser  |
 | `webhookCallback` | Signed HTTP registration + callback flow for consumers that can receive webhooks.                      | Server ⇄ Server   |
 
 ## Usage
@@ -135,6 +136,84 @@ const wata = Wata.create({
 wata.on('request', async (c) => {
   if (c.method === 'wallet_connect')
     await c.respond(['0x0000000000000000000000000000000000000001'])
+})
+
+createServer(wata.listener).listen(3000)
+```
+
+### `mobileWebAuth`
+
+Same-device mobile flow where the consumer opens the host's HTTPS authorization URL in a system-browser auth session, then receives an app-link / private-scheme callback carrying the encrypted response.
+
+[See example →](./examples/mobileWebAuth)
+
+#### Consumer
+
+Opens the host authorization URL with the platform's browser auth-session API. The auth session resolves with the callback URL, which the transport validates and decrypts.
+
+```ts
+import * as WebBrowser from 'expo-web-browser'
+import { Wata, mobileWebAuth } from 'wata'
+
+const wata = Wata.create({
+  baseUrl: 'https://app.example',
+  meta: { name: 'Example App' },
+  transports: [
+    mobileWebAuth({
+      callback: 'com.example.app://callback',
+      host: 'https://wallet.example',
+      openAuthSession: async ({ authorizationUrl, callback }) => {
+        const result = await WebBrowser.openAuthSessionAsync(authorizationUrl, callback)
+        if (result.type === 'success') return result.url
+        return undefined
+      },
+    }),
+  ],
+})
+
+const { result } = await wata.send({
+  method: 'wallet_connect',
+  params: [],
+})
+```
+
+#### Host
+
+Publishes `host.json`, renders an approval form at `/auth/mobile`, and redirects back to the consumer callback after approval.
+
+```ts
+import { createServer } from 'node:http'
+import { Wata, mobileWebAuth } from 'wata/host'
+
+const wata = Wata.create({
+  baseUrl: 'https://wallet.example',
+  meta: { name: 'Example Wallet' },
+  privateKey,
+  transports: [
+    mobileWebAuth({
+      html: {
+        async authenticate({ actions, request }) {
+          const body = await request.formData()
+          return await actions.approve(String(body.get('state')))
+        },
+        render({ authorization }) {
+          return new Response(
+            `<form method="post">
+              <input type="hidden" name="state" value="${authorization.state}" />
+              <button>Approve</button>
+            </form>`,
+            { headers: { 'content-type': 'text/html' } },
+          )
+        },
+      },
+      path: '/auth/mobile',
+    }),
+  ],
+})
+
+wata.on('request', async (event) => {
+  if (event.method === 'wallet_connect')
+    await event.respond(['0x0000000000000000000000000000000000000001'])
 })
 
 createServer(wata.listener).listen(3000)

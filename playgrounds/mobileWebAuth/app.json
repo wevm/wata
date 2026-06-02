@@ -1,0 +1,7 @@
+{
+  "expo": {
+    "name": "mobileWebAuth playground",
+    "slug": "mobile-web-auth-playground",
+    "scheme": "mobilewebauth"
+  }
+}
