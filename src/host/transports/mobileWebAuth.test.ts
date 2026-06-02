@@ -199,6 +199,64 @@ describe('mobileWebAuth', () => {
     )
   })
 
+  test('renders an approval page before a later form submission approves', async () => {
+    let renderedState: string | undefined
+    const host = hostMobileWebAuth({
+      fetch: async () => Response.json(consumerDocument()),
+      html: {
+        authenticate: async ({ actions, request }) => {
+          const form = await request.formData()
+          return await actions.approve(String(form.get('state')))
+        },
+        render: ({ authorization }) => {
+          renderedState = authorization.state
+          return new Response(authorization.state)
+        },
+      },
+      path: '/auth/mobile',
+    })
+    const consumer = mobileWebAuth({
+      callback,
+      host: hostDocument(),
+      openAuthSession: async (session) => {
+        const get = await host.fetch(new Request(session.authorizationUrl))
+        const state = await get.text()
+        const form = new FormData()
+        form.set('state', state)
+        const post = await host.fetch(
+          new Request(`${hostOrigin}/auth/mobile`, {
+            body: form,
+            method: 'POST',
+          }),
+        )
+        return post.headers.get('location') ?? undefined
+      },
+    })
+    const wata = Wata.create({
+      baseUrl: consumerOrigin,
+      meta: { name: 'App' },
+      transports: [consumer],
+    })
+    const hostWata = HostWata.create({ transports: [host] })
+    hostWata.on('request', (event) => {
+      if (event.method === 'ping') event.respond({ ok: true })
+    })
+
+    const { result } = await wata.send({ method: 'ping', params: [] })
+
+    expect({
+      renderedStateLength: renderedState ? Base64.toBytes(renderedState).length : undefined,
+      result,
+    }).toMatchInlineSnapshot(`
+      {
+        "renderedStateLength": 32,
+        "result": {
+          "ok": true,
+        },
+      }
+    `)
+  })
+
   test('host renders a browser error when authorization request omits message', async () => {
     const { authResponse, consumer, host } = pair({
       authorizationRequest(url) {

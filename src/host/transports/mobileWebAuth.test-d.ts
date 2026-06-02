@@ -25,4 +25,30 @@ describe('mobileWebAuth (host)', () => {
     const wata = Wata.create({ transports: [transport] })
     expectTypeOf(wata.role).toEqualTypeOf<'host'>()
   })
+
+  test('html hooks expose render and state-based approval actions', () => {
+    mobileWebAuth({
+      html: {
+        authenticate: (options) => {
+          expectTypeOf(options.actions.approve).toEqualTypeOf<
+            (state?: string | undefined) => Promise<Response>
+          >()
+          expectTypeOf(options.actions.deny).toEqualTypeOf<
+            (state?: string | undefined, message?: string | undefined) => Promise<Response>
+          >()
+          expectTypeOf(options.actions.get).toEqualTypeOf<
+            (state: string) => Promise<MobileWebAuth.PendingRecord | undefined>
+          >()
+          return new Response('ok')
+        },
+        render: (options) => {
+          expectTypeOf(options.authorization).toEqualTypeOf<MobileWebAuth.PendingRecord>()
+          expectTypeOf(options.actions.approve).toEqualTypeOf<
+            (state?: string | undefined) => Promise<Response>
+          >()
+          return new Response(options.authorization.state)
+        },
+      },
+    })
+  })
 })

@@ -38,6 +38,12 @@ export type AuthorizationRequest = {
   state: string
 }
 
+/** Verified authorization request kept while the browser approval page is open. */
+export type PendingRecord = AuthorizationRequest & {
+  /** Lifecycle status. */
+  status: 'pending'
+}
+
 /** Options accepted by {@link mobileWebAuth}. */
 export type Options = {
   /**
@@ -57,11 +63,17 @@ export declare namespace html {
   /** Bring-your-own approval UI hooks. */
   type Hooks = {
     /**
-     * Called after consumer verification. Call `actions.approve()` to
-     * dispatch the queued request through host `Wata`, or
-     * `actions.deny()` to return a callback-eligible JSON-RPC error.
+     * Called for approval submissions. Inspect the request, then call
+     * `actions.approve(state)` or `actions.deny(state)` and return the
+     * response that should be shown to the browser.
      */
     authenticate: (options: authenticate.Options) => Response | Promise<Response>
+    /**
+     * Called after consumer verification. Return the approval page shown
+     * in the browser. When omitted, the transport calls
+     * `authenticate` immediately for simple server-side approval flows.
+     */
+    render?: ((options: render.Options) => Response | Promise<Response>) | undefined
     /**
      * Render a pre-verification browser error. The response must not
      * redirect to the unverified callback. When omitted, the transport
@@ -73,10 +85,20 @@ export declare namespace html {
   namespace authenticate {
     /** Argument passed to {@link html.Hooks.authenticate}. */
     type Options = {
-      /** Approval actions for this request-local authorization. */
+      /** Approval actions for pending authorizations. */
       actions: Actions
-      /** Verified authorization request. */
-      authorization: AuthorizationRequest
+      /** Browser request that reached the auth endpoint. */
+      request: Request
+    }
+  }
+
+  namespace render {
+    /** Argument passed to {@link html.Hooks.render}. */
+    type Options = {
+      /** Approval actions for this pending authorization. */
+      actions: Actions
+      /** Verified pending authorization request. */
+      authorization: PendingRecord
       /** Browser request that reached the auth endpoint. */
       request: Request
     }
@@ -96,10 +118,12 @@ export declare namespace html {
 
   /** Actions exposed inside {@link html.Hooks.authenticate}. */
   type Actions = {
-    /** Approve and return a redirect response to the verified callback. */
-    approve: () => Promise<Response>
-    /** Deny and return a redirect response carrying JSON-RPC `-32600`. */
-    deny: (message?: string) => Promise<Response>
+    /** Approve a pending authorization and return the callback redirect response. */
+    approve: (state?: string | undefined) => Promise<Response>
+    /** Deny a pending authorization and return a callback redirect carrying JSON-RPC `-32600`. */
+    deny: (state?: string | undefined, message?: string | undefined) => Promise<Response>
+    /** Look up a pending authorization by state. */
+    get: (state: string) => Promise<PendingRecord | undefined>
   }
 }
 
@@ -119,6 +143,7 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     resolve: (envelope: Envelope.Envelope) => void
   }
   type State = { active: Active | undefined; closed: boolean; started: boolean }
+  const pending = new Map<string, PendingRecord>()
   const state: State = {
     active: undefined,
     closed: false,
@@ -133,28 +158,62 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
   })
 
   app.get(authPath, async (c) => {
-    let authorization: AuthorizationRequest
+    let authorization: PendingRecord
     try {
-      authorization = await parseAuthorization(c.req.raw)
+      authorization = {
+        ...(await parseAuthorization(c.req.raw)),
+        status: 'pending',
+      }
     } catch (cause) {
       return await renderError(c.req.raw, cause as Error)
     }
-    const actions: html.Actions = {
-      approve: () => approve(authorization),
-      deny: (message = 'User denied the request.') =>
-        redirectWithResponse(
+    pending.set(authorization.state, authorization)
+    const actions = createActions(authorization.state)
+    if (html.render)
+      return await html.render({
+        actions,
+        authorization,
+        request: c.req.raw,
+      })
+    return await html.authenticate({
+      actions,
+      request: c.req.raw,
+    })
+  })
+
+  app.post(
+    authPath,
+    async (c) =>
+      await html.authenticate({
+        actions: createActions(),
+        request: c.req.raw,
+      }),
+  )
+
+  function createActions(boundState?: string | undefined): html.Actions {
+    return {
+      approve: (stateValue = boundState) => approve(pendingRecord(stateValue)),
+      async deny(stateValue = boundState, message = 'User denied the request.') {
+        const authorization = pendingRecord(stateValue)
+        return await redirectWithResponse(
           authorization,
           Envelope.rpcResponses([
             Rpc.error({ code: -32600, id: firstRequestId(authorization.message), message }),
           ]),
-        ),
+        )
+      },
+      async get(stateValue) {
+        return pending.get(stateValue)
+      },
     }
-    return await html.authenticate({
-      actions,
-      authorization,
-      request: c.req.raw,
-    })
-  })
+  }
+
+  function pendingRecord(stateValue: string | undefined): PendingRecord {
+    if (!stateValue) throw new UnknownStateError('')
+    const authorization = pending.get(stateValue)
+    if (!authorization) throw new UnknownStateError(stateValue)
+    return authorization
+  }
 
   async function parseAuthorization(request: Request): Promise<AuthorizationRequest> {
     const url = new URL(request.url)
@@ -193,12 +252,13 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     }
   }
 
-  async function approve(authorization: AuthorizationRequest): Promise<Response> {
+  async function approve(authorization: PendingRecord): Promise<Response> {
     if (state.closed) throw new Transport.ClosedError('mobile-web-auth transport already closed')
     if (state.active)
       throw new Transport.TransportError(
         'mobile-web-auth is single-exchange; a previous approval is still in flight',
       )
+    pending.delete(authorization.state)
     const response = new Promise<Envelope.Envelope>((resolve, reject) => {
       state.active = { reject, resolve }
     })
@@ -214,6 +274,7 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     authorization: AuthorizationRequest,
     response: Envelope.Envelope,
   ): Promise<Response> {
+    pending.delete(authorization.state)
     const keypair = Crypto.randomKeypair()
     const message = MobileWebAuthEnvelope.sealResponse({
       publicKey: authorization.publicKey,
@@ -250,6 +311,7 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
       state.closed = true
       state.active?.reject(cause ?? new Transport.ClosedError('mobile-web-auth transport closed'))
       state.active = undefined
+      pending.clear()
       emitter.emit('close', cause)
     },
     discovery: {
@@ -369,5 +431,15 @@ class PreVerificationError<
   ) {
     super(message, options)
     this.status = options.status
+  }
+}
+
+class UnknownStateError<
+  cause extends Error | undefined = Error | undefined,
+> extends Errors.BaseError<cause> {
+  override name = 'MobileWebAuth.UnknownStateError'
+
+  constructor(state: string, options: Errors.BaseError.Options<cause> = {} as never) {
+    super(`no pending mobile-web-auth session for state \`${state}\``, options)
   }
 }
