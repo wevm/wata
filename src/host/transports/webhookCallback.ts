@@ -1519,6 +1519,10 @@ export function webhookCallback(options: Options): WebhookCallback {
       if (baseUrl && !baseUrl_ctor && !baseUrl_bound) baseUrl_bound = Uri.trimTrailingSlash(baseUrl)
       if (identity && !identity_bound) identity_bound = identity
     },
+    capabilities: {
+      notifications: { consumer: true, host: false },
+      requests: { consumer: true, host: false },
+    },
     async close(cause) {
       if (state.closed) return
       state.closed = true

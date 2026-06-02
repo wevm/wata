@@ -98,6 +98,22 @@ export type DiscoveryBinding = {
   id: string
 }
 
+/** Directional support for one JSON-RPC operation kind. */
+export type DirectionCapabilities = {
+  /** True when the consumer side may initiate this operation. */
+  consumer: boolean
+  /** True when the host side may initiate this operation. */
+  host: boolean
+}
+
+/** JSON-RPC operation directions supported by a transport. */
+export type Capabilities = {
+  /** Notification directions supported by the transport. */
+  notifications: DirectionCapabilities
+  /** Request directions supported by the transport. */
+  requests: DirectionCapabilities
+}
+
 /**
  * The normalized transport contract. Every adapter — consumer-side,
  * host-side, role-agnostic loopback — implements this shape.
@@ -119,6 +135,8 @@ export type Transport<role extends Role = Role, name extends string = string, se
    * Host transports leave this `undefined`.
    */
   callbackUrls?: readonly string[] | undefined
+  /** JSON-RPC operation directions this transport can represent. */
+  capabilities: Capabilities
   /** Close the transport. Idempotent. */
   close: (cause?: Error) => Promise<void>
   /**

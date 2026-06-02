@@ -358,6 +358,10 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
   }
 
   return {
+    capabilities: {
+      notifications: { consumer: true, host: true },
+      requests: { consumer: true, host: false },
+    },
     async close(cause) {
       if (!state.started) return
       const handle_local = handle

@@ -141,6 +141,18 @@ describe('Consumer.notify', () => {
   })
 })
 
+describe('Host.notify', () => {
+  test('inherits the same method-name narrowing as send', () => {
+    const { host } = loopback()
+    const wata = HostWata.create({ transports: [host], schema })
+    wata.notify({ method: 'ping', params: [] })
+    // @ts-expect-error 'nope' is not in the schema
+    wata.notify({ method: 'nope', params: [] })
+    // @ts-expect-error params must match the schema entry
+    wata.notify({ method: 'eth_sign', params: ['0x'] })
+  })
+})
+
 describe('Host events', () => {
   test('`request` is a discriminated union over method (params + respond narrow together)', () => {
     const { host } = loopback()
@@ -205,12 +217,17 @@ describe('Host events', () => {
 })
 
 describe('Consumer events', () => {
-  test('exposes lifecycle and rpc response events (no `request` / `notification`)', () => {
+  test('exposes lifecycle, rpc, and notification events (no `request`)', () => {
     const { consumer } = loopback()
     const wata = Wata.create({ transports: [consumer], schema })
     wata.on('open', () => {})
     wata.on('close', () => {})
     wata.on('error', () => {})
+    wata.on('notification', (event) => {
+      expectTypeOf(event.method).toEqualTypeOf<'ping' | 'eth_sign'>()
+      if (event.method === 'eth_sign')
+        expectTypeOf(event.params).toMatchTypeOf<readonly [string, string]>()
+    })
     wata.on('rpc-requests', (requests, meta) => {
       expectTypeOf(requests).toEqualTypeOf<Wata.RpcRequestsPayload<typeof schema>>()
       expectTypeOf(meta).toEqualTypeOf<Wata.RpcEnvelopeMeta<'rpc-requests'>>()
@@ -225,8 +242,6 @@ describe('Consumer events', () => {
     })
     // @ts-expect-error consumers don't receive `request`
     wata.on('request', () => {})
-    // @ts-expect-error consumers don't receive `notification`
-    wata.on('notification', () => {})
   })
 
   test('multiple transports keep webhook registration metadata on its child session', async () => {

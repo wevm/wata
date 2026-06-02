@@ -151,6 +151,16 @@ export type Host<
   fetch: Http.HandlersForTransports<transports>['fetch']
   /** See {@link fetch}. */
   listener: Http.HandlersForTransports<transports>['listener']
+  /**
+   * Send a typed JSON-RPC notification from the host to the consumer.
+   * Auto-starts transports that support host-origin notifications.
+   */
+  notify: <
+    const method extends Host.MethodName<schema>,
+    const params extends Host.ParamsOf<schema, method>,
+  >(
+    options: Host.NotifyOptions<method, params>,
+  ) => Promise<void>
   /** Remove a previously subscribed listener. */
   off: <type extends keyof HostEventMap<schema>>(
     type: type,
@@ -207,14 +217,41 @@ export type Host<
    * Explicitly bring the session up. Starts the transport and resolves
    * once it is ready to send and receive frames. Emits `'open'` on success.
    *
-   * Optional: {@link Host.on} (and {@link Host.respond} / {@link Host.reject})
-   * trigger `start` internally on first use, so most hosts can skip it.
+   * Optional: {@link Host.on}, {@link Host.notify}, {@link Host.respond},
+   * and {@link Host.reject} trigger `start` internally on first use,
+   * so most hosts can skip it.
    * Reach for it when a UI wants to surface the connecting state before
    * any request lands, or when start-time errors should reject up-front.
    */
   start: () => Promise<void>
   /** Configured transports, in user-supplied order. */
   transports: transports
+}
+
+/** Helper types for the host-side {@link Host} API. */
+export declare namespace Host {
+  /** Method names known to a host (any string when no schema supplied). */
+  type MethodName<schema extends Schema.Schema | undefined> = schema extends Schema.Schema
+    ? Schema.MethodName<schema>
+    : string
+
+  /** Options for {@link Host.notify}. */
+  type NotifyOptions<method extends string, params extends Rpc.Params> = {
+    /** Method name. Narrowed against the schema when one was supplied. */
+    method: method
+    /** Method params. Narrowed against the schema when one was supplied. */
+    params: params
+  }
+
+  /** Params type for a given method (any when no schema supplied). */
+  type ParamsOf<
+    schema extends Schema.Schema | undefined,
+    method extends string,
+  > = schema extends Schema.Schema
+    ? method extends Schema.MethodName<schema>
+      ? Rpc.Params & Schema.ParamsOf<schema, method>
+      : Rpc.Params
+    : Rpc.Params
 }
 
 export declare namespace reject {
@@ -416,9 +453,10 @@ export function create<
   function emitRpcRequests(
     transport: Transport.Transport<'host', string>,
     envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>,
+    direction: Wata.RpcEnvelopeMeta['direction'],
   ): void {
     emitter.emit('rpc-requests', envelope.payload as unknown as Wata.RpcRequestsPayload<schema>, {
-      direction: 'incoming',
+      direction,
       transport: transport.name,
       type: 'rpc-requests',
     })
@@ -597,7 +635,7 @@ export function create<
         return
       }
       if (envelope.type === 'rpc-requests') {
-        emitRpcRequests(runtime.transport, envelope)
+        emitRpcRequests(runtime.transport, envelope, 'incoming')
         for (const message of envelope.payload) {
           if ('id' in message) await dispatchRequest(runtime, message)
           else dispatchNotification(runtime, message)
@@ -618,6 +656,23 @@ export function create<
   }
 
   const routed = Http.composeRouted(transports.filter(isHttpServer))
+
+  async function notify(options: Host.NotifyOptions<string, Rpc.Params>): Promise<void> {
+    const targets = runtimes.filter((runtime) => runtime.transport.capabilities.notifications.host)
+    if (targets.length === 0)
+      throw new Transport.UnsupportedError('no configured transport supports host notifications')
+    if (schema) Wata.validateParamsIfKnown(schema, options.method, options.params)
+    const envelope = Envelope.rpcRequests([
+      Rpc.notification({ method: options.method, params: options.params }),
+    ])
+    await Promise.all(
+      targets.map(async (runtime) => {
+        await startRuntime(runtime)
+        emitRpcRequests(runtime.transport, envelope, 'outgoing')
+        await runtime.transport.send(envelope)
+      }),
+    )
+  }
 
   // When `meta` + `baseUrl` are both set, wrap routed transport fetch so
   // GET `/.well-known/urpc/host.json`
@@ -652,6 +707,7 @@ export function create<
     },
     fetch: httpFetch as Host<schema, transports>['fetch'],
     listener: httpListener as Host<schema, transports>['listener'],
+    notify,
     off(type, listener) {
       if (type === 'request') {
         requestListeners.delete(listener as (payload: HostEventMap<schema>['request']) => unknown)

@@ -176,6 +176,35 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
 
     await consumer.close()
   })
+
+  test('wata.notify delivers a host notification when host started first', async () => {
+    const { consumer, host } = pair()
+    const seen: Rpc.Notification[] = []
+    consumer.on('notification', ({ notification }) => {
+      seen.push(notification)
+    })
+
+    const sent = host.notify({ method: 'dialog.mode.switch', params: [{ mode: 'popup' }] })
+    await consumer.start()
+    await sent
+    await waitFor(() => seen.length === 1)
+
+    expect(seen).toMatchInlineSnapshot(`
+      [
+        {
+          "jsonrpc": "2.0",
+          "method": "dialog.mode.switch",
+          "params": [
+            {
+              "mode": "popup",
+            },
+          ],
+        },
+      ]
+    `)
+
+    await consumer.close()
+  })
 })
 
 async function waitFor(predicate: () => boolean, timeout = 1000): Promise<void> {
