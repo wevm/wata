@@ -280,6 +280,12 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     }
     const { frame } = inbound
     if (protocol.isControlFrame(frame)) {
+      if (role === 'host' && frame.type === protocol.consumerHello.type)
+        try {
+          postRaw(protocol.hostReady)
+        } catch (error) {
+          emitError(error as Error)
+        }
       if (frame.type === handshake.expect) markReady()
       return
     }
