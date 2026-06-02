@@ -11,18 +11,15 @@
 import { Hono } from 'hono'
 import { Base64, Bytes, Hex } from 'ox'
 
-import * as Aad from '../../core/Aad.js'
-import * as Aead from '../../core/Aead.js'
 import * as Crypto from '../../core/Crypto.js'
 import * as Discovery from '../../core/Discovery.js'
 import * as Envelope from '../../core/Envelope.js'
 import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
 import * as Http from '../../core/Http.js'
-import * as Nonce from '../../core/Nonce.js'
 import * as Rpc from '../../core/Rpc.js'
-import * as Session from '../../core/Session.js'
 import * as Transport from '../../core/Transport.js'
+import * as core_mobileWebAuth from '../../internal/MobileWebAuth.js'
 import * as Uri from '../../internal/Uri.js'
 
 /** Verified authorization request passed to host approval UI hooks. */
@@ -31,11 +28,9 @@ export type AuthorizationRequest = {
   callback: string
   /** Parsed consumer discovery document. */
   consumer: Discovery.ConsumerDocument
-  /** Whether the authorization URL carried an initial `message`. */
-  hasMessage: boolean
   /** Consumer origin identifier supplied as `id`. */
   id: string
-  /** Queued request envelope, or a no-op request when absent. */
+  /** Queued request envelope. */
   message: Envelope.Envelope
   /** Consumer's ephemeral X25519 public key. */
   publicKey: Hex.Hex
@@ -45,11 +40,6 @@ export type AuthorizationRequest = {
 
 /** Options accepted by {@link mobileWebAuth}. */
 export type Options = {
-  /**
-   * Public origin of the host. Falls back to the request URL origin
-   * when omitted; `Wata.create({ baseUrl })` also lazy-injects it.
-   */
-  baseUrl?: string | undefined
   /**
    * Override the `fetch` implementation used for consumer discovery.
    * Defaults to `globalThis.fetch`.
@@ -122,8 +112,6 @@ export type MobileWebAuth = Transport.Transport<'host', 'mobileWebAuth'> & Http.
 export function mobileWebAuth(options: Options): MobileWebAuth {
   const { fetch: fetchImpl = globalThis.fetch.bind(globalThis), html, path } = options
   const authPath = path ? Uri.normalizePath(path) : '/'
-  const baseUrl_ctor = options.baseUrl ? Uri.trimTrailingSlash(options.baseUrl) : undefined
-  let baseUrl_bound: string | undefined
 
   function authUrlFor(baseUrl: string): string {
     return `${Uri.trimTrailingSlash(baseUrl)}${authPath === '/' ? '' : authPath}`
@@ -176,23 +164,21 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     const url = new URL(request.url)
     if (Uri.requiredSearchParam(url, 'version') !== '1')
       throw new PreVerificationError('unsupported mobile-web-auth version', { status: 400 })
-    const id = assertConsumerId(required(url, 'id'))
-    const callback = assertCallback(required(url, 'callback'))
-    const stateValue = required(url, 'state')
+    const id = assertConsumerId(requiredSearchParam(url, 'id'))
+    const callback = assertCallback(requiredSearchParam(url, 'callback'))
+    const stateValue = requiredSearchParam(url, 'state')
     if (!isBase64Url(stateValue) || Base64.toBytes(stateValue).length < 16)
       throw new PreVerificationError('state must contain at least 128 bits', { status: 400 })
-    const publicKey = parsePublicKey(required(url, 'pubkey'))
+    const publicKey = parsePublicKey(requiredSearchParam(url, 'pubkey'))
     const consumer = await fetchConsumer(id)
     if (!consumer.callback_urls?.includes(callback))
       throw new PreVerificationError('callback is not registered by consumer', { status: 403 })
-    const hasMessage = url.searchParams.has('message')
-    const message = hasMessage ? parseMessage(required(url, 'message')) : Envelope.rpcRequests([])
+    const message = parseMessage(requiredSearchParam(url, 'message'))
     if (message.type !== 'rpc-requests')
       throw new PreVerificationError('message must be an rpc-requests envelope', { status: 400 })
     return {
       callback,
       consumer,
-      hasMessage,
       id,
       message,
       publicKey,
@@ -213,11 +199,6 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
 
   async function approve(authorization: AuthorizationRequest): Promise<Response> {
     if (state.closed) throw new Transport.ClosedError('mobile-web-auth transport already closed')
-    if (!authorization.hasMessage)
-      return await redirectWithResponse(
-        authorization,
-        Envelope.rpcResponses([Rpc.success({ id: null, result: null })]),
-      )
     if (state.active)
       throw new Transport.TransportError(
         'mobile-web-auth is single-exchange; a previous approval is still in flight',
@@ -238,26 +219,13 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     response: Envelope.Envelope,
   ): Promise<Response> {
     const keypair = Crypto.randomKeypair()
-    const keys = Session.derive({
-      peer: { publicKey: authorization.publicKey },
-      role: 'host',
+    const message = core_mobileWebAuth.sealResponse({
+      publicKey: authorization.publicKey,
+      response,
       self: keypair.x25519,
-      transportId: 'mobile-web-auth',
-    })
-    const nonce = Nonce.fromCounter(1n)
-    const ciphertext = Aead.seal({
-      aad: Aad.encode({ publicKey: authorization.publicKey, role: Aad.role.host }),
-      key: keys.h2c,
-      nonce,
-      plaintext: Bytes.fromString(JSON.stringify(response)),
-    })
-    const message = Envelope.encrypted({
-      ciphertext,
-      from: 'host',
-      nonce,
     })
     const url = new URL(authorization.callback)
-    url.searchParams.set('message', encodeJson(message))
+    url.searchParams.set('message', core_mobileWebAuth.encodeJson(message))
     url.searchParams.set(
       'pubkey',
       Base64.fromBytes(Bytes.from(keypair.x25519.publicKey), { pad: false, url: true }),
@@ -284,10 +252,6 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
   const { fetch, listener } = Http.fromHono(app)
 
   return {
-    bind(binding) {
-      const baseUrl = binding.baseUrl
-      if (baseUrl && !baseUrl_ctor && !baseUrl_bound) baseUrl_bound = Uri.trimTrailingSlash(baseUrl)
-    },
     async close(cause) {
       if (state.closed) return
       state.closed = true
@@ -359,10 +323,6 @@ function assertConsumerId(value: string): string {
   return url.origin
 }
 
-function encodeJson(value: unknown): string {
-  return Base64.fromBytes(Bytes.fromString(JSON.stringify(value)), { pad: false, url: true })
-}
-
 function firstRequestId(envelope: Envelope.Envelope): Rpc.Id | null {
   if (envelope.type !== 'rpc-requests') return null
   for (const message of envelope.payload) if ('id' in message) return message.id
@@ -375,7 +335,7 @@ function isBase64Url(value: string): boolean {
 
 function parseMessage(value: string): Envelope.Envelope {
   try {
-    return Envelope.parse(JSON.parse(Bytes.toString(Base64.toBytes(value))))
+    return Envelope.parse(core_mobileWebAuth.decodeJson(value))
   } catch (cause) {
     throw new PreVerificationError('message is not a valid envelope', {
       cause: cause as Error,
@@ -397,7 +357,7 @@ function parsePublicKey(value: string): Hex.Hex {
   }
 }
 
-function required(url: URL, key: string): string {
+function requiredSearchParam(url: URL, key: string): string {
   const value = Uri.requiredSearchParam(url, key)
   if (!value)
     throw new PreVerificationError(`missing required \`${key}\` parameter`, { status: 400 })

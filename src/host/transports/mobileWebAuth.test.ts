@@ -1,11 +1,7 @@
 import { Base64, Bytes } from 'ox'
 import { describe, expect, test } from 'vp/test'
 import { Discovery, Wata, mobileWebAuth } from 'wata'
-import {
-  MobileWebAuth as HostMobileWebAuth,
-  Wata as HostWata,
-  mobileWebAuth as hostMobileWebAuth,
-} from 'wata/host'
+import { Wata as HostWata, mobileWebAuth as hostMobileWebAuth } from 'wata/host'
 
 const callback = 'com.example.app:/auth'
 const consumerOrigin = 'https://app.example'
@@ -36,15 +32,14 @@ function consumerDocument(callbackUrls: readonly string[] = [callback]): unknown
 
 function pair(
   options: {
+    authorizationRequest?: ((url: URL) => void) | undefined
     callbackResult?: ((url: URL) => void) | undefined
     callbackUrls?: readonly string[] | undefined
-    tamperState?: boolean
   } = {},
 ) {
   let authorizationUrl: string | undefined
   let authResponse: { location: string | null; status: number } | undefined
   const host = hostMobileWebAuth({
-    baseUrl: hostOrigin,
     fetch: async (input) => {
       const url = input instanceof Request ? input.url : String(input)
       if (url === `${consumerOrigin}/.well-known/urpc/consumer.json`)
@@ -60,8 +55,10 @@ function pair(
     callback,
     host: hostDocument(),
     openAuthSession: async (session) => {
-      authorizationUrl = session.authorizationUrl
-      const response = await host.fetch(new Request(session.authorizationUrl))
+      const authorization = new URL(session.authorizationUrl)
+      options.authorizationRequest?.(authorization)
+      authorizationUrl = authorization.toString()
+      const response = await host.fetch(new Request(authorization.toString()))
       const location = response.headers.get('location')
       authResponse = { location, status: response.status }
       if (!location) return undefined
@@ -70,10 +67,7 @@ function pair(
         options.callbackResult(url)
         return url.toString()
       }
-      if (!options.tamperState) return location
-      const url = new URL(location)
-      url.searchParams.set('state', 'mismatched')
-      return url.toString()
+      return location
     },
   })
   return {
@@ -143,7 +137,6 @@ describe('mobileWebAuth', () => {
 
   test('host ignores custom pre-verification error redirects', async () => {
     const host = hostMobileWebAuth({
-      baseUrl: hostOrigin,
       fetch: async () => Response.json(consumerDocument(['com.example.other:/auth'])),
       html: {
         authenticate: ({ actions }) => actions.approve(),
@@ -176,7 +169,6 @@ describe('mobileWebAuth', () => {
   test('host-side denial returns JSON-RPC -32600 through the callback', async () => {
     let authorizationUrl: string | undefined
     const host = hostMobileWebAuth({
-      baseUrl: hostOrigin,
       fetch: async () => Response.json(consumerDocument()),
       html: {
         authenticate: ({ actions }) => actions.deny(),
@@ -207,27 +199,10 @@ describe('mobileWebAuth', () => {
     )
   })
 
-  test('host returns encrypted no-op response when authorization request omits message', async () => {
-    let seenAuthorization: HostMobileWebAuth.AuthorizationRequest | undefined
-    const host = hostMobileWebAuth({
-      baseUrl: hostOrigin,
-      fetch: async () => Response.json(consumerDocument()),
-      html: {
-        authenticate: ({ actions, authorization }) => {
-          seenAuthorization = authorization
-          return actions.approve()
-        },
-      },
-      path: '/auth/mobile',
-    })
-    const consumer = mobileWebAuth({
-      callback,
-      host: hostDocument(),
-      openAuthSession: async (session) => {
-        const authorization = new URL(session.authorizationUrl)
-        authorization.searchParams.delete('message')
-        const response = await host.fetch(new Request(authorization.toString()))
-        return response.headers.get('location') ?? undefined
+  test('host renders a browser error when authorization request omits message', async () => {
+    const { authResponse, consumer, host } = pair({
+      authorizationRequest(url) {
+        url.searchParams.delete('message')
       },
     })
     const wata = Wata.create({
@@ -237,27 +212,25 @@ describe('mobileWebAuth', () => {
     })
     HostWata.create({ transports: [host] })
 
-    const response = await new Promise((resolve) => {
-      wata.on('rpc-responses', (responses) => resolve(responses))
-      void wata.send({ method: 'ping', params: [] }).catch(() => undefined)
-    })
-
-    expect({ response, seenMessage: seenAuthorization?.hasMessage }).toMatchInlineSnapshot(`
+    await expect(
+      wata.send({ method: 'ping', params: [] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Rpc.RpcError: User cancelled the mobile-web-auth session.]`,
+    )
+    expect(authResponse()).toMatchInlineSnapshot(`
       {
-        "response": [
-          {
-            "id": null,
-            "jsonrpc": "2.0",
-            "result": null,
-          },
-        ],
-        "seenMessage": false,
+        "location": null,
+        "status": 400,
       }
     `)
   })
 
   test('consumer rejects a callback whose state does not match the pending session', async () => {
-    const { consumer, host } = pair({ tamperState: true })
+    const { consumer, host } = pair({
+      callbackResult(url) {
+        url.searchParams.set('state', 'mismatched')
+      },
+    })
     const wata = Wata.create({
       baseUrl: consumerOrigin,
       meta: { name: 'App' },

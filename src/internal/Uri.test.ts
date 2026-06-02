@@ -13,48 +13,61 @@ describe('normalizePath', () => {
 })
 
 describe('isAllowedAppCallback', () => {
-  test('accepts https URLs', () => {
-    expect(Uri.isAllowedAppCallback(new URL('https://app.example/callback'))).toMatchInlineSnapshot(
-      `true`,
-    )
-  })
-
-  test('accepts loopback http URLs', () => {
+  test('validates callback URI schemes', () => {
     expect(
-      Uri.isAllowedAppCallback(new URL('http://127.0.0.1:3000/callback')),
-    ).toMatchInlineSnapshot(`true`)
-  })
-
-  test('accepts reverse-DNS private-use URI schemes', () => {
-    expect(Uri.isAllowedAppCallback(new URL('com.example.app:/callback'))).toMatchInlineSnapshot(
-      `true`,
-    )
-  })
-
-  test('rejects public http URLs', () => {
-    expect(Uri.isAllowedAppCallback(new URL('http://app.example/callback'))).toMatchInlineSnapshot(
-      `false`,
-    )
-  })
-
-  test('rejects non-private URI schemes', () => {
-    expect(Uri.isAllowedAppCallback(new URL('exampleapp:/callback'))).toMatchInlineSnapshot(
-      `false`,
-    )
+      [
+        'https://app.example/callback',
+        'http://127.0.0.1:3000/callback',
+        'com.example.app:/callback',
+        'http://app.example/callback',
+        'exampleapp:/callback',
+      ].map((value) => [value, Uri.isAllowedAppCallback(new URL(value))]),
+    ).toMatchInlineSnapshot(`
+      [
+        [
+          "https://app.example/callback",
+          true,
+        ],
+        [
+          "http://127.0.0.1:3000/callback",
+          true,
+        ],
+        [
+          "com.example.app:/callback",
+          true,
+        ],
+        [
+          "http://app.example/callback",
+          false,
+        ],
+        [
+          "exampleapp:/callback",
+          false,
+        ],
+      ]
+    `)
   })
 })
 
 describe('isLoopbackHttp', () => {
-  test('accepts localhost http URLs', () => {
-    expect(Uri.isLoopbackHttp(new URL('http://localhost:3000/callback'))).toMatchInlineSnapshot(
-      `true`,
-    )
-  })
-
-  test('rejects public http URLs', () => {
-    expect(Uri.isLoopbackHttp(new URL('http://app.example/callback'))).toMatchInlineSnapshot(
-      `false`,
-    )
+  test('validates loopback http URLs', () => {
+    expect(
+      ['http://localhost:3000/callback', 'http://app.example/callback'].map((value) => [
+        value,
+        Uri.isLoopbackHttp(new URL(value)),
+      ]),
+    ).toMatchInlineSnapshot(`
+      [
+        [
+          "http://localhost:3000/callback",
+          true,
+        ],
+        [
+          "http://app.example/callback",
+          false,
+        ],
+      ]
+    `)
   })
 })
 

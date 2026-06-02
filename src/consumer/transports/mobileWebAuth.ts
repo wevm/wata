@@ -12,17 +12,15 @@
 
 import { Base64, Bytes, Hex } from 'ox'
 
-import * as Aad from '../../core/Aad.js'
 import * as Aead from '../../core/Aead.js'
 import * as Crypto from '../../core/Crypto.js'
 import * as Discovery from '../../core/Discovery.js'
 import * as Envelope from '../../core/Envelope.js'
 import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
-import * as Nonce from '../../core/Nonce.js'
 import * as Rpc from '../../core/Rpc.js'
-import * as Session from '../../core/Session.js'
 import * as Transport from '../../core/Transport.js'
+import * as core_mobileWebAuth from '../../internal/MobileWebAuth.js'
 import * as Uri from '../../internal/Uri.js'
 
 /** Result returned by the platform browser-auth session. */
@@ -120,8 +118,6 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
   const emitter = Events.create<Transport.EventMap>()
   type Pending = {
     callback: string
-    /** Origin of the host auth endpoint this state was launched against. */
-    hostOrigin: string
     keypair: Crypto.Keypair
     requestId: Rpc.Id | null
     state: string
@@ -173,7 +169,6 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     })
     state.pending = {
       callback: callbackUrl,
-      hostOrigin,
       keypair,
       requestId,
       state: stateValue,
@@ -222,30 +217,13 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     }
     try {
       const publicKey_host = Hex.fromBytes(Base64.toBytes(pubkey)) as Hex.Hex
-      const encrypted = Envelope.parse(decodeJson(message))
-      if (encrypted.type !== 'encrypted')
-        throw new Errors.ProtocolError('callback message must be encrypted')
-      if (encrypted.payload.from !== 'host')
-        throw new Errors.ProtocolError('callback message must be from host')
-      const keys = Session.derive({
-        peer: { publicKey: publicKey_host },
-        role: 'consumer',
-        self: pending.keypair.x25519,
-        transportId: 'mobile-web-auth',
-      })
-      const frame = Envelope.toEncrypted(encrypted)
-      if (Nonce.toCounter(frame.nonce) !== 1n)
-        throw new Errors.ProtocolError('callback nonce must be 1')
-      const plaintext = Aead.open({
-        aad: Aad.encode({ publicKey: pending.keypair.x25519.publicKey, role: Aad.role.host }),
-        ciphertext: frame.ciphertext,
-        key: keys.h2c,
-        nonce: frame.nonce,
-      })
-      const envelope = Envelope.parse(JSON.parse(Bytes.toString(Bytes.from(plaintext))))
-      if (envelope.type !== 'rpc-responses')
-        throw new Errors.ProtocolError('callback plaintext must be rpc-responses')
-      settle(envelope)
+      settle(
+        core_mobileWebAuth.openResponse({
+          message,
+          publicKey: publicKey_host,
+          self: pending.keypair.x25519,
+        }),
+      )
     } catch (cause) {
       const code = cause instanceof Aead.OpenError ? -32603 : -32700
       settle(
@@ -324,7 +302,7 @@ function buildAuthorizationUrl(options: {
   const url = new URL(options.authUrl)
   url.searchParams.set('callback', options.callback)
   url.searchParams.set('id', options.id)
-  url.searchParams.set('message', encodeJson(options.envelope))
+  url.searchParams.set('message', core_mobileWebAuth.encodeJson(options.envelope))
   url.searchParams.set(
     'pubkey',
     Base64.fromBytes(Bytes.from(options.publicKey), { pad: false, url: true }),
@@ -336,14 +314,6 @@ function buildAuthorizationUrl(options: {
 
 function cancelledEnvelope(id: Rpc.Id | null): Envelope.Envelope {
   return errorEnvelope(id, -32600, 'User cancelled the mobile-web-auth session.')
-}
-
-function decodeJson(value: string): unknown {
-  return JSON.parse(Bytes.toString(Base64.toBytes(value)))
-}
-
-function encodeJson(value: unknown): string {
-  return Base64.fromBytes(Bytes.fromString(JSON.stringify(value)), { pad: false, url: true })
 }
 
 function errorEnvelope(id: Rpc.Id | null, code: number, message: string): Envelope.Envelope {
