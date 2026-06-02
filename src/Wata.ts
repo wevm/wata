@@ -84,6 +84,37 @@ export type RpcRequestsPayload<schema extends Schema.Schema | undefined = undefi
 export type RpcResponsesPayload<schema extends Schema.Schema | undefined = undefined> =
   readonly RpcResponseMessageOf<schema>[]
 
+/** Event payload delivered to consumer `'notification'` listeners. */
+export type NotificationEvent<
+  method extends string = string,
+  params extends Rpc.Params = Rpc.Params,
+> = {
+  /** Method name. Top-level discriminator for schema-narrowed listeners. */
+  method: method
+  /** The full JSON-RPC notification envelope as parsed off the wire. */
+  notification: Rpc.Notification<method, params>
+  /** Notification params. */
+  params: params
+  /** SDK-facing name of the transport that delivered this notification. */
+  transport: string
+}
+
+/** Distribute notification payloads over schema method names. */
+type DistributeNotification<schema extends Schema.Schema, name extends string> =
+  name extends Schema.MethodName<schema>
+    ? Schema.ParamsOf<schema, name> extends infer params
+      ? params extends Rpc.Params
+        ? NotificationEvent<name, params>
+        : never
+      : never
+    : never
+
+/** Helper conditional mapping a schema to a typed consumer notification event. */
+export type SchemaNotificationEvent<schema extends Schema.Schema | undefined> =
+  schema extends Schema.Schema
+    ? DistributeNotification<schema, Schema.MethodName<schema>>
+    : NotificationEvent
+
 /** Lifecycle events emitted on every `Wata` (consumer + host). */
 export type LifecycleEventMap<schema extends Schema.Schema | undefined = undefined> = {
   /** Emitted exactly once when the session closes, cleanly or with cause. */
@@ -107,6 +138,13 @@ export type LifecycleEventMap<schema extends Schema.Schema | undefined = undefin
     meta: RpcEnvelopeMeta<'rpc-responses'>,
   ]
 }
+
+/** Consumer-side event map. */
+export type ConsumerEventMap<schema extends Schema.Schema | undefined = undefined> =
+  LifecycleEventMap<schema> & {
+    /** Inbound JSON-RPC notification from the host. */
+    notification: SchemaNotificationEvent<schema>
+  }
 
 /** Non-empty tuple of consumer transports accepted by {@link create}. */
 export type ConsumerTransports = readonly [
@@ -135,17 +173,17 @@ export type ConsumerSession<
     options: Consumer.NotifyOptions<method, params>,
   ) => Promise<void>
   /** Remove a previously subscribed listener. */
-  off: <type extends keyof LifecycleEventMap<schema>>(
+  off: <type extends keyof ConsumerEventMap<schema>>(
     type: type,
-    listener: Listener<LifecycleEventMap<schema>[type]>,
+    listener: Listener<ConsumerEventMap<schema>[type]>,
   ) => void
   /**
    * Subscribe to a consumer event. Returns an `AbortController` so the
    * subscription can be cancelled (or composed with an external signal).
    */
-  on: <type extends keyof LifecycleEventMap<schema>>(
+  on: <type extends keyof ConsumerEventMap<schema>>(
     type: type,
-    listener: Listener<LifecycleEventMap<schema>[type]>,
+    listener: Listener<ConsumerEventMap<schema>[type]>,
   ) => AbortController
   /** Side of the protocol this wata speaks for. */
   role: 'consumer'
@@ -192,14 +230,14 @@ export type ConsumerBase<
   /** See {@link fetch}. */
   listener: Http.HandlersForTransports<transports>['listener']
   /** Remove a previously subscribed consumer listener. */
-  off: <type extends keyof LifecycleEventMap<schema>>(
+  off: <type extends keyof ConsumerEventMap<schema>>(
     type: type,
-    listener: Listener<LifecycleEventMap<schema>[type]>,
+    listener: Listener<ConsumerEventMap<schema>[type]>,
   ) => void
   /** Subscribe to aggregate consumer events. */
-  on: <type extends keyof LifecycleEventMap<schema>>(
+  on: <type extends keyof ConsumerEventMap<schema>>(
     type: type,
-    listener: Listener<LifecycleEventMap<schema>[type]>,
+    listener: Listener<ConsumerEventMap<schema>[type]>,
   ) => AbortController
   /** Side of the protocol this wata speaks for. */
   role: 'consumer'
@@ -363,9 +401,10 @@ export function create<
     } as unknown as Consumer<schema, transports>
   }
 
-  const emitter = Events.create<LifecycleEventMap<schema>>()
+  const emitter = Events.create<ConsumerEventMap<schema>>()
   for (const session of sessions) {
     session.on('error', (error) => emitter.emit('error', error))
+    session.on('notification', (...payload) => emitter.emit('notification', ...payload))
     session.on('rpc-requests', (payload, meta) => emitter.emit('rpc-requests', payload, meta))
     session.on('rpc-responses', (payload, meta) => emitter.emit('rpc-responses', payload, meta))
   }
@@ -378,8 +417,8 @@ export function create<
     listener: httpListener as Consumer<schema, transports>['listener'],
     off: emitter.off,
     on(
-      type: keyof LifecycleEventMap<schema>,
-      listener: Listener<LifecycleEventMap<schema>[typeof type]>,
+      type: keyof ConsumerEventMap<schema>,
+      listener: Listener<ConsumerEventMap<schema>[typeof type]>,
     ) {
       const controller = new AbortController()
       emitter.on(type, listener as never, { signal: controller.signal })
@@ -399,7 +438,7 @@ function createConsumerSession<
 >(parameters: { schema: schema; transport: transport }): ConsumerSession<schema, transport> {
   const { schema, transport } = parameters
 
-  const emitter = Events.create<LifecycleEventMap<schema>>()
+  const emitter = Events.create<ConsumerEventMap<schema>>()
 
   const pending = new Map<Rpc.Id, Pending>()
   const methodById = new Map<Rpc.Id, string>()
@@ -487,6 +526,27 @@ function createConsumerSession<
     }
   }
 
+  function dispatchNotification(message: Rpc.Notification): void {
+    if (schema) {
+      try {
+        validateParamsIfKnown(schema, message.method, message.params)
+      } catch (cause) {
+        emitter.emit('error', cause as Error)
+        return
+      }
+    }
+    const payload = {
+      method: message.method,
+      notification: message,
+      params: message.params,
+      transport: transport.name,
+    } as ConsumerEventMap<schema>['notification']
+    emitter.emit(
+      'notification',
+      ...([payload] as Events.EventArgs<ConsumerEventMap<schema>['notification']>),
+    )
+  }
+
   function emitRpcResponses(
     envelope: Extract<Envelope.Envelope, { type: 'rpc-responses' }>,
     direction: RpcEnvelopeMeta['direction'],
@@ -569,6 +629,7 @@ function createConsumerSession<
     }
     if (envelope.type === 'rpc-requests') {
       emitRpcRequests(envelope, 'incoming')
+      for (const message of envelope.payload) if (!('id' in message)) dispatchNotification(message)
       return
     }
     // `ready` / `hello` ride at the transport layer.
@@ -609,6 +670,10 @@ function createConsumerSession<
       emitter.emit('close', cause)
     },
     async notify(opts) {
+      if (!transport.capabilities.notifications.consumer)
+        throw new Transport.UnsupportedError(
+          `transport \`${transport.name}\` does not support consumer notifications`,
+        )
       if (!state.started) await start()
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
       const envelope = Envelope.rpcRequests([

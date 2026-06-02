@@ -557,6 +557,10 @@ export function webhookCallback(options: Options): WebhookCallback {
       return getCallbackUrls()
     },
     cancel,
+    capabilities: {
+      notifications: { consumer: false, host: false },
+      requests: { consumer: true, host: false },
+    },
     async close(cause) {
       if (state.closed) return
       state.inFlight = false

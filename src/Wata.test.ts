@@ -61,6 +61,10 @@ function httpTransport<const name extends string>(options: {
 } {
   const { discoveryId, name, routes } = options
   return {
+    capabilities: {
+      notifications: { consumer: true, host: false },
+      requests: { consumer: true, host: false },
+    },
     async close() {},
     ...(discoveryId
       ? {
@@ -595,6 +599,52 @@ describe('notify', () => {
         },
       ]
     `)
+  })
+
+  test('rejects when the transport does not support standalone consumer notifications', async () => {
+    const consumer = Wata.create({
+      transports: [deviceCode({ url: 'https://wallet.example/auth/device' })],
+    })
+
+    await expect(
+      consumer.notify({ method: 'ping', params: [] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Transport.UnsupportedError: transport \`deviceCode\` does not support consumer notifications]`,
+    )
+  })
+})
+
+describe('host notify', () => {
+  test('delivers a typed notification to consumer listeners', async () => {
+    const { consumer, host } = pair()
+    await consumer.start()
+    await host.start()
+
+    const seen: Rpc.Notification[] = []
+    consumer.on('notification', ({ notification }) => {
+      seen.push(notification)
+    })
+
+    await host.notify({ method: 'ping', params: [] })
+    expect(seen).toMatchInlineSnapshot(`
+      [
+        {
+          "jsonrpc": "2.0",
+          "method": "ping",
+          "params": [],
+        },
+      ]
+    `)
+  })
+
+  test('rejects when no transport supports host notifications', async () => {
+    const host = HostWata.create({ transports: [httpTransport({ name: 'http', routes: ['/'] })] })
+
+    await expect(
+      host.notify({ method: 'ping', params: [] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Transport.UnsupportedError: no configured transport supports host notifications]`,
+    )
   })
 })
 

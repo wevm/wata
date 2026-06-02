@@ -628,6 +628,10 @@ export function deviceCode(options: Options): DeviceCode {
       if (baseUrl_bound) return
       baseUrl_bound = Uri.trimTrailingSlash(baseUrl)
     },
+    capabilities: {
+      notifications: { consumer: false, host: false },
+      requests: { consumer: true, host: false },
+    },
     async close(cause) {
       if (state.closed) return
       state.closed = true

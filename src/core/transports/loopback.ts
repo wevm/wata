@@ -87,6 +87,10 @@ function createSide<role extends 'consumer' | 'host'>(role: role) {
   }
 
   const transport: Transport.Transport<role, 'loopback'> = {
+    capabilities: {
+      notifications: { consumer: true, host: true },
+      requests: { consumer: true, host: false },
+    },
     async close(cause) {
       if (state.closed) return
       state.closed = true
