@@ -62,6 +62,12 @@
       "react-native": "./dist/consumer/transports/deviceCode.js",
       "default": "./dist/consumer/transports/deviceCode.js"
     },
+    "./consumer/transports/mobileWebAuth": {
+      "types": "./dist/consumer/transports/mobileWebAuth.d.ts",
+      "src": "./src/consumer/transports/mobileWebAuth.ts",
+      "react-native": "./dist/consumer/transports/mobileWebAuth.js",
+      "default": "./dist/consumer/transports/mobileWebAuth.js"
+    },
     "./consumer/transports/postMessage": {
       "types": "./dist/consumer/transports/postMessage.d.ts",
       "src": "./src/consumer/transports/postMessage.ts",
@@ -91,6 +97,12 @@
       "src": "./src/host/transports/deviceCode.ts",
       "react-native": "./dist/host/transports/deviceCode.js",
       "default": "./dist/host/transports/deviceCode.js"
+    },
+    "./host/transports/mobileWebAuth": {
+      "types": "./dist/host/transports/mobileWebAuth.d.ts",
+      "src": "./src/host/transports/mobileWebAuth.ts",
+      "react-native": "./dist/host/transports/mobileWebAuth.js",
+      "default": "./dist/host/transports/mobileWebAuth.js"
     },
     "./host/transports/postMessage": {
       "types": "./dist/host/transports/postMessage.d.ts",

@@ -12,6 +12,114 @@ describe('normalizePath', () => {
   })
 })
 
+describe('isAllowedAppCallback', () => {
+  test('validates callback URI schemes', () => {
+    expect(
+      [
+        'https://app.example/callback',
+        'http://127.0.0.1:3000/callback',
+        'com.example.app:/callback',
+        'http://app.example/callback',
+        'exampleapp:/callback',
+      ].map((value) => [value, Uri.isAllowedAppCallback(new URL(value))]),
+    ).toMatchInlineSnapshot(`
+      [
+        [
+          "https://app.example/callback",
+          true,
+        ],
+        [
+          "http://127.0.0.1:3000/callback",
+          true,
+        ],
+        [
+          "com.example.app:/callback",
+          true,
+        ],
+        [
+          "http://app.example/callback",
+          false,
+        ],
+        [
+          "exampleapp:/callback",
+          false,
+        ],
+      ]
+    `)
+  })
+})
+
+describe('isLoopbackHttp', () => {
+  test('validates loopback http URLs', () => {
+    expect(
+      ['http://localhost:3000/callback', 'http://app.example/callback'].map((value) => [
+        value,
+        Uri.isLoopbackHttp(new URL(value)),
+      ]),
+    ).toMatchInlineSnapshot(`
+      [
+        [
+          "http://localhost:3000/callback",
+          true,
+        ],
+        [
+          "http://app.example/callback",
+          false,
+        ],
+      ]
+    `)
+  })
+})
+
+describe('matchesCallback', () => {
+  test('accepts callbacks with matching base URI and registered query params', () => {
+    expect(
+      Uri.matchesCallback(
+        new URL('com.example.app:/callback?nonce=1&state=abc'),
+        'com.example.app:/callback?nonce=1',
+      ),
+    ).toMatchInlineSnapshot(`true`)
+  })
+
+  test('rejects callbacks with a different base URI', () => {
+    expect(
+      Uri.matchesCallback(
+        new URL('com.example.app:/other?nonce=1'),
+        'com.example.app:/callback?nonce=1',
+      ),
+    ).toMatchInlineSnapshot(`false`)
+  })
+
+  test('rejects callbacks missing registered query params', () => {
+    expect(
+      Uri.matchesCallback(new URL('com.example.app:/callback'), 'com.example.app:/callback?nonce=1'),
+    ).toMatchInlineSnapshot(`false`)
+  })
+})
+
+describe('requiredSearchParam', () => {
+  test('returns a single non-empty query parameter', () => {
+    expect(Uri.requiredSearchParam(new URL('https://app.example/cb?state=abc'), 'state'))
+      .toMatchInlineSnapshot(`
+        "abc"
+      `)
+  })
+
+  test('rejects duplicate query parameters', () => {
+    expect(Uri.requiredSearchParam(new URL('https://app.example/cb?state=abc&state=def'), 'state'))
+      .toMatchInlineSnapshot(`
+        undefined
+      `)
+  })
+
+  test('rejects empty query parameters', () => {
+    expect(Uri.requiredSearchParam(new URL('https://app.example/cb?state='), 'state'))
+      .toMatchInlineSnapshot(`
+        undefined
+      `)
+  })
+})
+
 describe('trimTrailingSlash', () => {
   test('removes one trailing slash', () => {
     expect(Uri.trimTrailingSlash('https://example.com/')).toMatchInlineSnapshot(

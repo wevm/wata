@@ -31,6 +31,7 @@
 
 import { z } from 'zod/mini'
 
+import * as Uri from '../internal/Uri.js'
 import * as Errors from './Errors.js'
 
 const wellKnownPath = '/.well-known/urpc'
@@ -73,11 +74,22 @@ export namespace schema {
   )
 
   /**
-   * `https://`-only URL that additionally rejects wildcard glob tokens
-   * (`*`) anywhere in the URL string. Used for `callback_urls`, where
-   * the spec mandates fully-qualified, exact-match entries.
+   * Callback URI allowlist entry. Claimed HTTPS URLs are preferred, but
+   * native-app transports can also publish private-use URI schemes. In
+   * all cases the value must be a concrete exact-match URI with no
+   * wildcard glob tokens.
    */
-  export const callbackUrl = httpsUrl.check(
+  export const callbackUrl = z.url().check(
+    z.refine(
+      (value) => {
+        const url = new URL(value)
+        return Uri.isAllowedAppCallback(url)
+      },
+      {
+        error:
+          'expected an https:// URL, loopback http:// URL, or reverse-DNS private-use URI scheme',
+      },
+    ),
     z.refine((value) => !value.includes('*'), {
       error: 'callback_urls must not contain wildcard tokens',
     }),

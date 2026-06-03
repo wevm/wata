@@ -11,7 +11,7 @@
  */
 
 import { Base64, Bytes, Ed25519, Hex } from 'ox'
-import { describe, expect, test } from 'vp/test'
+import { describe, expect, test, vi } from 'vp/test'
 import { Discovery, Envelope, Kv, MessageSig, Rpc, Wata, webhookCallback } from 'wata'
 import {
   Wata as HostWata,
@@ -19,6 +19,17 @@ import {
   webhookCallback as hostWebhookCallback,
 } from 'wata/host'
 import { consumerWellknown, hostWellknown } from 'wata/server'
+
+vi.doMock('node:dns/promises', async () => {
+  const actual = await vi.importActual<typeof import('node:dns/promises')>('node:dns/promises')
+  return {
+    ...actual,
+    lookup: async (hostname: string, options: never) => {
+      if (hostname === 'lvh.me') return [{ address: '127.0.0.1', family: 4 }]
+      return await actual.lookup(hostname, options)
+    },
+  }
+})
 
 function ed25519Pubkey(publicKey: Hex.Hex): string {
   return Base64.fromBytes(Bytes.from(publicKey), { pad: false, url: true })

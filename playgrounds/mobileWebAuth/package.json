@@ -1,0 +1,27 @@
+{
+  "name": "mobile-web-auth-playground",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "scripts": {
+    "check:types": "tsc -p tsconfig.host.json && tsc -p tsconfig.consumer.json",
+    "dev": "pnpm /^dev:/",
+    "dev:consumer": "expo start",
+    "dev:host": "node --import tsx src/host.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "catalog:",
+    "expo": "latest",
+    "expo-web-browser": "latest",
+    "hono": "catalog:",
+    "react": "latest",
+    "react-native": "latest",
+    "wata": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "latest",
+    "tsx": "^4.19.2",
+    "typescript": "catalog:"
+  }
+}

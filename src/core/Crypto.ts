@@ -22,7 +22,9 @@
  * tree-shakeable.
  */
 
-import { Ed25519, Hex } from 'ox'
+import { Base64, Bytes, Ed25519, Hex } from 'ox'
+
+import * as Errors from './Errors.js'
 
 /**
  * X25519 keypair derived from an Ed25519 keypair.
@@ -50,6 +52,27 @@ export type Keypair = {
   publicKey: Hex.Hex
   /** Derived X25519 keypair for ECDH. */
   x25519: X25519Keypair
+}
+
+/** Decode a 32-byte unpadded base64url public key into hex form. */
+export function decodePublicKey(value: string): Hex.Hex {
+  try {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(value)) throw new Error('expected 43 base64url characters')
+    const bytes = Base64.toBytes(value)
+    if (bytes.length !== 32) throw new Error('expected 32 bytes')
+    return Hex.fromBytes(bytes) as Hex.Hex
+  } catch (cause) {
+    throw new Errors.ProtocolError('public key must be 32-byte unpadded base64url', {
+      cause: cause as Error,
+    })
+  }
+}
+
+/** Encode a 32-byte hex public key as unpadded base64url. */
+export function encodePublicKey(publicKey: Hex.Hex): string {
+  if (Hex.size(publicKey) !== 32)
+    throw new Errors.ProtocolError('public key must be 32 bytes')
+  return Base64.fromBytes(Bytes.from(publicKey), { pad: false, url: true })
 }
 
 /**

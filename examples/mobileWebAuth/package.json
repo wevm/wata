@@ -1,0 +1,18 @@
+{
+  "name": "example-mobile-web-auth",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check:types": "tsc",
+    "dev": "vite dev",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "wata": "latest"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}
