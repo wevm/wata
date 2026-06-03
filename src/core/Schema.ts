@@ -19,6 +19,7 @@
 import { z } from 'zod/mini'
 
 import * as Errors from './Errors.js'
+import type * as Rpc from './Rpc.js'
 
 /**
  * Definition of a single method. `params` validates the request `params`
@@ -33,6 +34,18 @@ export type Method<
   params: params
   result: result
 }
+
+/** Zod schema accepted for a Wata-wide request context metadata bag. */
+export type Context = z.ZodMiniType<Rpc.RequestContext>
+
+/**
+ * Inferred request context type for a Wata-wide context schema. Falls back
+ * to the default account/chain metadata shape when no context schema is
+ * configured.
+ */
+export type ContextOf<context extends Context | undefined> = context extends Context
+  ? Inferred<context>
+  : Rpc.RequestContext
 
 /**
  * Define a single method's `params` / `result` schema pair.

@@ -13,6 +13,23 @@ describe('request', () => {
     const message = Rpc.request({ id: 1, method: 'eth_blockNumber', params: [] })
     expectTypeOf(message.method).toEqualTypeOf<'eth_blockNumber'>()
   })
+
+  test('types request context reserved keys', () => {
+    const message = Rpc.request({
+      context: { account: '0xabc', chainId: 1 },
+      id: 1,
+      method: 'eth_blockNumber',
+      params: [],
+    })
+    expectTypeOf(message.context).toMatchTypeOf<Rpc.RequestContext | undefined>()
+    Rpc.request({
+      // @ts-expect-error chainId must be numeric when the reserved key is used
+      context: { chainId: '1' },
+      id: 1,
+      method: 'eth_blockNumber',
+      params: [],
+    })
+  })
 })
 
 describe('notification', () => {

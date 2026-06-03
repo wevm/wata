@@ -36,6 +36,17 @@ const schema = Schema.create({
   },
 })
 
+const context = z.object({
+  account: z.string(),
+  chainId: z.number(),
+})
+
+const context_extended = z.object({
+  account: z.optional(z.string()),
+  chainId: z.optional(z.number()),
+  origin: z.string(),
+})
+
 const hostSchema = HostSchema.create({
   methods: {
     ping: HostSchema.method({
@@ -130,6 +141,50 @@ describe('Consumer.send', () => {
     expectTypeOf(out.id).toEqualTypeOf<Rpc.Id>()
   })
 
+  test('uses the default account/chain request context shape', () => {
+    const { consumer } = loopback()
+    const wata = Wata.create({ transports: [consumer], schema })
+    wata.send({
+      context: { account: '0xabc', chainId: 1 },
+      method: 'ping',
+      params: [],
+    })
+    wata.send({
+      // @ts-expect-error default chainId must be a number
+      context: { account: '0xabc', chainId: '1' },
+      method: 'ping',
+      params: [],
+    })
+    // @ts-expect-error context must use the default account/chain shape
+    wata.send({ context: '0xabc', method: 'ping', params: [] })
+  })
+
+  test('infers request context from the Wata context schema', () => {
+    const { consumer } = loopback()
+    const wata = Wata.create({ context, transports: [consumer], schema })
+    wata.send({
+      context: { account: '0xabc', chainId: 1 },
+      method: 'ping',
+      params: [],
+    })
+    wata.send({
+      // @ts-expect-error chainId must match the Wata context schema
+      context: { account: '0xabc', chainId: '1' },
+      method: 'ping',
+      params: [],
+    })
+  })
+
+  test('supports app-specific request context extensions', () => {
+    const { consumer } = loopback()
+    const wata = Wata.create({ context: context_extended, transports: [consumer], schema })
+    wata.send({
+      context: { account: '0xabc', chainId: 1, origin: 'https://app.example' },
+      method: 'ping',
+      params: [],
+    })
+  })
+
   test('falls back to unknown when no schema is supplied', async () => {
     const { consumer } = loopback()
     const wata = Wata.create({ transports: [consumer] })
@@ -172,6 +227,12 @@ describe('Host events', () => {
       expectTypeOf(event.meta.origin).toEqualTypeOf<never>()
       expectTypeOf(event.meta.transport).toEqualTypeOf<'loopback'>()
       expectTypeOf(event.method).toEqualTypeOf<'ping' | 'eth_sign'>()
+      expectTypeOf(event.context).toEqualTypeOf<Rpc.RequestContext | undefined>()
+      expectTypeOf(event.request.context).toEqualTypeOf<Rpc.RequestContext | undefined>()
+      if (event.context) {
+        expectTypeOf(event.context.account).toEqualTypeOf<string | undefined>()
+        expectTypeOf(event.context.chainId).toEqualTypeOf<number | undefined>()
+      }
       if (event.method === 'ping') {
         expectTypeOf(event.params).toMatchTypeOf<readonly []>()
         // narrowed: respond accepts the ping result shape
@@ -228,6 +289,16 @@ describe('Host events', () => {
       expectTypeOf(event.meta.transport).toEqualTypeOf<'postMessage'>()
       // @ts-expect-error MessagePort-backed postMessage does not expose origin metadata
       expectTypeOf(event.meta.origin).toEqualTypeOf<never>()
+    })
+  })
+
+  test('`request` context is narrowed against the Wata context schema', () => {
+    const { host } = loopback()
+    const wata = HostWata.create({ context, transports: [host], schema })
+    wata.on('request', (event) => {
+      expectTypeOf(event.context).toEqualTypeOf<z.output<typeof context> | undefined>()
+      expectTypeOf(event.request.context).toEqualTypeOf<z.output<typeof context> | undefined>()
+      if (event.context) expectTypeOf(event.context.chainId).toEqualTypeOf<number>()
     })
   })
 

@@ -45,6 +45,29 @@ describe('request', () => {
       }
     `)
   })
+
+  test('preserves request context', () => {
+    expect(
+      Rpc.request({
+        context: { account: '0xabc', chainId: 1, origin: 'https://app.example' },
+        id: 1,
+        method: 'wallet_connect',
+        params: [],
+      }),
+    ).toMatchInlineSnapshot(`
+      {
+        "context": {
+          "account": "0xabc",
+          "chainId": 1,
+          "origin": "https://app.example",
+        },
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "wallet_connect",
+        "params": [],
+      }
+    `)
+  })
 })
 
 describe('notification', () => {
@@ -131,6 +154,30 @@ describe('parse', () => {
     `)
   })
 
+  test('preserves request context', () => {
+    expect(
+      Rpc.parse({
+        context: { account: '0xabc', chainId: 1, origin: 'https://app.example' },
+        id: 1,
+        jsonrpc: '2.0',
+        method: 'ping',
+        params: [],
+      }),
+    ).toMatchInlineSnapshot(`
+      {
+        "context": {
+          "account": "0xabc",
+          "chainId": 1,
+          "origin": "https://app.example",
+        },
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "ping",
+        "params": [],
+      }
+    `)
+  })
+
   test('discriminates a notification', () => {
     expect(Rpc.parse({ jsonrpc: '2.0', method: 'progress', params: [1] })).toMatchInlineSnapshot(
       `
@@ -185,5 +232,11 @@ describe('parse', () => {
     expect(() => Rpc.parse({ id: 1, jsonrpc: '2.0', params: [] })).toThrowError(
       Errors.ProtocolError,
     )
+  })
+
+  test('rejects a request context with a non-numeric chainId', () => {
+    expect(() =>
+      Rpc.parse({ context: { chainId: '1' }, id: 1, jsonrpc: '2.0', method: 'ping', params: [] }),
+    ).toThrowError(Errors.ProtocolError)
   })
 })
