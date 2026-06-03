@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Transport, postMessage } from 'wata/host'
+import { PostMessage, Transport, postMessage } from 'wata/host'
 
 declare const popupHandle: Window
 declare const portHandle: MessagePort
@@ -10,7 +10,9 @@ describe('postMessage (host)', () => {
       target: () => popupHandle,
       targetOrigin: 'https://app.example',
     })
-    expectTypeOf(transport).toEqualTypeOf<Transport.Transport<'host', 'postMessage'>>()
+    expectTypeOf(transport).toEqualTypeOf<
+      Transport.Transport<'host', 'postMessage', void, PostMessage.OriginMessageMeta>
+    >()
     expectTypeOf(transport.role).toEqualTypeOf<'host'>()
   })
 
@@ -24,6 +26,7 @@ describe('postMessage (host)', () => {
   })
 
   test('MessagePort targets allow targetOrigin to be omitted', () => {
-    postMessage({ target: () => portHandle })
+    const transport = postMessage({ target: () => portHandle })
+    expectTypeOf(transport).toEqualTypeOf<Transport.Transport<'host', 'postMessage'>>()
   })
 })

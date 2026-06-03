@@ -81,6 +81,9 @@ export type Options<target extends ConsumerPostMessage.Target = Window> = {
   targetOrigin?: string | undefined
 }
 
+/** Metadata emitted by Window-backed host-side postMessage transports. */
+export type OriginMessageMeta = ConsumerPostMessage.OriginMessageMeta
+
 /**
  * Create a host-side `postMessage` transport.
  *
@@ -95,7 +98,7 @@ export type Options<target extends ConsumerPostMessage.Target = Window> = {
  */
 export function postMessage<const target extends ConsumerPostMessage.Target = Window>(
   options: Options<target> = {} as Options<target>,
-): Transport.Transport<'host', 'postMessage'> {
+): Transport.Transport<'host', 'postMessage', void, ConsumerPostMessage.MessageMeta<target>> {
   const target_resolved =
     options.target ??
     ((() => {

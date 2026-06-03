@@ -330,6 +330,40 @@ describe('send', () => {
     `)
   })
 
+  test('adds metadata to host request and notification events', async () => {
+    const { consumer, host } = pair()
+    const events: Array<{ kind: string; meta: HostWata.HostEventMeta }> = []
+
+    host.on('notification', (event) => {
+      events.push({ kind: 'notification', meta: event.meta })
+    })
+    host.on('request', (event) => {
+      events.push({ kind: 'request', meta: event.meta })
+      if (event.method === 'ping') return { ok: true }
+      return undefined
+    })
+
+    await consumer.notify({ method: 'ping', params: [] })
+    await consumer.send({ method: 'ping', params: [] })
+
+    expect(events).toMatchInlineSnapshot(`
+      [
+        {
+          "kind": "notification",
+          "meta": {
+            "transport": "loopback",
+          },
+        },
+        {
+          "kind": "request",
+          "meta": {
+            "transport": "loopback",
+          },
+        },
+      ]
+    `)
+  })
+
   test('first non-undefined listener return wins', async () => {
     const { consumer, host } = pair()
     await consumer.start()

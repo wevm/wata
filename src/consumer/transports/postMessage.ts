@@ -75,6 +75,17 @@ import * as protocol from './internal/protocol.js'
 /** Targets the consumer transport accepts. */
 export type Target = Window | MessagePort
 
+/** Metadata emitted by Window-backed postMessage transports. */
+export type OriginMessageMeta = {
+  /** Browser `MessageEvent.origin`. */
+  origin: string
+}
+
+/** Metadata emitted for postMessage transports based on their target kind. */
+export type MessageMeta<target extends Target = Target> = target extends MessagePort
+  ? Transport.NoMessageMeta
+  : OriginMessageMeta
+
 /**
  * Options accepted by {@link postMessage}.
  *
@@ -136,7 +147,7 @@ export type WindowLike = {
  */
 export function postMessage<const target extends Target>(
   options: Options<target>,
-): Transport.Transport<'consumer', 'postMessage'> {
+): Transport.Transport<'consumer', 'postMessage', void, MessageMeta<target>> {
   const { close, host, source, target: acquire } = options
   const targetOrigin = host ? originFrom(host) : undefined
   return createSide<'consumer', target>({
@@ -174,11 +185,11 @@ function originFrom(host: string): string {
  */
 export function createSide<role extends 'consumer' | 'host', target extends Target>(
   parameters: createSide.Options<role, target>,
-): Transport.Transport<role, 'postMessage'> {
+): Transport.Transport<role, 'postMessage', void, MessageMeta<target>> {
   const { handshake, options, role } = parameters
   const source = options.source ?? (globalThis as { window?: WindowLike }).window
 
-  const emitter = Events.create<Transport.EventMap>()
+  const emitter = Events.create<Transport.EventMap<MessageMeta<target>>>()
 
   // `started` = currently in an active connection cycle (target acquired,
   // listeners attached, hello sent). After close, drops back to `false`,
@@ -232,6 +243,15 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     handle.postMessage(wire, options.targetOrigin)
   }
 
+  function emitMessage(envelope: Envelope.Envelope, meta?: MessageMeta<target>) {
+    emitter.emit(
+      'message',
+      ...((meta === undefined ? [envelope] : [envelope, meta]) as Events.EventArgs<
+        Transport.EventMap<MessageMeta<target>>['message']
+      >),
+    )
+  }
+
   function attachListener() {
     if (!handle) return
     if (protocol.isPortLike(handle)) {
@@ -256,7 +276,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
       // `'*'` means "accept any origin"; matches the postMessage outbound
       // semantics on the same field.
       if (expectedOrigin !== '*' && event.origin !== expectedOrigin) return
-      handleInbound(event.data)
+      handleInbound(event.data, { origin: event.origin } as MessageMeta<target>)
     }
     source.addEventListener('message', listener as EventListener)
     unsubscribeMessage = () => {
@@ -264,7 +284,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     }
   }
 
-  function handleInbound(data: unknown) {
+  function handleInbound(data: unknown, meta?: MessageMeta<target>) {
     // Per the uRPC window-transport spec, every inbound frame must
     // carry a top-level v4 UUID `id`. Frames missing or malforming `id`
     // are a protocol violation; we surface them as `error` and drop the
@@ -301,7 +321,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     // Mark ourselves ready so any buffered outbound frames flush before we
     // hand the inbound payload off to the user-facing listeners.
     if (!state.ready) markReady()
-    emitter.emit('message', envelope)
+    emitMessage(envelope, meta)
   }
 
   function markReady() {

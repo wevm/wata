@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Transport, postMessage } from 'wata'
+import { PostMessage, Transport, postMessage } from 'wata'
 
 declare const popupHandle: Window
 declare const portHandle: MessagePort
@@ -10,13 +10,19 @@ describe('postMessage (consumer)', () => {
       host: 'https://wallet.example',
       target: () => popupHandle,
     })
-    expectTypeOf(transport).toEqualTypeOf<Transport.Transport<'consumer', 'postMessage'>>()
+    expectTypeOf(transport).toEqualTypeOf<
+      Transport.Transport<'consumer', 'postMessage', void, PostMessage.OriginMessageMeta>
+    >()
     expectTypeOf(transport.role).toEqualTypeOf<'consumer'>()
   })
 
   test('host may be omitted or undefined', () => {
-    postMessage({ target: () => portHandle })
-    postMessage({ host: undefined, target: () => portHandle })
+    expectTypeOf(postMessage({ target: () => portHandle })).toEqualTypeOf<
+      Transport.Transport<'consumer', 'postMessage'>
+    >()
+    expectTypeOf(postMessage({ host: undefined, target: () => portHandle })).toEqualTypeOf<
+      Transport.Transport<'consumer', 'postMessage'>
+    >()
   })
 
   test('target callback receives { host }', () => {
