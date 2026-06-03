@@ -58,13 +58,16 @@ export type RpcEnvelopeMeta<type extends RpcEnvelopeType = RpcEnvelopeType> = {
   type: type
 }
 
-type RpcRequestMessageOf<schema extends Schema.Schema | undefined> = schema extends Schema.Schema
+type RpcRequestMessageOf<
+  schema extends Schema.Schema | undefined,
+  context extends Rpc.RequestContext,
+> = schema extends Schema.Schema
   ? {
       [method in Schema.MethodName<schema>]:
         | Rpc.Notification<method, Rpc.Params & Schema.ParamsOf<schema, method>>
-        | Rpc.Request<method, Rpc.Params & Schema.ParamsOf<schema, method>>
+        | Rpc.Request<method, Rpc.Params & Schema.ParamsOf<schema, method>, context>
     }[Schema.MethodName<schema>]
-  : Envelope.RpcRequestMessage
+  : Rpc.Request<string, Rpc.Params, context> | Rpc.Notification
 
 type RpcResponseMessageOf<schema extends Schema.Schema | undefined> = Rpc.Response<
   RpcResponseResultOf<schema>
@@ -77,8 +80,10 @@ type RpcResponseResultOf<schema extends Schema.Schema | undefined> = schema exte
   : unknown
 
 /** Payload passed to `'rpc-requests'` listeners. */
-export type RpcRequestsPayload<schema extends Schema.Schema | undefined = undefined> =
-  readonly RpcRequestMessageOf<schema>[]
+export type RpcRequestsPayload<
+  schema extends Schema.Schema | undefined = undefined,
+  context extends Rpc.RequestContext = Rpc.RequestContext,
+> = readonly RpcRequestMessageOf<schema, context>[]
 
 /** Payload passed to `'rpc-responses'` listeners. */
 export type RpcResponsesPayload<schema extends Schema.Schema | undefined = undefined> =
@@ -116,7 +121,10 @@ export type SchemaNotificationEvent<schema extends Schema.Schema | undefined> =
     : NotificationEvent
 
 /** Lifecycle events emitted on every `Wata` (consumer + host). */
-export type LifecycleEventMap<schema extends Schema.Schema | undefined = undefined> = {
+export type LifecycleEventMap<
+  schema extends Schema.Schema | undefined = undefined,
+  context extends Rpc.RequestContext = Rpc.RequestContext,
+> = {
   /** Emitted exactly once when the session closes, cleanly or with cause. */
   close: Error | undefined
   /** Emitted when the transport surfaces an error (network, parse, AEAD). */
@@ -126,7 +134,7 @@ export type LifecycleEventMap<schema extends Schema.Schema | undefined = undefin
   /** Observed `rpc-requests` envelope. */
   'rpc-requests': [
     /** JSON-RPC request/notification payloads carried by the envelope. */
-    requests: RpcRequestsPayload<schema>,
+    requests: RpcRequestsPayload<schema, context>,
     /** Direction and transport metadata for the envelope. */
     meta: RpcEnvelopeMeta<'rpc-requests'>,
   ]
@@ -140,11 +148,13 @@ export type LifecycleEventMap<schema extends Schema.Schema | undefined = undefin
 }
 
 /** Consumer-side event map. */
-export type ConsumerEventMap<schema extends Schema.Schema | undefined = undefined> =
-  LifecycleEventMap<schema> & {
-    /** Inbound JSON-RPC notification from the host. */
-    notification: SchemaNotificationEvent<schema>
-  }
+export type ConsumerEventMap<
+  schema extends Schema.Schema | undefined = undefined,
+  context extends Rpc.RequestContext = Rpc.RequestContext,
+> = LifecycleEventMap<schema, context> & {
+  /** Inbound JSON-RPC notification from the host. */
+  notification: SchemaNotificationEvent<schema>
+}
 
 /** Non-empty tuple of consumer transports accepted by {@link create}. */
 export type ConsumerTransports = readonly [
@@ -159,6 +169,7 @@ export type SingleConsumerTransports = readonly [Transport.Transport<'consumer',
 export type ConsumerSession<
   schema extends Schema.Schema | undefined,
   transport extends Transport.Transport<'consumer', string, unknown>,
+  context extends Rpc.RequestContext = Rpc.RequestContext,
 > = {
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
@@ -173,17 +184,17 @@ export type ConsumerSession<
     options: Consumer.NotifyOptions<method, params>,
   ) => Promise<void>
   /** Remove a previously subscribed listener. */
-  off: <type extends keyof ConsumerEventMap<schema>>(
+  off: <type extends keyof ConsumerEventMap<schema, context>>(
     type: type,
-    listener: Listener<ConsumerEventMap<schema>[type]>,
+    listener: Listener<ConsumerEventMap<schema, context>[type]>,
   ) => void
   /**
    * Subscribe to a consumer event. Returns an `AbortController` so the
    * subscription can be cancelled (or composed with an external signal).
    */
-  on: <type extends keyof ConsumerEventMap<schema>>(
+  on: <type extends keyof ConsumerEventMap<schema, context>>(
     type: type,
-    listener: Listener<ConsumerEventMap<schema>[type]>,
+    listener: Listener<ConsumerEventMap<schema, context>[type]>,
   ) => AbortController
   /** Side of the protocol this wata speaks for. */
   role: 'consumer'
@@ -199,7 +210,7 @@ export type ConsumerSession<
     const method extends Consumer.MethodName<schema>,
     const params extends Consumer.ParamsOf<schema, method>,
   >(
-    options: Consumer.SendOptions<method, params>,
+    options: Consumer.SendOptions<method, params, context>,
   ) => Promise<Consumer.SendReturn<schema, transport, method>>
   /**
    * Explicitly bring the session up. Starts the transport and resolves
@@ -219,6 +230,7 @@ export type ConsumerSession<
 export type ConsumerBase<
   schema extends Schema.Schema | undefined,
   transports extends ConsumerTransports,
+  context extends Rpc.RequestContext = Rpc.RequestContext,
 > = {
   /** Close all configured transports. Idempotent. */
   close: (cause?: Error) => Promise<void>
@@ -230,14 +242,14 @@ export type ConsumerBase<
   /** See {@link fetch}. */
   listener: Http.HandlersForTransports<transports>['listener']
   /** Remove a previously subscribed consumer listener. */
-  off: <type extends keyof ConsumerEventMap<schema>>(
+  off: <type extends keyof ConsumerEventMap<schema, context>>(
     type: type,
-    listener: Listener<ConsumerEventMap<schema>[type]>,
+    listener: Listener<ConsumerEventMap<schema, context>[type]>,
   ) => void
   /** Subscribe to aggregate consumer events. */
-  on: <type extends keyof ConsumerEventMap<schema>>(
+  on: <type extends keyof ConsumerEventMap<schema, context>>(
     type: type,
-    listener: Listener<ConsumerEventMap<schema>[type]>,
+    listener: Listener<ConsumerEventMap<schema, context>[type]>,
   ) => AbortController
   /** Side of the protocol this wata speaks for. */
   role: 'consumer'
@@ -251,10 +263,12 @@ export type ConsumerBase<
 export type ConsumerChildMap<
   schema extends Schema.Schema | undefined,
   transports extends ConsumerTransports,
+  context extends Rpc.RequestContext = Rpc.RequestContext,
 > = {
   [name in transports[number]['name']]: ConsumerSession<
     schema,
-    Extract<transports[number], { name: name }>
+    Extract<transports[number], { name: name }>,
+    context
   >
 }
 
@@ -266,12 +280,17 @@ export type ConsumerChildMap<
 export type Consumer<
   schema extends Schema.Schema | undefined = undefined,
   transports extends ConsumerTransports = SingleConsumerTransports,
-> = ConsumerBase<schema, transports> &
+  context extends Rpc.RequestContext = Rpc.RequestContext,
+> = ConsumerBase<schema, transports, context> &
   (transports extends readonly [
     infer transport extends Transport.Transport<'consumer', string, unknown>,
   ]
-    ? ConsumerSession<schema, transport>
-    : ConsumerChildMap<schema, transports>)
+    ? ConsumerSession<schema, transport, context>
+    : ConsumerChildMap<schema, transports, context>)
+
+/** Request context value inferred from an optional Wata-wide context schema. */
+export type RequestContextOf<context extends Schema.Context | undefined> =
+  context extends Schema.Context ? Schema.ContextOf<context> : Rpc.RequestContext
 
 export declare namespace Consumer {
   /** Method names known to a consumer (any string when no schema supplied). */
@@ -312,7 +331,13 @@ export declare namespace Consumer {
       : never
 
   /** Options for {@link Consumer.send}. */
-  type SendOptions<method extends string, params extends Rpc.Params> = {
+  type SendOptions<
+    method extends string,
+    params extends Rpc.Params,
+    context extends Rpc.RequestContext = Rpc.RequestContext,
+  > = {
+    /** Optional per-request context metadata. */
+    context?: context | undefined
     /** Optional explicit request id. Defaults to a monotonically-increasing number. */
     id?: Rpc.Id | undefined
     /** Method name. Narrowed against the schema when one was supplied. */
@@ -352,9 +377,13 @@ export declare namespace Consumer {
 export function create<
   const schema extends Schema.Schema | undefined = undefined,
   const transports extends ConsumerTransports = SingleConsumerTransports,
->(options: create.Options<schema, transports>): Consumer<schema, transports> {
+  const context extends Schema.Context | undefined = undefined,
+>(
+  options: create.Options<schema, transports, context>,
+): Consumer<schema, transports, RequestContextOf<context>> {
   const transports = options.transports as transports
   const schema = options.schema as schema
+  const context = options.context as context
   const { baseUrl, meta, privateKey } = options
   const identity = privateKey ? identityFromPrivateKey(privateKey) : undefined
 
@@ -369,7 +398,9 @@ export function create<
   // one app-level `Wata.create` call.
   for (const transport of transports) transport.bind?.({ baseUrl, identity, meta })
 
-  const sessions = transports.map((transport) => createConsumerSession({ schema, transport }))
+  const sessions = transports.map((transport) =>
+    createConsumerSession({ context, schema, transport }),
+  )
   const routed = Http.composeRouted(transports.filter(isHttpServer))
   let httpFetch = routed?.fetch
   let httpListener = routed?.listener
@@ -395,13 +426,13 @@ export function create<
     const session = sessions[0]!
     return {
       ...session,
-      fetch: httpFetch as Consumer<schema, transports>['fetch'],
-      listener: httpListener as Consumer<schema, transports>['listener'],
+      fetch: httpFetch as Consumer<schema, transports, RequestContextOf<context>>['fetch'],
+      listener: httpListener as Consumer<schema, transports, RequestContextOf<context>>['listener'],
       transports,
-    } as unknown as Consumer<schema, transports>
+    } as unknown as Consumer<schema, transports, RequestContextOf<context>>
   }
 
-  const emitter = Events.create<ConsumerEventMap<schema>>()
+  const emitter = Events.create<ConsumerEventMap<schema, RequestContextOf<context>>>()
   for (const session of sessions) {
     session.on('error', (error) => emitter.emit('error', error))
     session.on('notification', (...payload) => emitter.emit('notification', ...payload))
@@ -413,12 +444,12 @@ export function create<
       await Promise.all(sessions.map((session) => session.close(cause)))
       emitter.emit('close', cause)
     },
-    fetch: httpFetch as Consumer<schema, transports>['fetch'],
-    listener: httpListener as Consumer<schema, transports>['listener'],
+    fetch: httpFetch as Consumer<schema, transports, RequestContextOf<context>>['fetch'],
+    listener: httpListener as Consumer<schema, transports, RequestContextOf<context>>['listener'],
     off: emitter.off,
     on(
-      type: keyof ConsumerEventMap<schema>,
-      listener: Listener<ConsumerEventMap<schema>[typeof type]>,
+      type: keyof ConsumerEventMap<schema, RequestContextOf<context>>,
+      listener: Listener<ConsumerEventMap<schema, RequestContextOf<context>>[typeof type]>,
     ) {
       const controller = new AbortController()
       emitter.on(type, listener as never, { signal: controller.signal })
@@ -429,16 +460,21 @@ export function create<
     transports,
   }
   for (const session of sessions) Object.assign(consumer, { [session.transport.name]: session })
-  return consumer as unknown as Consumer<schema, transports>
+  return consumer as unknown as Consumer<schema, transports, RequestContextOf<context>>
 }
 
 function createConsumerSession<
   const schema extends Schema.Schema | undefined,
   const transport extends Transport.Transport<'consumer', string, unknown>,
->(parameters: { schema: schema; transport: transport }): ConsumerSession<schema, transport> {
-  const { schema, transport } = parameters
+  const context extends Schema.Context | undefined,
+>(parameters: {
+  context: context
+  schema: schema
+  transport: transport
+}): ConsumerSession<schema, transport, RequestContextOf<context>> {
+  const { context, schema, transport } = parameters
 
-  const emitter = Events.create<ConsumerEventMap<schema>>()
+  const emitter = Events.create<ConsumerEventMap<schema, RequestContextOf<context>>>()
 
   const pending = new Map<Rpc.Id, Pending>()
   const methodById = new Map<Rpc.Id, string>()
@@ -540,10 +576,12 @@ function createConsumerSession<
       notification: message,
       params: message.params,
       transport: transport.name,
-    } as ConsumerEventMap<schema>['notification']
+    } as ConsumerEventMap<schema, RequestContextOf<context>>['notification']
     emitter.emit(
       'notification',
-      ...([payload] as Events.EventArgs<ConsumerEventMap<schema>['notification']>),
+      ...([payload] as Events.EventArgs<
+        ConsumerEventMap<schema, RequestContextOf<context>>['notification']
+      >),
     )
   }
 
@@ -562,11 +600,15 @@ function createConsumerSession<
     envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>,
     direction: RpcEnvelopeMeta['direction'],
   ): void {
-    emitter.emit('rpc-requests', envelope.payload as unknown as RpcRequestsPayload<schema>, {
-      direction,
-      transport: transport.name,
-      type: 'rpc-requests',
-    })
+    emitter.emit(
+      'rpc-requests',
+      envelope.payload as unknown as RpcRequestsPayload<schema, RequestContextOf<context>>,
+      {
+        direction,
+        transport: transport.name,
+        type: 'rpc-requests',
+      },
+    )
   }
 
   /**
@@ -695,6 +737,12 @@ function createConsumerSession<
 
       const id = opts.id ?? nextId++
       if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
+      const context_value =
+        opts.context === undefined
+          ? undefined
+          : context
+            ? Schema.validate(context, opts.context)
+            : Schema.validate(Rpc.schema.requestContext, opts.context)
 
       const deferred = new Promise<SendResult<unknown>>((resolve, reject) => {
         pending.set(id, { reject, resolve })
@@ -703,7 +751,12 @@ function createConsumerSession<
 
       try {
         const envelope = Envelope.rpcRequests([
-          Rpc.request({ id, method: opts.method, params: opts.params }),
+          Rpc.request({
+            context: context_value,
+            id,
+            method: opts.method,
+            params: opts.params,
+          }),
         ])
         emitRpcRequests(envelope, 'outgoing')
         const metadata = await transport.send(envelope)
@@ -729,6 +782,7 @@ export declare namespace create {
   type Options<
     schema extends Schema.Schema | undefined,
     transports extends ConsumerTransports = SingleConsumerTransports,
+    context extends Schema.Context | undefined = undefined,
   > = {
     /**
      * Public origin of the consumer app (e.g. `https://acme.dev`).
@@ -741,6 +795,12 @@ export declare namespace create {
      * REQUIRED when {@link meta} is supplied.
      */
     baseUrl?: string | undefined
+    /**
+     * Optional Wata-wide schema for per-request context metadata.
+     * When set, `send({ context })` is typed and validated against
+     * this single app-level bag shape rather than per-method entries.
+     */
+    context?: context | undefined
     /**
      * Optional human-facing app metadata. When set together with
      * {@link baseUrl}, `Wata` auto-publishes a

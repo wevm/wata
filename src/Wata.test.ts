@@ -36,6 +36,11 @@ const schema = Schema.create({
   },
 })
 
+const context = z.object({
+  account: z.string(),
+  chainId: z.number(),
+})
+
 function pair() {
   const { consumer: cTransport, host: hTransport } = loopback()
   const consumer = Wata.create({ transports: [cTransport], schema })
@@ -294,6 +299,121 @@ describe('send', () => {
           "transport": "loopback",
         },
       ]
+    `)
+  })
+
+  test('passes request context to host listeners and rpc request events', async () => {
+    const { consumer, host } = pair()
+    const events: Array<{ context: unknown; context_request: unknown }> = []
+    const requests: unknown[] = []
+    host.on('rpc-requests', ([request]) => {
+      requests.push(request)
+    })
+    host.on('request', (event) => {
+      events.push({
+        context: event.context,
+        context_request: event.request.context,
+      })
+      if (event.method === 'ping') event.respond({ ok: true })
+    })
+
+    await consumer.send({
+      context: { account: '0xabc', chainId: 1 },
+      method: 'ping',
+      params: [],
+    })
+
+    expect({ events, requests }).toMatchInlineSnapshot(`
+      {
+        "events": [
+          {
+            "context": {
+              "account": "0xabc",
+              "chainId": 1,
+            },
+            "context_request": {
+              "account": "0xabc",
+              "chainId": 1,
+            },
+          },
+        ],
+        "requests": [
+          {
+            "context": {
+              "account": "0xabc",
+              "chainId": 1,
+            },
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": [],
+          },
+        ],
+      }
+    `)
+  })
+
+  test('validates default request context reserved keys', async () => {
+    const { consumer, host } = pair()
+    host.on('request', (event) => {
+      if (event.method === 'ping') event.respond({ ok: true })
+    })
+
+    await expect(
+      consumer.send({
+        // @ts-expect-error intentionally wrong default context
+        context: { chainId: '1' },
+        method: 'ping',
+        params: [],
+      }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`
+      [ProtocolError: schema validation failed
+      Details: chainId: Invalid input]
+    `)
+  })
+
+  test('validates request context against the Wata context schema', async () => {
+    const { consumer: cTransport, host: hTransport } = loopback()
+    const consumer = Wata.create({ context, transports: [cTransport], schema })
+    const host = HostWata.create({ context, transports: [hTransport], schema })
+    const seen: unknown[] = []
+    host.on('request', (event) => {
+      seen.push(event.context)
+      if (event.method === 'ping') event.respond({ ok: true })
+    })
+
+    const out = await consumer.send({
+      context: { account: '0xabc', chainId: 1 },
+      method: 'ping',
+      params: [],
+    })
+
+    await expect(
+      consumer.send({
+        // @ts-expect-error intentionally wrong context
+        context: { account: '0xabc', chainId: '1' },
+        method: 'ping',
+        params: [],
+      }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`
+      [ProtocolError: schema validation failed
+      Details: chainId: Invalid input]
+    `)
+    expect({ out, seen }).toMatchInlineSnapshot(`
+      {
+        "out": {
+          "id": 1,
+          "result": {
+            "ok": true,
+          },
+        },
+        "seen": [
+          {
+            "account": "0xabc",
+            "chainId": 1,
+          },
+        ],
+      }
     `)
   })
 

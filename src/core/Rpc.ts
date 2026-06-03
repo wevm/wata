@@ -34,19 +34,45 @@ export type Id = string | number
 export type Params = readonly unknown[] | Record<string, unknown>
 
 /**
+ * Default per-request context metadata. `account` and `chainId` are
+ * session selectors; app-specific context schemas may add more fields.
+ */
+export type RequestContext = {
+  /** Active account for request handling, when the RPC relies on one. */
+  account?: string | undefined
+  /** Active chain id for request handling, when the RPC relies on one. */
+  chainId?: number | undefined
+}
+
+/**
  * A typed JSON-RPC request.
  *
  * @example
  * ```ts
  * import { Rpc } from 'wata'
  *
- * const message = Rpc.request({ id: 1, method: 'eth_blockNumber', params: [] })
+ * const message = Rpc.request({
+ *   context: { chainId: 1 },
+ *   id: 1,
+ *   method: 'eth_blockNumber',
+ *   params: [],
+ * })
  * ```
  */
-export type Request<method extends string = string, params extends Params = Params> = {
+export type Request<
+  method extends string = string,
+  params extends Params = Params,
+  context extends RequestContext = RequestContext,
+> = {
+  /** Optional per-request context metadata. */
+  context?: context | undefined
+  /** JSON-RPC request id. */
   id: Id
+  /** JSON-RPC version. */
   jsonrpc: typeof version
+  /** Method name. */
   method: method
+  /** Method params. */
   params: params
 }
 
@@ -89,16 +115,30 @@ export type Envelope = Request | Notification | Success | ErrorResponse
  * Rpc.request({ id: 1, method: 'ping', params: [] })
  * ```
  */
-export function request<const method extends string, const params extends Params>(
-  options: request.Options<method, params>,
-): Request<method, params> {
-  const { id, method, params } = options
-  return { id, jsonrpc: version, method, params }
+export function request<
+  const method extends string,
+  const params extends Params,
+  const context extends RequestContext = RequestContext,
+>(options: request.Options<method, params, context>): Request<method, params, context> {
+  const { context, id, method, params } = options
+  return {
+    id,
+    jsonrpc: version,
+    method,
+    params,
+    ...(context === undefined ? {} : { context }),
+  }
 }
 
 export declare namespace request {
   /** Options for {@link request}. */
-  type Options<method extends string, params extends Params> = {
+  type Options<
+    method extends string,
+    params extends Params,
+    context extends RequestContext = RequestContext,
+  > = {
+    /** Optional per-request context metadata. */
+    context?: context | undefined
     /** Request id (string or number). Must be unique within the session. */
     id: Id
     /** Method name. */
@@ -198,8 +238,15 @@ export namespace schema {
   /** `jsonrpc` discriminator literal. */
   export const jsonrpc = z.literal('2.0')
 
+  /** Per-request context metadata. Reserved keys are typed, extras are preserved. */
+  export const requestContext = z.looseObject({
+    account: z.optional(z.string()),
+    chainId: z.optional(z.number()),
+  })
+
   /** JSON-RPC 2.0 request. */
   export const request = z.object({
+    context: z.optional(requestContext),
     id,
     jsonrpc,
     method: z.string(),

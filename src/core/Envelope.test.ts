@@ -175,6 +175,34 @@ describe('parse', () => {
     `)
   })
 
+  test('preserves request context in parsed `rpc-requests` envelopes', () => {
+    const env = Envelope.rpcRequests([
+      Rpc.request({
+        context: { account: '0xabc', chainId: 1 },
+        id: 1,
+        method: 'ping',
+        params: [],
+      }),
+    ])
+    expect(Envelope.parse(JSON.parse(JSON.stringify(env)))).toMatchInlineSnapshot(`
+      {
+        "payload": [
+          {
+            "context": {
+              "account": "0xabc",
+              "chainId": 1,
+            },
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": [],
+          },
+        ],
+        "type": "rpc-requests",
+      }
+    `)
+  })
+
   test('parses a JSON-encoded `encrypted` envelope', () => {
     const env = Envelope.encrypted({
       ciphertext: '0xdeadbeef',
