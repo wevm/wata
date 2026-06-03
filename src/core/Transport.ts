@@ -41,14 +41,33 @@ export type Exchange = 'ongoing' | 'single_exchange'
  * inbound envelope, `close` carries the optional close cause, `error`
  * carries the transport-level failure.
  */
-export type EventMap = {
+export type EventMap<meta extends MessageMeta = NoMessageMeta> = {
   /** Transport closed (cleanly or with cause). */
   close: Error | undefined
   /** Transport-level failure. */
   error: Error
   /** Inbound envelope frame. */
-  message: Envelope.Envelope
+  message: MessageArgs<meta>
 }
+
+/** Metadata observed by a transport while receiving an inbound frame. */
+export type MessageMeta = Record<string, unknown>
+
+/** Message event arguments for transports with or without metadata. */
+export type MessageArgs<meta extends MessageMeta = MessageMeta> = keyof meta extends never
+  ? [
+      /** Parsed inbound envelope. */
+      envelope: Envelope.Envelope,
+    ]
+  : [
+      /** Parsed inbound envelope. */
+      envelope: Envelope.Envelope,
+      /** Transport-defined metadata observed while receiving the frame. */
+      meta: meta,
+    ]
+
+/** Empty metadata for transports that cannot observe peer metadata. */
+export type NoMessageMeta = {}
 
 /**
  * Long-term Ed25519 identity material owned by the wrapping `Wata`
@@ -118,7 +137,12 @@ export type Capabilities = {
  * The normalized transport contract. Every adapter — consumer-side,
  * host-side, role-agnostic loopback — implements this shape.
  */
-export type Transport<role extends Role = Role, name extends string = string, sendValue = void> = {
+export type Transport<
+  role extends Role = Role,
+  name extends string = string,
+  sendValue = void,
+  meta extends MessageMeta = NoMessageMeta,
+> = {
   /**
    * Apply parent application context to this transport. Lazy-bound by
    * `Wata.create({ baseUrl, meta, privateKey })` so transports can
@@ -154,7 +178,7 @@ export type Transport<role extends Role = Role, name extends string = string, se
    * directly. Pass `{ signal }` to scope the subscription to an
    * `AbortController`.
    */
-  on: Events.Emitter<EventMap>['on']
+  on: Events.Emitter<EventMap<meta>>['on']
   /**
    * Consumer-side identity public key surfaced to the wrapping
    * `Wata.create({ baseUrl, meta })` so that the auto-published
@@ -178,6 +202,10 @@ export type Transport<role extends Role = Role, name extends string = string, se
   /** Open the transport. Resolves once the wire is ready to send and receive. */
   start: () => Promise<void>
 }
+
+/** Metadata emitted by a concrete transport. */
+export type MessageMetaOf<transport extends Transport<Role, string, unknown, MessageMeta>> =
+  transport extends Transport<Role, string, unknown, infer meta> ? meta : MessageMeta
 
 /** Value resolved by a transport's {@link Transport.send}. */
 export type SendValue<transport extends Transport<Role, string, unknown>> = Awaited<

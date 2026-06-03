@@ -66,6 +66,10 @@ type Peer = {
   transport: Transport.Transport<Transport.Role, 'loopback'>
 }
 
+type Buffered = {
+  envelope: Envelope.Envelope
+}
+
 function createSide<role extends 'consumer' | 'host'>(role: role) {
   const emitter = Events.create<Transport.EventMap>()
   const state = { closed: false, started: false }
@@ -73,14 +77,14 @@ function createSide<role extends 'consumer' | 'host'>(role: role) {
   // Frames delivered to this side before it has subscribed are buffered so
   // the test ordering doesn't depend on whether a `message` listener is
   // attached before or after the first `send`.
-  const buffered: Envelope.Envelope[] = []
+  const buffered: Buffered[] = []
 
   let peer: Peer | undefined
 
   function deliver(envelope: Envelope.Envelope) {
     if (state.closed) return
     if (emitter.listenerCount('message') === 0) {
-      buffered.push(envelope)
+      buffered.push({ envelope })
       return
     }
     emitter.emit('message', envelope)
@@ -108,7 +112,7 @@ function createSide<role extends 'consumer' | 'host'>(role: role) {
       if (type === 'message')
         while (buffered.length > 0) {
           const next = buffered.shift()
-          if (next !== undefined) emitter.emit('message', next)
+          if (next !== undefined) emitter.emit('message', next.envelope)
         }
     },
     role,

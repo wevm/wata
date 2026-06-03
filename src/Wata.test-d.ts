@@ -11,10 +11,17 @@ import {
   loopback,
   webhookCallback,
 } from 'wata'
-import { Discovery as HostDiscovery, Schema as HostSchema, Wata as HostWata } from 'wata/host'
+import {
+  Discovery as HostDiscovery,
+  Schema as HostSchema,
+  Wata as HostWata,
+  postMessage as hostPostMessage,
+} from 'wata/host'
 import { z } from 'zod/mini'
 
 const privateKey = '0x' as Hex.Hex
+declare const portHandle: MessagePort
+declare const popupHandle: Window
 
 const schema = Schema.create({
   methods: {
@@ -158,6 +165,12 @@ describe('Host events', () => {
     const { host } = loopback()
     const wata = HostWata.create({ transports: [host], schema })
     wata.on('request', (event) => {
+      expectTypeOf(event.meta).toEqualTypeOf<
+        HostWata.HostEventMeta<Transport.Transport<'host', 'loopback'>>
+      >()
+      // @ts-expect-error loopback does not expose origin metadata
+      expectTypeOf(event.meta.origin).toEqualTypeOf<never>()
+      expectTypeOf(event.meta.transport).toEqualTypeOf<'loopback'>()
       expectTypeOf(event.method).toEqualTypeOf<'ping' | 'eth_sign'>()
       if (event.method === 'ping') {
         expectTypeOf(event.params).toMatchTypeOf<readonly []>()
@@ -180,9 +193,41 @@ describe('Host events', () => {
     const { host } = loopback()
     const wata = HostWata.create({ transports: [host], schema })
     wata.on('notification', (event) => {
+      // @ts-expect-error loopback does not expose origin metadata
+      expectTypeOf(event.meta.origin).toEqualTypeOf<never>()
+      expectTypeOf(event.meta.transport).toEqualTypeOf<'loopback'>()
       expectTypeOf(event.method).toEqualTypeOf<'ping' | 'eth_sign'>()
       if (event.method === 'eth_sign')
         expectTypeOf(event.params).toMatchTypeOf<readonly [string, string]>()
+    })
+  })
+
+  test('`request` metadata narrows by transport', () => {
+    const { host } = loopback()
+    const wata = HostWata.create({
+      schema,
+      transports: [hostPostMessage({ target: () => popupHandle }), host],
+    })
+    wata.on('request', (event) => {
+      expectTypeOf(event.meta.transport).toEqualTypeOf<'loopback' | 'postMessage'>()
+      if (event.meta.transport === 'postMessage')
+        expectTypeOf(event.meta.origin).toEqualTypeOf<string>()
+      if (event.meta.transport === 'loopback') {
+        // @ts-expect-error loopback does not expose origin metadata
+        expectTypeOf(event.meta.origin).toEqualTypeOf<never>()
+      }
+    })
+  })
+
+  test('MessagePort postMessage metadata does not expose origin', () => {
+    const wata = HostWata.create({
+      schema,
+      transports: [hostPostMessage({ target: () => portHandle })],
+    })
+    wata.on('request', (event) => {
+      expectTypeOf(event.meta.transport).toEqualTypeOf<'postMessage'>()
+      // @ts-expect-error MessagePort-backed postMessage does not expose origin metadata
+      expectTypeOf(event.meta.origin).toEqualTypeOf<never>()
     })
   })
 

@@ -25,6 +25,16 @@ import * as Transport from '../core/Transport.js'
 import * as Wellknown from '../core/Wellknown.js'
 import * as Wata from '../Wata.js'
 
+/** Host transport accepted by {@link create}. */
+export type HostTransport = Transport.Transport<'host', string, unknown, Transport.MessageMeta>
+
+/** Metadata delivered to host request and notification listeners. */
+export type HostEventMeta<transport extends HostTransport = HostTransport> =
+  Transport.MessageMetaOf<transport> & {
+    /** SDK-facing name of the transport that delivered this event. */
+    transport: transport['name']
+  }
+
 /**
  * Event payload delivered to host `'request'` listeners.
  *
@@ -39,9 +49,12 @@ export type RequestEvent<
   method extends string = string,
   params extends Rpc.Params = Rpc.Params,
   result = unknown,
+  transport extends HostTransport = HostTransport,
 > = {
   /** Id of the JSON-RPC request being answered. */
   id: Rpc.Id
+  /** Transport metadata observed while receiving the request. */
+  meta: HostEventMeta<transport>
   /** Method name. Top-level discriminator for schema-narrowed listeners. */
   method: method
   /** Method params. */
@@ -63,14 +76,17 @@ export type RequestEvent<
    */
   respond: (result: result) => Promise<void>
   /** SDK-facing name of the transport that delivered this request. */
-  transport: string
+  transport: transport['name']
 }
 
 /** Event payload delivered to host `'notification'` listeners. */
 export type NotificationEvent<
   method extends string = string,
   params extends Rpc.Params = Rpc.Params,
+  transport extends HostTransport = HostTransport,
 > = {
+  /** Transport metadata observed while receiving the notification. */
+  meta: HostEventMeta<transport>
   /** Method name. Top-level discriminator for schema-narrowed listeners. */
   method: method
   /** The full JSON-RPC notification envelope as parsed off the wire. */
@@ -78,7 +94,7 @@ export type NotificationEvent<
   /** Notification params. */
   params: params
   /** SDK-facing name of the transport that delivered this notification. */
-  transport: string
+  transport: transport['name']
 }
 
 /**
@@ -86,52 +102,74 @@ export type NotificationEvent<
  * proper discriminated union. Narrowing on `event.method` narrows
  * `event.respond`'s argument and `event.params` together.
  */
-type DistributeRequest<schema extends Schema.Schema, name extends string> =
-  name extends Schema.MethodName<schema>
+type DistributeRequest<
+  schema extends Schema.Schema,
+  name extends string,
+  transport extends HostTransport,
+> = transport extends HostTransport
+  ? name extends Schema.MethodName<schema>
     ? Schema.ParamsOf<schema, name> extends infer params
       ? params extends Rpc.Params
-        ? RequestEvent<name, params, Schema.ResultOf<schema, name>>
+        ? RequestEvent<name, params, Schema.ResultOf<schema, name>, transport>
         : never
       : never
     : never
+  : never
 
 /** Same shape as {@link DistributeRequest}, but for notifications. */
-type DistributeNotification<schema extends Schema.Schema, name extends string> =
-  name extends Schema.MethodName<schema>
+type DistributeNotification<
+  schema extends Schema.Schema,
+  name extends string,
+  transport extends HostTransport,
+> = transport extends HostTransport
+  ? name extends Schema.MethodName<schema>
     ? Schema.ParamsOf<schema, name> extends infer params
       ? params extends Rpc.Params
-        ? NotificationEvent<name, params>
+        ? NotificationEvent<name, params, transport>
         : never
       : never
     : never
+  : never
+
+type DistributeTransportNotification<transport extends HostTransport> =
+  transport extends HostTransport ? NotificationEvent<string, Rpc.Params, transport> : never
+
+type DistributeTransportRequest<transport extends HostTransport> = transport extends HostTransport
+  ? RequestEvent<string, Rpc.Params, unknown, transport>
+  : never
 
 /**
  * Helper conditional that maps a {@link Schema} method name to the typed
  * `RequestEvent` payload host listeners receive.
  */
-export type SchemaRequestEvent<schema extends Schema.Schema | undefined> =
-  schema extends Schema.Schema ? DistributeRequest<schema, Schema.MethodName<schema>> : RequestEvent
+export type SchemaRequestEvent<
+  schema extends Schema.Schema | undefined,
+  transports extends HostTransports = HostTransports,
+> = schema extends Schema.Schema
+  ? DistributeRequest<schema, Schema.MethodName<schema>, transports[number]>
+  : DistributeTransportRequest<transports[number]>
 
 /** Helper conditional mapping a schema to the typed `NotificationEvent`. */
-export type SchemaNotificationEvent<schema extends Schema.Schema | undefined> =
-  schema extends Schema.Schema
-    ? DistributeNotification<schema, Schema.MethodName<schema>>
-    : NotificationEvent
+export type SchemaNotificationEvent<
+  schema extends Schema.Schema | undefined,
+  transports extends HostTransports = HostTransports,
+> = schema extends Schema.Schema
+  ? DistributeNotification<schema, Schema.MethodName<schema>, transports[number]>
+  : DistributeTransportNotification<transports[number]>
 
 /** Host-side event map (lifecycle + request/notification dispatch). */
-export type HostEventMap<schema extends Schema.Schema | undefined> =
-  Wata.LifecycleEventMap<schema> & {
-    /** Inbound JSON-RPC notification. Fire-and-forget. */
-    notification: SchemaNotificationEvent<schema>
-    /** Inbound JSON-RPC request. First non-`undefined` listener return wins. */
-    request: SchemaRequestEvent<schema>
-  }
+export type HostEventMap<
+  schema extends Schema.Schema | undefined,
+  transports extends HostTransports = HostTransports,
+> = Wata.LifecycleEventMap<schema> & {
+  /** Inbound JSON-RPC notification. Fire-and-forget. */
+  notification: SchemaNotificationEvent<schema, transports>
+  /** Inbound JSON-RPC request. First non-`undefined` listener return wins. */
+  request: SchemaRequestEvent<schema, transports>
+}
 
 /** Non-empty tuple of host transports accepted by {@link create}. */
-export type HostTransports = readonly [
-  Transport.Transport<'host', string>,
-  ...Transport.Transport<'host', string>[],
-]
+export type HostTransports = readonly [HostTransport, ...HostTransport[]]
 
 /** Host-side `Wata`. Returned by {@link create}. */
 export type Host<
@@ -162,9 +200,9 @@ export type Host<
     options: Host.NotifyOptions<method, params>,
   ) => Promise<void>
   /** Remove a previously subscribed listener. */
-  off: <type extends keyof HostEventMap<schema>>(
+  off: <type extends keyof HostEventMap<schema, transports>>(
     type: type,
-    listener: Wata.Listener<HostEventMap<schema>[type]>,
+    listener: Wata.Listener<HostEventMap<schema, transports>[type]>,
   ) => void
   /**
    * Subscribe to a host event. Returns an `AbortController` so the
@@ -173,9 +211,9 @@ export type Host<
    * Lazy-connects the transport on first call, so most hosts never need
    * to call {@link Host.start} explicitly.
    */
-  on: <type extends keyof HostEventMap<schema>>(
+  on: <type extends keyof HostEventMap<schema, transports>>(
     type: type,
-    listener: Wata.Listener<HostEventMap<schema>[type]>,
+    listener: Wata.Listener<HostEventMap<schema, transports>[type]>,
   ) => AbortController
   /**
    * Settle a still-pending inbound request by id with a JSON-RPC error.
@@ -328,20 +366,22 @@ export function create<
   // from one app-wide config.
   for (const transport of transports) transport.bind?.({ baseUrl, identity, meta })
 
-  const emitter = Events.create<HostEventMap<schema>>()
+  const emitter = Events.create<HostEventMap<schema, transports>>()
   // User-supplied `request` listeners, in registration order. The
   // `request` dispatch loop iterates these directly so it can capture
   // each listener's return value (and thrown error) for the
   // first-non-undefined-wins resolution semantics. Tracked here rather
   // than via `emitter.on('request', ...)` because the wrapper swallows
   // listener errors and never surfaces return values back to the caller.
-  const requestListeners = new Set<(payload: HostEventMap<schema>['request']) => unknown>()
+  const requestListeners = new Set<
+    (payload: HostEventMap<schema, transports>['request']) => unknown
+  >()
 
   type Runtime = {
     phase: 'pre-key' | 'keyed'
     started: boolean
     startPromise: Promise<void> | undefined
-    transport: Transport.Transport<'host', string>
+    transport: HostTransport
   }
   const runtimes: Runtime[] = transports.map((transport) => ({
     phase: 'pre-key',
@@ -358,11 +398,7 @@ export function create<
    * worker hosts terminating, etc.) can `await` it. Resolves with
    * `false` when no pending request matched `id`.
    */
-  function settle(
-    transport: Transport.Transport<'host', string>,
-    id: Rpc.Id,
-    response: Rpc.Response,
-  ): Promise<boolean> {
+  function settle(transport: HostTransport, id: Rpc.Id, response: Rpc.Response): Promise<boolean> {
     const key = pendingKey(transport, id)
     const entry = pending.get(key)
     if (!entry) return Promise.resolve(false)
@@ -381,7 +417,7 @@ export function create<
     return matches[0]
   }
 
-  function clearPending(transport: Transport.Transport<'host', string>): void {
+  function clearPending(transport: HostTransport): void {
     for (const [key, entry] of pending) if (entry.transport === transport) pending.delete(key)
   }
 
@@ -433,7 +469,7 @@ export function create<
   }
 
   async function sendResponses(
-    transport: Transport.Transport<'host', string>,
+    transport: HostTransport,
     responses: ReadonlyArray<Rpc.Response>,
   ): Promise<void> {
     const envelope = Envelope.rpcResponses(responses)
@@ -451,7 +487,7 @@ export function create<
   }
 
   function emitRpcRequests(
-    transport: Transport.Transport<'host', string>,
+    transport: HostTransport,
     envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>,
     direction: Wata.RpcEnvelopeMeta['direction'],
   ): void {
@@ -462,7 +498,11 @@ export function create<
     })
   }
 
-  async function dispatchRequest(runtime: Runtime, request: Rpc.Request) {
+  async function dispatchRequest(
+    runtime: Runtime,
+    request: Rpc.Request,
+    metadata?: Transport.MessageMeta | undefined,
+  ) {
     if (schema) {
       try {
         Wata.validateParamsIfKnown(schema, request.method, request.params)
@@ -502,6 +542,7 @@ export function create<
 
     const payload = {
       id: request.id,
+      meta: hostEventMeta(runtime.transport, metadata),
       method: request.method,
       params: request.params,
       reject: (rpcError: { code: number; data?: unknown; message: string }) =>
@@ -521,7 +562,7 @@ export function create<
           () => undefined,
         ),
       transport: runtime.transport.name,
-    } as HostEventMap<schema>['request']
+    } as HostEventMap<schema, transports>['request']
 
     // Iterate the user-registered listeners directly so we can capture
     // each one's outcome (return value or thrown error). Snapshot first
@@ -582,7 +623,11 @@ export function create<
     // later via `wata.respond(id, ...)` / `wata.reject(id, ...)`.
   }
 
-  function dispatchNotification(runtime: Runtime, message: Rpc.Notification) {
+  function dispatchNotification(
+    runtime: Runtime,
+    message: Rpc.Notification,
+    metadata?: Transport.MessageMeta | undefined,
+  ) {
     if (schema) {
       try {
         Wata.validateParamsIfKnown(schema, message.method, message.params)
@@ -592,14 +637,15 @@ export function create<
       }
     }
     const payload = {
+      meta: hostEventMeta(runtime.transport, metadata),
       method: message.method,
       notification: message,
       params: message.params,
       transport: runtime.transport.name,
-    } as HostEventMap<schema>['notification']
+    } as HostEventMap<schema, transports>['notification']
     emitter.emit(
       'notification',
-      ...([payload] as Events.EventArgs<HostEventMap<schema>['notification']>),
+      ...([payload] as Events.EventArgs<HostEventMap<schema, transports>['notification']>),
     )
   }
 
@@ -625,7 +671,7 @@ export function create<
   }
 
   for (const runtime of runtimes) {
-    runtime.transport.on('message', async (envelope) => {
+    runtime.transport.on('message', async (envelope, metadata) => {
       if (runtime.phase === 'pre-key' && envelope.type === 'encrypted') {
         rejectModeViolation(runtime, 'encrypted envelope received before key derivation')
         return
@@ -637,8 +683,8 @@ export function create<
       if (envelope.type === 'rpc-requests') {
         emitRpcRequests(runtime.transport, envelope, 'incoming')
         for (const message of envelope.payload) {
-          if ('id' in message) await dispatchRequest(runtime, message)
-          else dispatchNotification(runtime, message)
+          if ('id' in message) await dispatchRequest(runtime, message, metadata)
+          else dispatchNotification(runtime, message, metadata)
         }
       }
     })
@@ -710,7 +756,9 @@ export function create<
     notify,
     off(type, listener) {
       if (type === 'request') {
-        requestListeners.delete(listener as (payload: HostEventMap<schema>['request']) => unknown)
+        requestListeners.delete(
+          listener as (payload: HostEventMap<schema, transports>['request']) => unknown,
+        )
         return
       }
       emitter.off(type, listener)
@@ -718,12 +766,14 @@ export function create<
     on(type, listener) {
       const controller = new AbortController()
       if (type === 'request') {
-        requestListeners.add(listener as (payload: HostEventMap<schema>['request']) => unknown)
+        requestListeners.add(
+          listener as (payload: HostEventMap<schema, transports>['request']) => unknown,
+        )
         controller.signal.addEventListener(
           'abort',
           () => {
             requestListeners.delete(
-              listener as (payload: HostEventMap<schema>['request']) => unknown,
+              listener as (payload: HostEventMap<schema, transports>['request']) => unknown,
             )
           },
           { once: true },
@@ -788,7 +838,14 @@ export declare namespace create {
 
 type PendingRequest = {
   request: Rpc.Request
-  transport: Transport.Transport<'host', string>
+  transport: HostTransport
+}
+
+function hostEventMeta(
+  transport: HostTransport,
+  metadata?: Transport.MessageMeta | undefined,
+): HostEventMeta {
+  return { ...metadata, transport: transport.name }
 }
 
 function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {
@@ -799,7 +856,7 @@ function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {
   return { privateKey, publicKey }
 }
 
-function assertUniqueTransportNames(transports: readonly Transport.Transport[]): void {
+function assertUniqueTransportNames(transports: readonly HostTransport[]): void {
   const seen = new Set<string>()
   for (const transport of transports) {
     if (seen.has(transport.name))
@@ -817,7 +874,7 @@ function assertUniqueTransportNames(transports: readonly Transport.Transport[]):
  * @internal
  */
 export function collectTransports(
-  transports: readonly Transport.Transport[],
+  transports: readonly HostTransport[],
   baseUrl: string,
 ): Record<string, unknown> {
   const documentTransports: Record<string, unknown> = {}
@@ -831,11 +888,11 @@ export function collectTransports(
   return documentTransports
 }
 
-function pendingKey(transport: Transport.Transport<'host', string>, id: Rpc.Id): string {
+function pendingKey(transport: HostTransport, id: Rpc.Id): string {
   return JSON.stringify([transport.name, id])
 }
 
-function isHttpServer<transport extends Transport.Transport>(
+function isHttpServer<transport extends HostTransport>(
   transport: transport,
 ): transport is transport & Http.RoutedServer {
   const candidate = transport as Partial<Http.RoutedServer>

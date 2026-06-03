@@ -205,6 +205,68 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
 
     await consumer.close()
   })
+
+  test('passes MessageEvent origin through host request and notification metadata', async () => {
+    const source = Object.assign(new EventTarget(), { postMessage() {} }) as unknown as Window &
+      EventTarget
+    const handle = {
+      addEventListener: source.addEventListener.bind(source),
+      postMessage() {},
+      removeEventListener: source.removeEventListener.bind(source),
+    } as unknown as Window
+    const host = HostWata.create({
+      transports: [postMessage({ source, target: () => handle })],
+    })
+    const events: Array<{ kind: string; origin: string | undefined; transport: string }> = []
+
+    host.on('notification', (event) => {
+      events.push({
+        kind: 'notification',
+        origin: event.meta.origin,
+        transport: event.meta.transport,
+      })
+    })
+    host.on('request', (event) => {
+      events.push({
+        kind: 'request',
+        origin: event.meta.origin,
+        transport: event.meta.transport,
+      })
+      if (event.method === 'ping') return { ok: true }
+      return undefined
+    })
+    await host.start()
+
+    source.dispatchEvent(
+      new MessageEvent('message', {
+        data: protocol.withId(
+          Envelope.rpcRequests([
+            Rpc.notification({ method: 'ping', params: [] }),
+            Rpc.request({ id: 1, method: 'ping', params: [] }),
+          ]),
+        ),
+        origin: 'https://app.example',
+      }),
+    )
+
+    await waitFor(() => events.length === 2)
+    expect(events).toMatchInlineSnapshot(`
+      [
+        {
+          "kind": "notification",
+          "origin": "https://app.example",
+          "transport": "postMessage",
+        },
+        {
+          "kind": "request",
+          "origin": "https://app.example",
+          "transport": "postMessage",
+        },
+      ]
+    `)
+
+    await host.close()
+  })
 })
 
 async function waitFor(predicate: () => boolean, timeout = 1000): Promise<void> {
