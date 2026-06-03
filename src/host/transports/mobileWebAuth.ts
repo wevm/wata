@@ -306,6 +306,10 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
   const { fetch, listener } = Http.fromHono(app)
 
   return {
+    capabilities: {
+      notifications: { consumer: false, host: false },
+      requests: { consumer: true, host: false },
+    },
     async close(cause) {
       if (state.closed) return
       state.closed = true

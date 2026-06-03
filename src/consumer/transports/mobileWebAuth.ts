@@ -237,6 +237,10 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     get callbackUrls() {
       return [callbackUrl]
     },
+    capabilities: {
+      notifications: { consumer: false, host: false },
+      requests: { consumer: true, host: false },
+    },
     async close(cause) {
       if (state.closed) return
       state.closed = true
