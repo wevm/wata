@@ -50,11 +50,59 @@
       "react-native": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./Wata": {
+      "types": "./dist/Wata.d.ts",
+      "src": "./src/Wata.ts",
+      "react-native": "./dist/Wata.js",
+      "default": "./dist/Wata.js"
+    },
+    "./consumer/transports/deviceCode": {
+      "types": "./dist/consumer/transports/deviceCode.d.ts",
+      "src": "./src/consumer/transports/deviceCode.ts",
+      "react-native": "./dist/consumer/transports/deviceCode.js",
+      "default": "./dist/consumer/transports/deviceCode.js"
+    },
+    "./consumer/transports/postMessage": {
+      "types": "./dist/consumer/transports/postMessage.d.ts",
+      "src": "./src/consumer/transports/postMessage.ts",
+      "react-native": "./dist/consumer/transports/postMessage.js",
+      "default": "./dist/consumer/transports/postMessage.js"
+    },
+    "./consumer/transports/webhookCallback": {
+      "types": "./dist/consumer/transports/webhookCallback.d.ts",
+      "src": "./src/consumer/transports/webhookCallback.ts",
+      "react-native": "./dist/consumer/transports/webhookCallback.js",
+      "default": "./dist/consumer/transports/webhookCallback.js"
+    },
     "./host": {
       "types": "./dist/host/index.d.ts",
       "src": "./src/host/index.ts",
       "react-native": "./dist/host/index.js",
       "default": "./dist/host/index.js"
+    },
+    "./host/Wata": {
+      "types": "./dist/host/Wata.d.ts",
+      "src": "./src/host/Wata.ts",
+      "react-native": "./dist/host/Wata.js",
+      "default": "./dist/host/Wata.js"
+    },
+    "./host/transports/deviceCode": {
+      "types": "./dist/host/transports/deviceCode.d.ts",
+      "src": "./src/host/transports/deviceCode.ts",
+      "react-native": "./dist/host/transports/deviceCode.js",
+      "default": "./dist/host/transports/deviceCode.js"
+    },
+    "./host/transports/postMessage": {
+      "types": "./dist/host/transports/postMessage.d.ts",
+      "src": "./src/host/transports/postMessage.ts",
+      "react-native": "./dist/host/transports/postMessage.js",
+      "default": "./dist/host/transports/postMessage.js"
+    },
+    "./host/transports/webhookCallback": {
+      "types": "./dist/host/transports/webhookCallback.d.ts",
+      "src": "./src/host/transports/webhookCallback.ts",
+      "react-native": "./dist/host/transports/webhookCallback.js",
+      "default": "./dist/host/transports/webhookCallback.js"
     },
     "./server": {
       "types": "./dist/server/index.d.ts",
