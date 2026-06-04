@@ -27,6 +27,7 @@ import * as Events from './core/Events.js'
 import * as Http from './core/Http.js'
 import * as Rpc from './core/Rpc.js'
 import * as Schema from './core/Schema.js'
+import * as SchemaRuntime from './core/SchemaRuntime.js'
 import * as Transport from './core/Transport.js'
 import * as Wellknown from './core/Wellknown.js'
 
@@ -177,11 +178,8 @@ export type ConsumerSession<
    * Send a typed JSON-RPC notification (no response expected).
    * Auto-starts this transport on first use.
    */
-  notify: <
-    const method extends Consumer.MethodName<schema>,
-    const params extends Consumer.ParamsOf<schema, method>,
-  >(
-    options: Consumer.NotifyOptions<method, params>,
+  notify: <const method extends Consumer.MethodName<schema>>(
+    options: Consumer.NotifyOptions<schema, method>,
   ) => Promise<void>
   /** Remove a previously subscribed listener. */
   off: <type extends keyof ConsumerEventMap<schema, context>>(
@@ -206,11 +204,8 @@ export type ConsumerSession<
    * Out-of-band transports may resolve with registration metadata and emit
    * the eventual host result through `'rpc-responses'`.
    */
-  send: <
-    const method extends Consumer.MethodName<schema>,
-    const params extends Consumer.ParamsOf<schema, method>,
-  >(
-    options: Consumer.SendOptions<method, params, context>,
+  send: <const method extends Consumer.MethodName<schema>>(
+    options: Consumer.SendOptions<schema, method, context>,
   ) => Promise<Consumer.SendReturn<schema, transport, method>>
   /**
    * Explicitly bring the session up. Starts the transport and resolves
@@ -332,8 +327,8 @@ export declare namespace Consumer {
 
   /** Options for {@link Consumer.send}. */
   type SendOptions<
+    schema extends Schema.Schema | undefined,
     method extends string,
-    params extends Rpc.Params,
     context extends Rpc.RequestContext = Rpc.RequestContext,
   > = {
     /** Optional per-request context metadata. */
@@ -343,15 +338,15 @@ export declare namespace Consumer {
     /** Method name. Narrowed against the schema when one was supplied. */
     method: method
     /** Method params. Narrowed against the schema when one was supplied. */
-    params: params
+    params: ParamsOf<schema, method>
   }
 
   /** Options for {@link Consumer.notify}. */
-  type NotifyOptions<method extends string, params extends Rpc.Params> = {
+  type NotifyOptions<schema extends Schema.Schema | undefined, method extends string> = {
     /** Method name. Narrowed against the schema when one was supplied. */
     method: method
     /** Method params. Narrowed against the schema when one was supplied. */
-    params: params
+    params: ParamsOf<schema, method>
   }
 }
 
@@ -475,7 +470,6 @@ function createConsumerSession<
   const { context, schema, transport } = parameters
 
   const emitter = Events.create<ConsumerEventMap<schema, RequestContextOf<context>>>()
-
   const pending = new Map<Rpc.Id, Pending>()
   const methodById = new Map<Rpc.Id, string>()
   // `started` = currently in an active session. After close, drops back
@@ -523,7 +517,7 @@ function createConsumerSession<
     if ('error' in message) return message
     if (!schema) return message
     const method = message.id === null ? undefined : methodById.get(message.id)
-    const result = validateResultIfKnown(schema, method, message.result)
+    const result = SchemaRuntime.validateResultForMethod(schema, method, message.result)
     return {
       id: message.id,
       jsonrpc: message.jsonrpc,
@@ -554,7 +548,7 @@ function createConsumerSession<
       const validated = options.validated
         ? message.result
         : schema
-          ? validateResultIfKnown(schema, method, message.result)
+          ? SchemaRuntime.validateResultForMethod(schema, method, message.result)
           : message.result
       deferred.resolve({ id, result: validated })
     } catch (cause) {
@@ -565,7 +559,7 @@ function createConsumerSession<
   function dispatchNotification(message: Rpc.Notification): void {
     if (schema) {
       try {
-        validateParamsIfKnown(schema, message.method, message.params)
+        SchemaRuntime.validateParamsForMethod(schema, message.method, message.params)
       } catch (cause) {
         emitter.emit('error', cause as Error)
         return
@@ -717,7 +711,7 @@ function createConsumerSession<
           `transport \`${transport.name}\` does not support consumer notifications`,
         )
       if (!state.started) await start()
-      if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
+      if (schema) SchemaRuntime.validateParamsForMethod(schema, opts.method, opts.params)
       const envelope = Envelope.rpcRequests([
         Rpc.notification({ method: opts.method, params: opts.params }),
       ])
@@ -736,7 +730,7 @@ function createConsumerSession<
       if (!state.started) await start()
 
       const id = opts.id ?? nextId++
-      if (schema) validateParamsIfKnown(schema, opts.method, opts.params)
+      if (schema) SchemaRuntime.validateParamsForMethod(schema, opts.method, opts.params)
       const context_value =
         opts.context === undefined
           ? undefined
@@ -875,32 +869,4 @@ function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {
     url: true,
   })
   return { privateKey, publicKey }
-}
-
-/**
- * Validate inbound `params` against the schema entry for `method` if one
- * exists. Used by both sides. Consumer validates outbound calls before
- * sending; host validates inbound requests/notifications before dispatch.
- *
- * @internal
- */
-export function validateParamsIfKnown(
-  schema: Schema.Schema,
-  method: string,
-  params: Rpc.Params,
-): void {
-  const definition = schema.methods[method]
-  if (!definition) return
-  Schema.validate(definition.params, params)
-}
-
-function validateResultIfKnown(
-  schema: Schema.Schema,
-  method: string | undefined,
-  result: unknown,
-): unknown {
-  if (!method) return result
-  const definition = schema.methods[method]
-  if (!definition) return result
-  return Schema.validate(definition.result, result)
 }

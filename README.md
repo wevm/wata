@@ -24,6 +24,56 @@ bun i wata
 
 ## Usage
 
+### Schemas
+
+Schemas are optional. `Schema.create` defines a closed method registry, while
+`Schema.rpc()` accepts any JSON-RPC method and returns `unknown` for methods
+without a precise definition. Use `Schema.extend(Schema.rpc(), ...)` when a
+transport needs generic provider RPC plus exact app control methods.
+
+```ts
+import { Schema, Wata, postMessage } from 'wata'
+import { z } from 'zod/mini'
+
+const schema = Schema.extend(Schema.rpc(), {
+  methods: {
+    'dialog.hostInfo': Schema.method({
+      params: z.tuple([]),
+      result: z.object({ name: z.string() }),
+    }),
+  },
+})
+
+const wata = Wata.create({
+  schema,
+  transports: [
+    postMessage({
+      host: 'https://wallet.example',
+      target(c) {
+        return window.open(c.host, '_blank', 'popup=1')
+      },
+    }),
+  ],
+})
+
+const { result: hostInfo } = await wata.send({
+  method: 'dialog.hostInfo',
+  params: [],
+})
+// hostInfo is { name: string }
+
+const { result } = await wata.send({
+  method: 'wallet_connect',
+  params: [],
+})
+// result is unknown
+```
+
+Host request listeners can subscribe broadly with `wata.on('request', listener)`
+or to one method with `wata.on('request', method, listener)`. Broad listeners
+answer with `event.respond(...)`; only method-scoped listeners may answer by
+returning a non-`undefined` result.
+
 ### `postMessage`
 
 Same-device browser session over a `Window`, `WindowProxy`, or `MessagePort`. The consumer supplies a `target` (popup, iframe, or channel port); the host defaults to its opener.

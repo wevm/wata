@@ -35,6 +35,7 @@ const schema = Schema.create({
     }),
   },
 })
+const open_schema = Schema.extend(Schema.rpc(), { methods: schema.methods })
 
 const context = z.object({
   account: z.string(),
@@ -120,6 +121,22 @@ describe('Consumer.send', () => {
     expectTypeOf(sig.result).toEqualTypeOf<string>()
   })
 
+  test('open schemas infer known methods and fall back for unknown methods', async () => {
+    const { consumer } = loopback()
+    const wata = Wata.create({ schema: open_schema, transports: [consumer] })
+
+    const ping = await wata.send({ method: 'ping', params: [] })
+    expectTypeOf(ping.result).toEqualTypeOf<{ ok: true }>()
+
+    const fallback = await wata.send({ method: 'wallet_connect', params: [{ chains: [] }] })
+    expectTypeOf(fallback.result).toEqualTypeOf<unknown>()
+
+    // @ts-expect-error known methods still use their precise params
+    wata.send({ method: 'ping', params: ['oops'] })
+    // @ts-expect-error fallback params must be JSON-RPC params
+    wata.send({ method: 'wallet_connect', params: null })
+  })
+
   test('rejects unknown methods at compile time', () => {
     const { consumer } = loopback()
     const wata = Wata.create({ transports: [consumer], schema })
@@ -201,6 +218,14 @@ describe('Consumer.notify', () => {
     // @ts-expect-error 'nope' is not in the schema
     wata.notify({ method: 'nope', params: [] })
   })
+
+  test('accepts unknown methods when the schema is open', () => {
+    const { consumer } = loopback()
+    const wata = Wata.create({ schema: open_schema, transports: [consumer] })
+    wata.notify({ method: 'wallet_connect', params: [] })
+    // @ts-expect-error known methods still use their precise params
+    wata.notify({ method: 'ping', params: ['oops'] })
+  })
 })
 
 describe('Host.notify', () => {
@@ -212,6 +237,14 @@ describe('Host.notify', () => {
     wata.notify({ method: 'nope', params: [] })
     // @ts-expect-error params must match the schema entry
     wata.notify({ method: 'eth_sign', params: ['0x'] })
+  })
+
+  test('accepts unknown methods when the schema is open', () => {
+    const { host } = loopback()
+    const wata = HostWata.create({ schema: open_schema, transports: [host] })
+    wata.notify({ method: 'wallet_connect', params: [] })
+    // @ts-expect-error known methods still use their precise params
+    wata.notify({ method: 'ping', params: ['oops'] })
   })
 })
 
@@ -248,6 +281,8 @@ describe('Host events', () => {
         event.respond({ ok: true })
       }
     })
+    // @ts-expect-error broad request listeners respond with event.respond, not result returns
+    wata.on('request', () => ({ ok: true }))
   })
 
   test('`notification` payload is narrowed against the schema', () => {
@@ -261,6 +296,38 @@ describe('Host events', () => {
       if (event.method === 'eth_sign')
         expectTypeOf(event.params).toMatchTypeOf<readonly [string, string]>()
     })
+  })
+
+  test('method-scoped listeners keep exact known-method types on open schemas', () => {
+    const { host } = loopback()
+    const wata = HostWata.create({ schema: open_schema, transports: [host] })
+
+    wata.on('request', 'ping', (event) => {
+      expectTypeOf(event.method).toEqualTypeOf<'ping'>()
+      expectTypeOf(event.params).toMatchTypeOf<readonly []>()
+      event.respond({ ok: true })
+      // @ts-expect-error wrong shape for ping
+      event.respond('not the ping result')
+    })
+    wata.on('request', 'ping', () => ({ ok: true as const }))
+    wata.on('request', 'ping', async () => ({ ok: true as const }))
+    // @ts-expect-error listener returns must match the method result
+    wata.on('request', 'ping', () => 'not the ping result')
+    // @ts-expect-error async listener returns must match the method result
+    wata.on('request', 'ping', async () => 'not the ping result')
+    wata.on('request', 'wallet_connect', (event) => {
+      expectTypeOf(event.method).toEqualTypeOf<'wallet_connect'>()
+      expectTypeOf(event.params).toMatchTypeOf<Rpc.Params>()
+      event.respond({ opaque: true })
+    })
+    wata.on('request', 'wallet_connect', () => ({ opaque: true }))
+  })
+
+  test('method-scoped listeners reject unknown methods on closed schemas', () => {
+    const { host } = loopback()
+    const wata = HostWata.create({ transports: [host], schema })
+    // @ts-expect-error closed schemas only accept known request methods
+    wata.on('request', 'wallet_connect', () => {})
   })
 
   test('`request` metadata narrows by transport', () => {

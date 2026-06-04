@@ -21,6 +21,7 @@ import * as Events from '../core/Events.js'
 import * as Http from '../core/Http.js'
 import * as Rpc from '../core/Rpc.js'
 import * as Schema from '../core/Schema.js'
+import * as SchemaRuntime from '../core/SchemaRuntime.js'
 import * as Transport from '../core/Transport.js'
 import * as Wellknown from '../core/Wellknown.js'
 import * as Wata from '../Wata.js'
@@ -145,6 +146,36 @@ type DistributeTransportRequest<
   ? RequestEvent<string, Rpc.Params, unknown, transport, context>
   : never
 
+type HostRequestEventOf<
+  schema extends Schema.Schema | undefined,
+  method extends string,
+  transport extends HostTransport,
+  context extends Rpc.RequestContext,
+> = transport extends HostTransport
+  ? method extends Host.MethodName<schema>
+    ? Host.ParamsOf<schema, method> extends infer params
+      ? params extends Rpc.Params
+        ? RequestEvent<method, params, Host.ResultOf<schema, method>, transport, context>
+        : never
+      : never
+    : never
+  : never
+
+type HostRequestListener<
+  schema extends Schema.Schema | undefined,
+  method extends string,
+  transport extends HostTransport,
+  context extends Rpc.RequestContext,
+> = (
+  event: HostRequestEventOf<schema, method, transport, context>,
+) => Host.ResultOf<schema, method> | Promise<Host.ResultOf<schema, method> | void> | void
+
+type HostRequestDispatchListener<
+  schema extends Schema.Schema | undefined,
+  transports extends HostTransports,
+  context extends Rpc.RequestContext,
+> = (event: SchemaRequestEvent<schema, transports, context>) => Promise<void> | void
+
 /**
  * Helper conditional that maps a {@link Schema} method name to the typed
  * `RequestEvent` payload host listeners receive.
@@ -173,8 +204,61 @@ export type HostEventMap<
 > = Wata.LifecycleEventMap<schema, context> & {
   /** Inbound JSON-RPC notification. Fire-and-forget. */
   notification: SchemaNotificationEvent<schema, transports>
-  /** Inbound JSON-RPC request. First non-`undefined` listener return wins. */
+  /**
+   * Inbound JSON-RPC request. Broad listeners should respond via
+   * `event.respond`; only method-scoped request listeners may answer by
+   * returning a non-`undefined` result.
+   */
   request: SchemaRequestEvent<schema, transports, context>
+}
+
+type HostOff<
+  schema extends Schema.Schema | undefined,
+  transports extends HostTransports,
+  context extends Rpc.RequestContext,
+> = {
+  /** Remove a method-scoped request listener. */
+  <const method extends Host.MethodName<schema>>(
+    type: 'request',
+    method: method,
+    listener: HostRequestListener<schema, method, transports[number], context>,
+  ): void
+  /** Remove a broad request listener. */
+  (type: 'request', listener: HostRequestDispatchListener<schema, transports, context>): void
+  /** Remove a previously subscribed host listener. */
+  <type extends Exclude<keyof HostEventMap<schema, transports, context>, 'request'>>(
+    type: type,
+    listener: Wata.Listener<HostEventMap<schema, transports, context>[type]>,
+  ): void
+}
+
+type HostOn<
+  schema extends Schema.Schema | undefined,
+  transports extends HostTransports,
+  context extends Rpc.RequestContext,
+> = {
+  /**
+   * Subscribe to requests for one JSON-RPC method. A non-`undefined` listener
+   * return value answers the request.
+   */
+  <const method extends Host.MethodName<schema>>(
+    type: 'request',
+    method: method,
+    listener: HostRequestListener<schema, method, transports[number], context>,
+  ): AbortController
+  /**
+   * Subscribe to broad host request dispatch. Respond via `event.respond`;
+   * listener return values are ignored.
+   */
+  (
+    type: 'request',
+    listener: HostRequestDispatchListener<schema, transports, context>,
+  ): AbortController
+  /** Subscribe to a host event. */
+  <type extends Exclude<keyof HostEventMap<schema, transports, context>, 'request'>>(
+    type: type,
+    listener: Wata.Listener<HostEventMap<schema, transports, context>[type]>,
+  ): AbortController
 }
 
 /** Non-empty tuple of host transports accepted by {@link create}. */
@@ -203,17 +287,11 @@ export type Host<
    * Send a typed JSON-RPC notification from the host to the consumer.
    * Auto-starts transports that support host-origin notifications.
    */
-  notify: <
-    const method extends Host.MethodName<schema>,
-    const params extends Host.ParamsOf<schema, method>,
-  >(
-    options: Host.NotifyOptions<method, params>,
+  notify: <const method extends Host.MethodName<schema>>(
+    options: Host.NotifyOptions<schema, method>,
   ) => Promise<void>
   /** Remove a previously subscribed listener. */
-  off: <type extends keyof HostEventMap<schema, transports, context>>(
-    type: type,
-    listener: Wata.Listener<HostEventMap<schema, transports, context>[type]>,
-  ) => void
+  off: HostOff<schema, transports, context>
   /**
    * Subscribe to a host event. Returns an `AbortController` so the
    * subscription can be cancelled (or composed with an external signal).
@@ -221,10 +299,7 @@ export type Host<
    * Lazy-connects the transport on first call, so most hosts never need
    * to call {@link Host.start} explicitly.
    */
-  on: <type extends keyof HostEventMap<schema, transports, context>>(
-    type: type,
-    listener: Wata.Listener<HostEventMap<schema, transports, context>[type]>,
-  ) => AbortController
+  on: HostOn<schema, transports, context>
   /**
    * Settle a still-pending inbound request by id with a JSON-RPC error.
    * Mirror of {@link Host.respond}. Resolves once the error response
@@ -284,11 +359,11 @@ export declare namespace Host {
     : string
 
   /** Options for {@link Host.notify}. */
-  type NotifyOptions<method extends string, params extends Rpc.Params> = {
+  type NotifyOptions<schema extends Schema.Schema | undefined, method extends string> = {
     /** Method name. Narrowed against the schema when one was supplied. */
     method: method
     /** Method params. Narrowed against the schema when one was supplied. */
-    params: params
+    params: ParamsOf<schema, method>
   }
 
   /** Params type for a given method (any when no schema supplied). */
@@ -300,6 +375,16 @@ export declare namespace Host {
       ? Rpc.Params & Schema.ParamsOf<schema, method>
       : Rpc.Params
     : Rpc.Params
+
+  /** Result type for a given method (unknown when no schema supplied). */
+  type ResultOf<
+    schema extends Schema.Schema | undefined,
+    method extends string,
+  > = schema extends Schema.Schema
+    ? method extends Schema.MethodName<schema>
+      ? Schema.ResultOf<schema, method>
+      : unknown
+    : unknown
 }
 
 export declare namespace reject {
@@ -387,11 +472,32 @@ export function create<
   // first-non-undefined-wins resolution semantics. Tracked here rather
   // than via `emitter.on('request', ...)` because the wrapper swallows
   // listener errors and never surfaces return values back to the caller.
-  const requestListeners = new Set<
-    (
-      payload: HostEventMap<schema, transports, Wata.RequestContextOf<context>>['request'],
-    ) => unknown
-  >()
+  type RequestPayload = HostEventMap<schema, transports, Wata.RequestContextOf<context>>['request']
+  type RequestListener = (payload: RequestPayload) => unknown
+  type RequestListenerEntry = {
+    listener: RequestListener
+    method?: string | undefined
+    source: object
+  }
+  const requestListeners = new Set<RequestListenerEntry>()
+  function addRequestListener(
+    listener: RequestListener,
+    source: object,
+    method?: string | undefined,
+  ): RequestListenerEntry {
+    const entry: RequestListenerEntry = {
+      listener,
+      source,
+      ...(method === undefined ? {} : { method }),
+    }
+    requestListeners.add(entry)
+    return entry
+  }
+
+  function removeRequestListener(source: object, method?: string | undefined): void {
+    for (const entry of requestListeners)
+      if (entry.source === source && entry.method === method) requestListeners.delete(entry)
+  }
 
   type Runtime = {
     phase: 'pre-key' | 'keyed'
@@ -423,6 +529,40 @@ export function create<
     return sendResponses(transport, [response]).then(() => true)
   }
 
+  function success(id: Rpc.Id, method: string, result: unknown): Rpc.Success {
+    const value = schema ? SchemaRuntime.validateResultForMethod(schema, method, result) : result
+    return Rpc.success({ id, result: value })
+  }
+
+  function settleInternalError(
+    transport: HostTransport,
+    id: Rpc.Id,
+    cause: unknown,
+  ): Promise<boolean> {
+    const error = cause instanceof Error ? cause : new Errors.BaseError(String(cause))
+    emitter.emit('error', error)
+    return settle(
+      transport,
+      id,
+      Rpc.error({
+        code: -32603,
+        data: error.message,
+        id,
+        message: 'internal error',
+      }),
+    )
+  }
+
+  function settleSuccess(
+    transport: HostTransport,
+    id: Rpc.Id,
+    method: string,
+    result: unknown,
+  ): Promise<boolean> {
+    const response = success(id, method, result)
+    return settle(transport, id, response)
+  }
+
   function resolvePending(id: Rpc.Id): PendingRequest | undefined {
     const matches = Array.from(pending.values()).filter((entry) => entry.request.id === id)
     if (matches.length === 0) return undefined
@@ -440,7 +580,9 @@ export function create<
 
   async function respond(id: Rpc.Id, result: unknown): Promise<void> {
     const entry = resolvePending(id)
-    const ok = entry ? await settle(entry.transport, id, Rpc.success({ id, result })) : false
+    const ok = entry
+      ? await settle(entry.transport, id, success(id, entry.request.method, result))
+      : false
     if (!ok) throw new UnknownRequestError(id)
   }
 
@@ -557,7 +699,7 @@ export function create<
     }
     if (schema) {
       try {
-        Wata.validateParamsIfKnown(schema, request_value.method, request_value.params)
+        SchemaRuntime.validateParamsForMethod(schema, request_value.method, request_value.params)
       } catch (cause) {
         await sendResponses(runtime.transport, [
           Rpc.error({
@@ -571,9 +713,13 @@ export function create<
       }
     }
 
-    // No listener has any chance of answering this request. Fall through
-    // to JSON-RPC `method not found` so the consumer doesn't hang.
-    if (requestListeners.size === 0) {
+    const snapshot = Array.from(requestListeners).filter(
+      (entry) => entry.method === undefined || entry.method === request_value.method,
+    )
+
+    // No matching listener has any chance of answering this request. Fall
+    // through to JSON-RPC `method not found` so the consumer doesn't hang.
+    if (snapshot.length === 0) {
       await sendResponses(runtime.transport, [
         Rpc.error({
           code: -32601,
@@ -610,37 +756,38 @@ export function create<
           }),
         ).then(() => undefined),
       request: request_value,
-      respond: (result: unknown) =>
-        settle(
-          runtime.transport,
-          request_value.id,
-          Rpc.success({ id: request_value.id, result }),
-        ).then(() => undefined),
+      respond: async (result: unknown) => {
+        try {
+          await settleSuccess(runtime.transport, request_value.id, request_value.method, result)
+        } catch (cause) {
+          await settleInternalError(runtime.transport, request_value.id, cause)
+          throw cause
+        }
+      },
       transport: runtime.transport.name,
     } as HostEventMap<schema, transports, Wata.RequestContextOf<context>>['request']
 
     // Iterate the user-registered listeners directly so we can capture
     // each one's outcome (return value or thrown error). Snapshot first
     // because a listener may unsubscribe siblings during dispatch.
-    const snapshot = Array.from(requestListeners)
     let firstError: Error | undefined
-    for (const listener of snapshot) {
+    for (const entry of snapshot) {
       if (!pending.has(key)) break
       let value: unknown
       try {
-        value = listener(payload)
+        value = entry.listener(payload)
       } catch (cause) {
         firstError ??= cause as Error
         continue
       }
       try {
         const resolved = await Promise.resolve(value)
-        if (resolved !== undefined) {
-          await settle(
-            runtime.transport,
-            request_value.id,
-            Rpc.success({ id: request_value.id, result: resolved }),
-          )
+        if (entry.method !== undefined && resolved !== undefined) {
+          try {
+            await settleSuccess(runtime.transport, request_value.id, request_value.method, resolved)
+          } catch (cause) {
+            await settleInternalError(runtime.transport, request_value.id, cause)
+          }
           break
         }
       } catch (cause) {
@@ -685,7 +832,7 @@ export function create<
   ) {
     if (schema) {
       try {
-        Wata.validateParamsIfKnown(schema, message.method, message.params)
+        SchemaRuntime.validateParamsForMethod(schema, message.method, message.params)
       } catch (cause) {
         emitter.emit('error', cause as Error)
         return
@@ -760,11 +907,13 @@ export function create<
 
   const routed = Http.composeRouted(transports.filter(isHttpServer))
 
-  async function notify(options: Host.NotifyOptions<string, Rpc.Params>): Promise<void> {
+  async function notify(
+    options: Host.NotifyOptions<schema, Host.MethodName<schema>>,
+  ): Promise<void> {
     const targets = runtimes.filter((runtime) => runtime.transport.capabilities.notifications.host)
     if (targets.length === 0)
       throw new Transport.UnsupportedError('no configured transport supports host notifications')
-    if (schema) Wata.validateParamsIfKnown(schema, options.method, options.params)
+    if (schema) SchemaRuntime.validateParamsForMethod(schema, options.method, options.params)
     const envelope = Envelope.rpcRequests([
       Rpc.notification({ method: options.method, params: options.params }),
     ])
@@ -811,44 +960,61 @@ export function create<
     fetch: httpFetch as Host<schema, transports, Wata.RequestContextOf<context>>['fetch'],
     listener: httpListener as Host<schema, transports, Wata.RequestContextOf<context>>['listener'],
     notify,
-    off(type, listener) {
+    off(
+      type: keyof HostEventMap<schema, transports, Wata.RequestContextOf<context>>,
+      method_or_listener:
+        | string
+        | HostRequestDispatchListener<schema, transports, Wata.RequestContextOf<context>>
+        | Wata.Listener<
+            HostEventMap<schema, transports, Wata.RequestContextOf<context>>[typeof type]
+          >,
+      listener?: unknown,
+    ) {
       if (type === 'request') {
-        requestListeners.delete(
-          listener as (
-            payload: HostEventMap<schema, transports, Wata.RequestContextOf<context>>['request'],
-          ) => unknown,
+        removeRequestListener(
+          typeof method_or_listener === 'string'
+            ? (listener as object)
+            : (method_or_listener as object),
+          typeof method_or_listener === 'string' ? method_or_listener : undefined,
         )
         return
       }
-      emitter.off(type, listener)
+      emitter.off(type, method_or_listener as never)
     },
-    on(type, listener) {
+    on(
+      type: keyof HostEventMap<schema, transports, Wata.RequestContextOf<context>>,
+      method_or_listener:
+        | string
+        | HostRequestDispatchListener<schema, transports, Wata.RequestContextOf<context>>
+        | Wata.Listener<
+            HostEventMap<schema, transports, Wata.RequestContextOf<context>>[typeof type]
+          >,
+      listener?: unknown,
+    ) {
       const controller = new AbortController()
       if (type === 'request') {
-        requestListeners.add(
-          listener as (
-            payload: HostEventMap<schema, transports, Wata.RequestContextOf<context>>['request'],
-          ) => unknown,
+        const source =
+          typeof method_or_listener === 'string'
+            ? (listener as object)
+            : (method_or_listener as object)
+        const entry = addRequestListener(
+          (typeof method_or_listener === 'string'
+            ? listener
+            : method_or_listener) as RequestListener,
+          source,
+          typeof method_or_listener === 'string' ? method_or_listener : undefined,
         )
         controller.signal.addEventListener(
           'abort',
           () => {
-            requestListeners.delete(
-              listener as (
-                payload: HostEventMap<
-                  schema,
-                  transports,
-                  Wata.RequestContextOf<context>
-                >['request'],
-              ) => unknown,
-            )
+            requestListeners.delete(entry)
           },
           { once: true },
         )
         lazyConnect()
         return controller
       }
-      emitter.on(type, listener, { signal: controller.signal })
+      emitter.on(type, method_or_listener as never, { signal: controller.signal })
       lazyConnect()
       return controller
     },

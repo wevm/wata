@@ -19,7 +19,7 @@
 import { z } from 'zod/mini'
 
 import * as Errors from './Errors.js'
-import type * as Rpc from './Rpc.js'
+import * as Rpc from './Rpc.js'
 
 /**
  * Definition of a single method. `params` validates the request `params`
@@ -34,6 +34,23 @@ export type Method<
   params: params
   result: result
 }
+
+type FallbackOf<schema extends Schema> = schema extends { fallback: infer fallback extends Method }
+  ? fallback
+  : never
+
+type Merge<base extends Record<string, Method>, extension extends Record<string, Method>> = Omit<
+  base,
+  keyof extension
+> &
+  extension
+
+/**
+ * Method definition a schema uses for `name`, including fallback resolution
+ * for open schemas.
+ */
+export type DefinitionOf<schema extends Schema, name extends MethodName<schema>> =
+  name extends keyof schema['methods'] ? schema['methods'][name] : FallbackOf<schema>
 
 /** Zod schema accepted for a Wata-wide request context metadata bag. */
 export type Context = z.ZodMiniType<Rpc.RequestContext>
@@ -69,11 +86,19 @@ export function method<const params extends z.ZodMiniType, const result extends 
 
 /**
  * A method-registry schema. Keys are method names; values are {@link Method}
- * definitions.
+ * definitions. Schemas with `fallback` accept arbitrary JSON-RPC method
+ * names, using the fallback definition when a method has no precise entry.
  */
-export type Schema<methods extends Record<string, Method> = Record<string, Method>> = {
+export type Schema<
+  methods extends Record<string, Method> = Record<string, Method>,
+  fallback extends Method | undefined = Method | undefined,
+> = {
   methods: methods
-}
+} & ([fallback] extends [undefined]
+  ? { fallback?: undefined }
+  : [fallback] extends [Method]
+    ? { fallback: fallback }
+    : { fallback?: fallback | undefined })
 
 /**
  * Create a method-registry schema. The `const` generic on `methods`
@@ -96,9 +121,119 @@ export type Schema<methods extends Record<string, Method> = Record<string, Metho
  * ```
  */
 export function create<const methods extends Record<string, Method>>(
-  options: Schema<methods>,
-): Schema<methods> {
+  options: create.Options<methods>,
+): create.ReturnType<methods> {
   return { methods: options.methods }
+}
+
+export declare namespace create {
+  /** Options for {@link create}. */
+  type Options<methods extends Record<string, Method>> = {
+    /** Closed method registry. */
+    methods: methods
+  }
+
+  /** Result of {@link create}. */
+  type ReturnType<methods extends Record<string, Method>> = Schema<methods, undefined>
+}
+
+const rpcFallback = method({
+  params: Rpc.schema.params,
+  result: z.unknown(),
+})
+
+/**
+ * Create an open JSON-RPC schema. Unknown method names validate their
+ * `params` against the generic JSON-RPC `params` slot and leave `result`
+ * as `unknown`.
+ *
+ * @example
+ * ```ts
+ * import { Schema } from 'wata'
+ *
+ * const schema = Schema.rpc()
+ * ```
+ */
+export function rpc(): rpc.ReturnType {
+  return { fallback: rpcFallback, methods: {} }
+}
+
+export declare namespace rpc {
+  /** Result of {@link rpc}. */
+  type ReturnType = Schema<{}, typeof rpcFallback>
+}
+
+/**
+ * Extend a base schema with precise method definitions. Extension methods
+ * override base methods, and the base fallback is preserved unless the
+ * extension supplies one.
+ *
+ * @example
+ * ```ts
+ * import { Schema } from 'wata'
+ * import { z } from 'zod/mini'
+ *
+ * const schema = Schema.extend(Schema.rpc(), {
+ *   methods: {
+ *     ping: Schema.method({
+ *       params: z.tuple([]),
+ *       result: z.object({ ok: z.literal(true) }),
+ *     }),
+ *   },
+ * })
+ * ```
+ */
+export function extend<
+  const base extends Schema,
+  const methods extends Record<string, Method>,
+  const fallback extends Method | undefined = undefined,
+>(
+  base: base,
+  extension: extend.Options<methods, fallback>,
+): extend.ReturnType<base, methods, fallback> {
+  const fallback_value = extension.fallback ?? base.fallback
+  return {
+    methods: { ...base.methods, ...extension.methods },
+    ...(fallback_value ? { fallback: fallback_value } : {}),
+  } as extend.ReturnType<base, methods, fallback>
+}
+
+export declare namespace extend {
+  /** Options for {@link extend}. */
+  type Options<
+    methods extends Record<string, Method>,
+    fallback extends Method | undefined = undefined,
+  > = {
+    /** Optional replacement fallback definition. */
+    fallback?: fallback | undefined
+    /** Method definitions to overlay onto the base schema. */
+    methods: methods
+  }
+
+  /** Result of {@link extend}. */
+  type ReturnType<
+    base extends Schema,
+    methods extends Record<string, Method>,
+    fallback extends Method | undefined = undefined,
+  > = Schema<Merge<base['methods'], methods>, fallback extends Method ? fallback : FallbackOf<base>>
+}
+
+/**
+ * Return the method definition for `name`, falling back to the schema's
+ * generic RPC definition when one exists.
+ *
+ * @example
+ * ```ts
+ * const definition = Schema.definition(schema, 'wallet_connect')
+ * ```
+ */
+export function definition<const schema extends Schema, const name extends MethodName<schema>>(
+  schema: schema,
+  name: name,
+): DefinitionOf<schema, name>
+export function definition(schema: Schema, name: string): Method | undefined
+export function definition(schema: Schema, name: string): Method | undefined {
+  return schema.methods[name] ?? schema.fallback
 }
 
 /**
@@ -109,7 +244,19 @@ export function create<const methods extends Record<string, Method>>(
 export type Inferred<schema extends z.ZodMiniType> = z.output<schema>
 
 /**
- * Method names defined on a {@link Schema}.
+ * Method names explicitly defined on a {@link Schema}.
+ *
+ * @example
+ * ```ts
+ * type Method = Schema.KnownMethodName<typeof schema>
+ * //   ^? "ping" | "eth_sign"
+ * ```
+ */
+export type KnownMethodName<schema extends Schema> = Extract<keyof schema['methods'], string>
+
+/**
+ * Method names accepted by a {@link Schema}. Open schemas accept arbitrary
+ * strings through their fallback; closed schemas accept only known methods.
  *
  * @example
  * ```ts
@@ -117,7 +264,9 @@ export type Inferred<schema extends z.ZodMiniType> = z.output<schema>
  * //   ^? "ping" | "eth_sign"
  * ```
  */
-export type MethodName<schema extends Schema> = Extract<keyof schema['methods'], string>
+export type MethodName<schema extends Schema> = schema extends { fallback: Method }
+  ? KnownMethodName<schema> | string
+  : KnownMethodName<schema>
 
 /**
  * Inferred `params` type for a given method on a {@link Schema}.
@@ -129,7 +278,7 @@ export type MethodName<schema extends Schema> = Extract<keyof schema['methods'],
  * ```
  */
 export type ParamsOf<schema extends Schema, name extends MethodName<schema>> = Inferred<
-  schema['methods'][name]['params']
+  DefinitionOf<schema, name>['params']
 >
 
 /**
@@ -142,7 +291,7 @@ export type ParamsOf<schema extends Schema, name extends MethodName<schema>> = I
  * ```
  */
 export type ResultOf<schema extends Schema, name extends MethodName<schema>> = Inferred<
-  schema['methods'][name]['result']
+  DefinitionOf<schema, name>['result']
 >
 
 /**
