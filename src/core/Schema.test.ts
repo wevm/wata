@@ -11,6 +11,10 @@ const ethSign = Schema.method({
   result: z.string(),
 })
 const schema = Schema.create({ methods: { eth_sign: ethSign, ping } })
+const fallback = Schema.method({
+  params: z.tuple([z.string()]),
+  result: z.number(),
+})
 
 describe('method', () => {
   test('returns the params/result pair as-is', () => {
@@ -27,6 +31,96 @@ describe('create', () => {
         "ping",
       ]
     `)
+  })
+})
+
+describe('rpc', () => {
+  test('returns an open schema with a generic JSON-RPC fallback', () => {
+    const open_schema = Schema.rpc()
+
+    expect({
+      fallback: Boolean(open_schema.fallback),
+      methods: Object.keys(open_schema.methods),
+      params: Schema.validate(open_schema.fallback.params, [{ ok: true }]),
+      result: Schema.validate(open_schema.fallback.result, { ok: true }),
+    }).toMatchInlineSnapshot(`
+      {
+        "fallback": true,
+        "methods": [],
+        "params": [
+          {
+            "ok": true,
+          },
+        ],
+        "result": {
+          "ok": true,
+        },
+      }
+    `)
+  })
+})
+
+describe('extend', () => {
+  test('overlays extension methods onto the base schema', () => {
+    const extended = Schema.extend(schema, {
+      methods: {
+        ping: fallback,
+      },
+    })
+
+    expect({
+      keys: Object.keys(extended.methods),
+      params: Schema.validate(extended.methods.ping.params, ['ok']),
+      result: Schema.validate(extended.methods.ping.result, 1),
+    }).toMatchInlineSnapshot(`
+      {
+        "keys": [
+          "eth_sign",
+          "ping",
+        ],
+        "params": [
+          "ok",
+        ],
+        "result": 1,
+      }
+    `)
+  })
+
+  test('preserves the base fallback unless the extension supplies one', () => {
+    const extended = Schema.extend(Schema.rpc(), { methods: { ping } })
+    const overridden = Schema.extend(extended, { fallback, methods: {} })
+
+    expect({
+      overridden: Schema.validate(overridden.fallback.params, ['ok']),
+      preserved: Schema.validate(extended.fallback.params, []),
+    }).toMatchInlineSnapshot(`
+      {
+        "overridden": [
+          "ok",
+        ],
+        "preserved": [],
+      }
+    `)
+  })
+})
+
+describe('definition', () => {
+  test('returns known definitions before falling back', () => {
+    const extended = Schema.extend(Schema.rpc(), { methods: { ping } })
+
+    expect({
+      fallback: Schema.definition(extended, 'wallet_connect') === extended.fallback,
+      known: Schema.definition(extended, 'ping') === ping,
+    }).toMatchInlineSnapshot(`
+      {
+        "fallback": true,
+        "known": true,
+      }
+    `)
+  })
+
+  test('returns undefined for unknown closed-schema methods', () => {
+    expect(Schema.definition(schema, 'wallet_connect')).toMatchInlineSnapshot(`undefined`)
   })
 })
 

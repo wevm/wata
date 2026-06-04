@@ -232,7 +232,7 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
         origin: event.meta.origin,
         transport: event.meta.transport,
       })
-      if (event.method === 'ping') return { ok: true }
+      if (event.method === 'ping') return event.respond({ ok: true })
       return undefined
     })
     await host.start()

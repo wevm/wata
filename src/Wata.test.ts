@@ -35,6 +35,7 @@ const schema = Schema.create({
     }),
   },
 })
+const open_schema = Schema.extend(Schema.rpc(), { methods: schema.methods })
 
 const context = z.object({
   account: z.string(),
@@ -43,8 +44,15 @@ const context = z.object({
 
 function pair() {
   const { consumer: cTransport, host: hTransport } = loopback()
-  const consumer = Wata.create({ transports: [cTransport], schema })
-  const host = HostWata.create({ transports: [hTransport], schema })
+  const consumer = Wata.create({ schema, transports: [cTransport] })
+  const host = HostWata.create({ schema, transports: [hTransport] })
+  return { consumer, host }
+}
+
+function pair_open() {
+  const { consumer: cTransport, host: hTransport } = loopback()
+  const consumer = Wata.create({ schema: open_schema, transports: [cTransport] })
+  const host = HostWata.create({ schema: open_schema, transports: [hTransport] })
   return { consumer, host }
 }
 
@@ -129,8 +137,8 @@ describe('create', () => {
 
     host.on('request', (event) => {
       events.push(event.transport)
-      if (event.transport === 'deviceCode') return { via: 'device' }
-      return { via: 'webhook' }
+      if (event.transport === 'deviceCode') return event.respond({ via: 'device' })
+      return event.respond({ via: 'webhook' })
     })
 
     const fromDevice = await consumer.deviceCode.send({ method: 'ping', params: [] })
@@ -459,7 +467,7 @@ describe('send', () => {
     })
     host.on('request', (event) => {
       events.push({ kind: 'request', meta: event.meta })
-      if (event.method === 'ping') return { ok: true }
+      if (event.method === 'ping') return event.respond({ ok: true })
       return undefined
     })
 
@@ -489,14 +497,8 @@ describe('send', () => {
     await consumer.start()
     await host.start()
 
-    host.on('request', () => undefined)
-    host.on('request', ({ request }) => {
-      if (request.method === 'add') {
-        const [a, b] = request.params as [number, number]
-        return a + b
-      }
-      return undefined
-    })
+    host.on('request', () => {})
+    host.on('request', 'add', ({ params }) => params[0] + params[1])
 
     const out = await consumer.send({ method: 'add', params: [2, 3] })
     expect(out.result).toMatchInlineSnapshot(`5`)
@@ -524,6 +526,68 @@ describe('send', () => {
     await expect(
       consumer.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: method not found]`)
+  })
+
+  test('accepts unknown methods through an open schema fallback', async () => {
+    const { consumer, host } = pair_open()
+    await consumer.start()
+    await host.start()
+
+    host.on('request', 'wallet_connect', () => ({ accounts: ['0xabc'] }))
+
+    const out = await consumer.send({
+      method: 'wallet_connect',
+      params: [{ requiredNamespaces: {} }],
+    })
+
+    expect(out).toMatchInlineSnapshot(`
+      {
+        "id": 1,
+        "result": {
+          "accounts": [
+            "0xabc",
+          ],
+        },
+      }
+    `)
+  })
+
+  test('method-scoped request listeners ignore nonmatching methods', async () => {
+    const { consumer, host } = pair()
+    await consumer.start()
+    await host.start()
+
+    host.on('request', 'ping', () => ({ ok: true as const }))
+
+    await expect(
+      consumer.send({ method: 'add', params: [2, 3] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: method not found]`)
+    expect(await consumer.send({ method: 'ping', params: [] })).toMatchInlineSnapshot(`
+      {
+        "id": 2,
+        "result": {
+          "ok": true,
+        },
+      }
+    `)
+  })
+
+  test('broad request listener return values are ignored', async () => {
+    const { consumer, host } = pair()
+    await consumer.start()
+    await host.start()
+
+    host.on('request', (() => ({ ok: false })) as never)
+    host.on('request', 'ping', () => ({ ok: true as const }))
+
+    expect(await consumer.send({ method: 'ping', params: [] })).toMatchInlineSnapshot(`
+      {
+        "id": 1,
+        "result": {
+          "ok": true,
+        },
+      }
+    `)
   })
 
   test('listener that returns undefined leaves the request pending for late settlement', async () => {
@@ -724,10 +788,96 @@ describe('send', () => {
       consumer.send({ method: 'add', params: ['nope', 1] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `
+      [ProtocolError: schema validation failed
+      Details: 0: Invalid input]
+    `,
+    )
+  })
+
+  test('open schema validates known params before falling back', async () => {
+    const { consumer, host } = pair_open()
+    await consumer.start()
+    await host.start()
+
+    await expect(
+      // @ts-expect-error intentionally wrong params
+      consumer.send({ method: 'add', params: ['nope', 1] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `
     	[ProtocolError: schema validation failed
     	Details: 0: Invalid input]
     `,
     )
+  })
+
+  test('host validates known method-scoped listener return results before sending', async () => {
+    const { consumer, host } = pair_open()
+    await consumer.start()
+    await host.start()
+
+    // @ts-expect-error intentionally wrong result
+    host.on('request', 'ping', () => ({ ok: false }))
+
+    await expect(
+      consumer.send({ method: 'ping', params: [] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Rpc.RpcError: internal error]`,
+    )
+  })
+
+  test('event.respond validation failures settle the request with an internal error', async () => {
+    const { consumer, host } = pair()
+    await consumer.start()
+    await host.start()
+
+    let failure: unknown
+    host.on('request', (event) => {
+      if (event.method !== 'ping') return
+      // @ts-expect-error intentionally wrong result
+      return event.respond('not the ping result').catch((cause) => {
+        failure = cause
+      })
+    })
+
+    await expect(
+      consumer.send({ method: 'ping', params: [] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Rpc.RpcError: internal error]`,
+    )
+    expect(failure).toMatchInlineSnapshot(`
+      [ProtocolError: schema validation failed
+      Details: <root>: Invalid input]
+    `)
+  })
+
+  test('wata.respond validates the result against the pending method', async () => {
+    const { consumer, host } = pair()
+    await consumer.start()
+    await host.start()
+
+    let captured: { id: number | string } | undefined
+    host.on('request', (event) => {
+      captured = { id: event.id }
+    })
+
+    const inflight = consumer.send({ method: 'ping', params: [] })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await expect(host.respond(captured!.id, 'not the ping result')).rejects.toThrowErrorMatchingInlineSnapshot(`
+      [ProtocolError: schema validation failed
+      Details: <root>: Invalid input]
+    `)
+    await host.respond(captured!.id, { ok: true })
+
+    expect(await inflight).toMatchInlineSnapshot(`
+      {
+        "id": 1,
+        "result": {
+          "ok": true,
+        },
+      }
+    `)
   })
 })
 
@@ -867,6 +1017,27 @@ describe('on', () => {
     await consumer.notify({ method: 'ping', params: [] })
 
     expect(count).toMatchInlineSnapshot(`1`)
+  })
+
+  test('method-scoped request AbortController unsubscribes the listener', async () => {
+    const { consumer, host } = pair()
+    await consumer.start()
+    await host.start()
+
+    const controller = host.on('request', 'ping', () => ({ ok: true as const }))
+    expect(await consumer.send({ method: 'ping', params: [] })).toMatchInlineSnapshot(`
+      {
+        "id": 1,
+        "result": {
+          "ok": true,
+        },
+      }
+    `)
+    controller.abort()
+
+    await expect(
+      consumer.send({ method: 'ping', params: [] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: method not found]`)
   })
 })
 
