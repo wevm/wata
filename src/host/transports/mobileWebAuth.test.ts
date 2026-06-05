@@ -1,7 +1,7 @@
 import { Base64, Bytes } from 'ox'
 import { describe, expect, test } from 'vp/test'
-import { Discovery, Wata, mobileWebAuth } from 'wata'
-import { Wata as HostWata, mobileWebAuth as hostMobileWebAuth } from 'wata/host'
+import { Discovery, Envelope, Rpc, Wata, mobileWebAuth } from 'wata'
+import { MobileWebAuth, Wata as HostWata, mobileWebAuth as hostMobileWebAuth } from 'wata/host'
 
 const callback = 'com.example.app:/auth'
 const consumerOrigin = 'https://app.example'
@@ -78,7 +78,222 @@ function pair(
   }
 }
 
+async function authorizationFrom(
+  envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>,
+): Promise<MobileWebAuth.Authorization> {
+  let authorization: MobileWebAuth.Authorization | undefined
+  const consumer = mobileWebAuth({
+    callback,
+    host: hostDocument(),
+    id: consumerOrigin,
+    openAuthSession: async (session) => {
+      authorization = MobileWebAuth.parseAuthorization(session.authorizationUrl)
+      return MobileWebAuth.errorUrl({
+        authorization,
+        error: { code: -32600, message: 'done' },
+      })
+    },
+  })
+  consumer.on('message', () => {})
+  await consumer.send(envelope)
+  if (!authorization) throw new Error('Expected authorization URL to be opened.')
+  return authorization
+}
+
+async function callbackEnvelope(options: {
+  envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>
+  id?: Rpc.Id | null | undefined
+  result: unknown
+}): Promise<Envelope.Envelope | undefined> {
+  const { envelope, id, result } = options
+  let message: Envelope.Envelope | undefined
+  const consumer = mobileWebAuth({
+    callback,
+    host: hostDocument(),
+    id: consumerOrigin,
+    openAuthSession: (session) => {
+      const authorization = MobileWebAuth.parseAuthorization(session.authorizationUrl)
+      return MobileWebAuth.successUrl({
+        authorization,
+        id,
+        result,
+      })
+    },
+  })
+  consumer.on('message', (envelope) => {
+    message = envelope
+  })
+  await consumer.send(envelope)
+  return message
+}
+
 describe('mobileWebAuth', () => {
+  test('host helpers parse authorization URLs and extract the first request', async () => {
+    const authorization = await authorizationFrom(
+      Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
+    )
+    const request = MobileWebAuth.firstRequest(authorization.message)
+
+    expect({
+      callback: authorization.callback,
+      id: authorization.id,
+      method: request?.method,
+      params: request?.params,
+      stateLength: Base64.toBytes(authorization.state).length,
+    }).toMatchInlineSnapshot(`
+      {
+        "callback": "com.example.app:/auth",
+        "id": "https://app.example",
+        "method": "ping",
+        "params": [],
+        "stateLength": 32,
+      }
+    `)
+  })
+
+  test('serializes and restores authorization records', async () => {
+    const authorization = await authorizationFrom(
+      Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
+    )
+
+    const restored = MobileWebAuth.parseSerializedAuthorization(
+      MobileWebAuth.serializeAuthorization(authorization),
+    )
+
+    expect({
+      callback: restored.callback,
+      id: restored.id,
+      message: restored.message,
+      publicKeySize: Bytes.from(restored.publicKey).length,
+      stateLength: Base64.toBytes(restored.state).length,
+    }).toMatchInlineSnapshot(`
+      {
+        "callback": "com.example.app:/auth",
+        "id": "https://app.example",
+        "message": {
+          "payload": [
+            {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "ping",
+              "params": [],
+            },
+          ],
+          "type": "rpc-requests",
+        },
+        "publicKeySize": 32,
+        "stateLength": 32,
+      }
+    `)
+  })
+
+  test('rejects malformed serialized authorization records', () => {
+    expect(() => MobileWebAuth.parseSerializedAuthorization('')).toThrowErrorMatchingInlineSnapshot(
+      `[MobileWebAuth.PreVerificationError: authorization must be valid JSON]`,
+    )
+    expect(() =>
+      MobileWebAuth.parseSerializedAuthorization(
+        JSON.stringify({
+          callback,
+          id: consumerOrigin,
+          message: Envelope.rpcResponses([Rpc.success({ id: 1, result: null })]),
+          publicKey: `0x${'00'.repeat(32)}`,
+          state: Base64.fromBytes(Bytes.random(32), { pad: false, url: true }),
+        }),
+      ),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `[MobileWebAuth.PreVerificationError: authorization must be a serialized mobile-web-auth request
+Details: message.payload.0: Invalid input; message.type: Invalid input]`,
+    )
+    expect(() =>
+      MobileWebAuth.parseSerializedAuthorization(
+        JSON.stringify({
+          callback,
+          id: consumerOrigin,
+          message: Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
+          publicKey: '0x1234',
+          state: Base64.fromBytes(Bytes.random(32), { pad: false, url: true }),
+        }),
+      ),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `[MobileWebAuth.PreVerificationError: authorization must be a serialized mobile-web-auth request
+Details: publicKey: Invalid input]`,
+    )
+    expect(() =>
+      MobileWebAuth.parseSerializedAuthorization(
+        JSON.stringify({
+          callback,
+          id: consumerOrigin,
+          message: Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
+          publicKey: `0x${'00'.repeat(32)}`,
+          state: Base64.fromBytes(Bytes.random(8), { pad: false, url: true }),
+        }),
+      ),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `[MobileWebAuth.PreVerificationError: authorization must be a serialized mobile-web-auth request
+Details: state: expected at least 128 bits of base64url entropy]`,
+    )
+  })
+
+  test('host helpers build encrypted success callbacks with default and explicit ids', async () => {
+    const envelope_default = await callbackEnvelope({
+      envelope: Envelope.rpcRequests([Rpc.request({ id: 1, method: 'one', params: [] })]),
+      result: { ok: 'default' },
+    })
+    const envelope_explicit = await callbackEnvelope({
+      envelope: Envelope.rpcRequests([
+        Rpc.request({ id: 1, method: 'one', params: [] }),
+        Rpc.request({ id: 2, method: 'two', params: [] }),
+      ]),
+      id: 2,
+      result: { ok: 'explicit' },
+    })
+
+    expect({ envelope_default, envelope_explicit }).toMatchInlineSnapshot(`
+      {
+        "envelope_default": {
+          "payload": [
+            {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "result": {
+                "ok": "default",
+              },
+            },
+          ],
+          "type": "rpc-responses",
+        },
+        "envelope_explicit": {
+          "payload": [
+            {
+              "id": 2,
+              "jsonrpc": "2.0",
+              "result": {
+                "ok": "explicit",
+              },
+            },
+          ],
+          "type": "rpc-responses",
+        },
+      }
+    `)
+  })
+
+  test('responseUrl rejects non-response envelopes', async () => {
+    const authorization = await authorizationFrom(
+      Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
+    )
+
+    expect(() =>
+      MobileWebAuth.responseUrl({
+        authorization,
+        response: Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `[ProtocolError: mobile-web-auth callback response must be rpc-responses]`,
+    )
+  })
+
   test('end-to-end approval delivers an encrypted callback response', async () => {
     const { authorizationUrl, consumer, host } = pair()
     const wata = Wata.create({

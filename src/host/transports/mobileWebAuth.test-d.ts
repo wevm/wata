@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Transport } from 'wata'
+import { Envelope, Rpc, Transport } from 'wata'
 import { MobileWebAuth, Wata, mobileWebAuth } from 'wata/host'
 
 describe('mobileWebAuth (host)', () => {
@@ -50,5 +50,42 @@ describe('mobileWebAuth (host)', () => {
         },
       },
     })
+  })
+
+  test('host helper types expose authorization parsing and callback URLs', async () => {
+    const authorization = MobileWebAuth.parseAuthorization('https://wallet.example/auth/mobile')
+    expectTypeOf(authorization).toEqualTypeOf<MobileWebAuth.Authorization>()
+    expectTypeOf(MobileWebAuth.firstRequest(authorization.message)).toEqualTypeOf<
+      Rpc.Request | undefined
+    >()
+    expectTypeOf(
+      MobileWebAuth.parseSerializedAuthorization(''),
+    ).toEqualTypeOf<MobileWebAuth.Authorization>()
+    expectTypeOf(MobileWebAuth.serializeAuthorization(authorization)).toEqualTypeOf<string>()
+    expectTypeOf(
+      MobileWebAuth.responseUrl({
+        authorization,
+        response: Envelope.rpcResponses([Rpc.success({ id: 1, result: null })]),
+      }),
+    ).toEqualTypeOf<string>()
+    expectTypeOf(
+      MobileWebAuth.successUrl({
+        authorization,
+        id: 1,
+        result: { ok: true },
+      }),
+    ).toEqualTypeOf<string>()
+    expectTypeOf(
+      MobileWebAuth.errorUrl({
+        authorization,
+        error: { code: -32600, message: 'denied' },
+        id: null,
+      }),
+    ).toEqualTypeOf<string>()
+    expectTypeOf(
+      await MobileWebAuth.verifyAuthorization(authorization, {
+        fetch: async () => Response.json({}),
+      }),
+    ).toEqualTypeOf<MobileWebAuth.AuthorizationRequest>()
   })
 })

@@ -10,6 +10,7 @@
 
 import { Hono } from 'hono'
 import { Base64, Hex } from 'ox'
+import { z } from 'zod/mini'
 
 import * as Crypto from '../../core/Crypto.js'
 import * as Discovery from '../../core/Discovery.js'
@@ -22,12 +23,10 @@ import * as Transport from '../../core/Transport.js'
 import * as MobileWebAuthEnvelope from '../../internal/MobileWebAuthEnvelope.js'
 import * as Uri from '../../internal/Uri.js'
 
-/** Verified authorization request passed to host approval UI hooks. */
-export type AuthorizationRequest = {
-  /** Exact callback URI verified against the consumer's allowlist. */
+/** Parsed mobile-web-auth authorization request. */
+export type Authorization = {
+  /** Callback URI supplied by the consumer. */
   callback: string
-  /** Parsed consumer discovery document. */
-  consumer: Discovery.ConsumerDocument
   /** Consumer origin identifier supplied as `id`. */
   id: string
   /** Queued request envelope. */
@@ -38,10 +37,39 @@ export type AuthorizationRequest = {
   state: string
 }
 
+/** Verified authorization request passed to host approval UI hooks. */
+export type AuthorizationRequest = Authorization & {
+  /** Parsed consumer discovery document. */
+  consumer: Discovery.ConsumerDocument
+}
+
 /** Verified authorization request kept while the browser approval page is open. */
 export type PendingRecord = AuthorizationRequest & {
   /** Lifecycle status. */
   status: 'pending'
+}
+
+/** Zod schemas for mobile-web-auth host helper inputs. */
+export namespace schema {
+  /** 32-byte `0x`-prefixed hex X25519 public key. */
+  export const publicKey = z.templateLiteral(['0x', z.string().check(z.regex(/^[0-9a-fA-F]{64}$/))])
+
+  /** Single-use state with at least 128 bits of entropy. */
+  export const state = z.string().check(
+    z.regex(/^[A-Za-z0-9_-]*={0,2}$/),
+    z.refine((value) => Base64.toBytes(value).length >= 16, {
+      error: 'expected at least 128 bits of base64url entropy',
+    }),
+  )
+
+  /** Serialized mobile-web-auth authorization persisted by host applications. */
+  export const serializedAuthorization = z.object({
+    callback: z.string(),
+    id: z.string(),
+    message: Envelope.schema.rpcRequests,
+    publicKey,
+    state,
+  })
 }
 
 /** Options accepted by {@link mobileWebAuth}. */
@@ -130,6 +158,242 @@ export declare namespace html {
 /** Host-side mobile-web-auth transport. */
 export type MobileWebAuth = Transport.Transport<'host', 'mobileWebAuth'> & Http.Server
 
+/** Builds an encrypted mobile-web-auth callback URL carrying an error response. */
+export function errorUrl(options: errorUrl.Options): errorUrl.ReturnType {
+  const { authorization, error } = options
+  const id = options.id === undefined ? firstRequestId(authorization.message) : options.id
+  return responseUrl({
+    authorization,
+    response: Envelope.rpcResponses([
+      Rpc.error({
+        code: error.code,
+        id,
+        message: error.message,
+        ...(error.data === undefined ? {} : { data: error.data }),
+      }),
+    ]),
+  })
+}
+
+export declare namespace errorUrl {
+  /** Options for {@link errorUrl}. */
+  type Options = {
+    /** Authorization being answered. */
+    authorization: Authorization
+    /** JSON-RPC error payload to return through the callback. */
+    error: {
+      /** JSON-RPC error code. */
+      code: number
+      /** Optional JSON-RPC error data. */
+      data?: unknown | undefined
+      /** JSON-RPC error message. */
+      message: string
+    }
+    /** JSON-RPC request id to answer. Defaults to the first request id in the authorization. */
+    id?: Rpc.Id | null | undefined
+  }
+  /** Return type for {@link errorUrl}. */
+  type ReturnType = string
+}
+
+/** Returns the first JSON-RPC request carried by an envelope. */
+export function firstRequest(envelope: Envelope.Envelope): firstRequest.ReturnType {
+  if (envelope.type !== 'rpc-requests') return undefined
+  for (const message of envelope.payload) if ('id' in message) return message
+  return undefined
+}
+
+export declare namespace firstRequest {
+  /** Return type for {@link firstRequest}. */
+  type ReturnType = Rpc.Request | undefined
+}
+
+/** Parses a mobile-web-auth authorization URL or browser request. */
+export function parseAuthorization(input: parseAuthorization.Input): parseAuthorization.ReturnType {
+  const url = urlFromInput(input)
+  if (requiredParam(url, 'version') !== '1')
+    throw new PreVerificationError('unsupported mobile-web-auth version', { status: 400 })
+  const callback = assertCallback(requiredParam(url, 'callback'))
+  const id = assertConsumerId(requiredParam(url, 'id'))
+  const message = parseMessage(requiredParam(url, 'message'))
+  if (message.type !== 'rpc-requests')
+    throw new PreVerificationError('message must be an rpc-requests envelope', { status: 400 })
+  const publicKey = parsePublicKey(requiredParam(url, 'pubkey'))
+  const stateValue = requiredParam(url, 'state')
+  if (!isBase64Url(stateValue) || Base64.toBytes(stateValue).length < 16)
+    throw new PreVerificationError('state must contain at least 128 bits', { status: 400 })
+  return {
+    callback,
+    id,
+    message,
+    publicKey,
+    state: stateValue,
+  }
+}
+
+export declare namespace parseAuthorization {
+  /** Input accepted by {@link parseAuthorization}. */
+  type Input = Request | string | URL
+  /** Return type for {@link parseAuthorization}. */
+  type ReturnType = Authorization
+}
+
+/** Restores a serialized mobile-web-auth authorization record. */
+export function parseSerializedAuthorization(
+  value: string,
+): parseSerializedAuthorization.ReturnType {
+  const json = (() => {
+    try {
+      return JSON.parse(value)
+    } catch (cause) {
+      throw new PreVerificationError('authorization must be valid JSON', {
+        cause: cause as Error,
+        status: 400,
+      })
+    }
+  })()
+  const result = schema.serializedAuthorization.safeParse(json)
+  if (!result.success)
+    throw new PreVerificationError('authorization must be a serialized mobile-web-auth request', {
+      details: result.error.issues
+        .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
+        .join('; '),
+      status: 400,
+    })
+  const parsed = result.data
+  const authorization = {
+    callback: assertCallback(parsed.callback),
+    id: assertConsumerId(parsed.id),
+    message: parsed.message,
+    publicKey: parsed.publicKey,
+    state: parsed.state,
+  }
+  return authorization
+}
+
+export declare namespace parseSerializedAuthorization {
+  /** Return type for {@link parseSerializedAuthorization}. */
+  type ReturnType = Authorization
+}
+
+/** Builds an encrypted mobile-web-auth callback URL carrying a response envelope. */
+export function responseUrl(options: responseUrl.Options): responseUrl.ReturnType {
+  const { authorization, response } = options
+  if (response.type !== 'rpc-responses')
+    throw new Errors.ProtocolError('mobile-web-auth callback response must be rpc-responses')
+  const keypair = Crypto.randomKeypair()
+  const message = MobileWebAuthEnvelope.sealResponse({
+    publicKey: authorization.publicKey,
+    response,
+    self: keypair.x25519,
+  })
+  const url = new URL(authorization.callback)
+  url.searchParams.set('message', MobileWebAuthEnvelope.encodeJson(message))
+  url.searchParams.set('pubkey', Crypto.encodePublicKey(keypair.x25519.publicKey))
+  url.searchParams.set('state', authorization.state)
+  url.searchParams.set('version', '1')
+  return url.toString()
+}
+
+export declare namespace responseUrl {
+  /** Options for {@link responseUrl}. */
+  type Options = {
+    /** Authorization being answered. */
+    authorization: Authorization
+    /** JSON-RPC response envelope to return through the callback. */
+    response: Envelope.Envelope
+  }
+  /** Return type for {@link responseUrl}. */
+  type ReturnType = string
+}
+
+/** Serializes a mobile-web-auth authorization for app-managed persistence. */
+export function serializeAuthorization(
+  authorization: Authorization,
+): serializeAuthorization.ReturnType {
+  return JSON.stringify({
+    callback: authorization.callback,
+    id: authorization.id,
+    message: authorization.message,
+    publicKey: authorization.publicKey,
+    state: authorization.state,
+  })
+}
+
+export declare namespace serializeAuthorization {
+  /** Return type for {@link serializeAuthorization}. */
+  type ReturnType = string
+}
+
+/** Builds an encrypted mobile-web-auth callback URL carrying a success response. */
+export function successUrl(options: successUrl.Options): successUrl.ReturnType {
+  const { authorization, result } = options
+  const id = options.id === undefined ? firstRequestId(authorization.message) : options.id
+  return responseUrl({
+    authorization,
+    response: Envelope.rpcResponses([
+      Rpc.success({
+        id,
+        result,
+      }),
+    ]),
+  })
+}
+
+export declare namespace successUrl {
+  /** Options for {@link successUrl}. */
+  type Options = {
+    /** Authorization being answered. */
+    authorization: Authorization
+    /** JSON-RPC request id to answer. Defaults to the first request id in the authorization. */
+    id?: Rpc.Id | null | undefined
+    /** JSON-RPC result payload to return through the callback. */
+    result: unknown
+  }
+  /** Return type for {@link successUrl}. */
+  type ReturnType = string
+}
+
+/** Verifies that a parsed authorization's callback is registered by its consumer. */
+export async function verifyAuthorization(
+  authorization: Authorization,
+  options: verifyAuthorization.Options = {},
+): verifyAuthorization.ReturnType {
+  const { fetch: fetchImpl = globalThis.fetch.bind(globalThis) } = options
+  let consumer: Discovery.ConsumerDocument
+  try {
+    consumer = await Discovery.fetchConsumer(authorization.id, { fetch: fetchImpl })
+  } catch (cause) {
+    throw new PreVerificationError('consumer discovery failed', {
+      cause: cause as Error,
+      status: 403,
+    })
+  }
+  if (!consumer.callback_urls?.includes(authorization.callback))
+    throw new PreVerificationError('callback is not registered by consumer', { status: 403 })
+  return {
+    callback: authorization.callback,
+    consumer,
+    id: authorization.id,
+    message: authorization.message,
+    publicKey: authorization.publicKey,
+    state: authorization.state,
+  }
+}
+
+export declare namespace verifyAuthorization {
+  /** Options for {@link verifyAuthorization}. */
+  type Options = {
+    /**
+     * Override the `fetch` implementation used for consumer discovery.
+     * Defaults to `globalThis.fetch`.
+     */
+    fetch?: typeof globalThis.fetch | undefined
+  }
+  /** Return type for {@link verifyAuthorization}. */
+  type ReturnType = Promise<AuthorizationRequest>
+}
+
 /**
  * Create a host-side `mobile-web-auth` transport.
  */
@@ -161,7 +425,7 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     let authorization: PendingRecord
     try {
       authorization = {
-        ...(await parseAuthorization(c.req.raw)),
+        ...(await parseAuthorizationRequest(c.req.raw)),
         status: 'pending',
       }
     } catch (cause) {
@@ -215,41 +479,8 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     return authorization
   }
 
-  async function parseAuthorization(request: Request): Promise<AuthorizationRequest> {
-    const url = new URL(request.url)
-    if (Uri.requiredSearchParam(url, 'version') !== '1')
-      throw new PreVerificationError('unsupported mobile-web-auth version', { status: 400 })
-    const id = assertConsumerId(requiredParam(url, 'id'))
-    const callback = assertCallback(requiredParam(url, 'callback'))
-    const stateValue = requiredParam(url, 'state')
-    if (!isBase64Url(stateValue) || Base64.toBytes(stateValue).length < 16)
-      throw new PreVerificationError('state must contain at least 128 bits', { status: 400 })
-    const publicKey = parsePublicKey(requiredParam(url, 'pubkey'))
-    const consumer = await fetchConsumer(id)
-    if (!consumer.callback_urls?.includes(callback))
-      throw new PreVerificationError('callback is not registered by consumer', { status: 403 })
-    const message = parseMessage(requiredParam(url, 'message'))
-    if (message.type !== 'rpc-requests')
-      throw new PreVerificationError('message must be an rpc-requests envelope', { status: 400 })
-    return {
-      callback,
-      consumer,
-      id,
-      message,
-      publicKey,
-      state: stateValue,
-    }
-  }
-
-  async function fetchConsumer(id: string): Promise<Discovery.ConsumerDocument> {
-    try {
-      return await Discovery.fetchConsumer(id, { fetch: fetchImpl })
-    } catch (cause) {
-      throw new PreVerificationError('consumer discovery failed', {
-        cause: cause as Error,
-        status: 403,
-      })
-    }
+  async function parseAuthorizationRequest(request: Request): Promise<AuthorizationRequest> {
+    return await verifyAuthorization(parseAuthorization(request), { fetch: fetchImpl })
   }
 
   async function approve(authorization: PendingRecord): Promise<Response> {
@@ -275,20 +506,10 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     response: Envelope.Envelope,
   ): Promise<Response> {
     pending.delete(authorization.state)
-    const keypair = Crypto.randomKeypair()
-    const message = MobileWebAuthEnvelope.sealResponse({
-      publicKey: authorization.publicKey,
-      response,
-      self: keypair.x25519,
-    })
-    const url = new URL(authorization.callback)
-    url.searchParams.set('message', MobileWebAuthEnvelope.encodeJson(message))
-    url.searchParams.set('pubkey', Crypto.encodePublicKey(keypair.x25519.publicKey))
-    url.searchParams.set('state', authorization.state)
-    url.searchParams.set('version', '1')
+    const url = responseUrl({ authorization, response })
     state.closed = true
     emitter.emit('close', undefined)
-    return new Response(null, { headers: { location: url.toString() }, status: 302 })
+    return new Response(null, { headers: { location: url }, status: 302 })
   }
 
   async function renderError(request: Request, cause: Error): Promise<Response> {
@@ -423,10 +644,25 @@ function requiredParam(url: URL, key: string): string {
   return value
 }
 
-class PreVerificationError<
+function urlFromInput(input: parseAuthorization.Input): URL {
+  try {
+    if (input instanceof URL) return input
+    if (input instanceof Request) return new URL(input.url)
+    return new URL(input)
+  } catch (cause) {
+    throw new PreVerificationError('authorization URL is not a valid URL', {
+      cause: cause as Error,
+      status: 400,
+    })
+  }
+}
+
+/** Thrown when a mobile-web-auth browser request fails before callback verification. */
+export class PreVerificationError<
   cause extends Error | undefined = Error | undefined,
 > extends Errors.BaseError<cause> {
   override name = 'MobileWebAuth.PreVerificationError'
+  /** HTTP status selected for browser error rendering. */
   status: number
 
   constructor(
@@ -438,7 +674,8 @@ class PreVerificationError<
   }
 }
 
-class UnknownStateError<
+/** Thrown when approval actions reference a missing mobile-web-auth state. */
+export class UnknownStateError<
   cause extends Error | undefined = Error | undefined,
 > extends Errors.BaseError<cause> {
   override name = 'MobileWebAuth.UnknownStateError'
