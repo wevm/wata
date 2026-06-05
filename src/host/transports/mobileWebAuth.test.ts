@@ -100,6 +100,29 @@ async function authorizationFrom(
   return authorization
 }
 
+async function authorizationSearchFrom(
+  envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>,
+): Promise<URLSearchParams> {
+  let search: URLSearchParams | undefined
+  const consumer = mobileWebAuth({
+    callback,
+    host: hostDocument(),
+    id: consumerOrigin,
+    openAuthSession: async (session) => {
+      const authorization = MobileWebAuth.parseAuthorization(session.authorizationUrl)
+      search = new URL(session.authorizationUrl).searchParams
+      return MobileWebAuth.errorUrl({
+        authorization,
+        error: { code: -32600, message: 'done' },
+      })
+    },
+  })
+  consumer.on('message', () => {})
+  await consumer.send(envelope)
+  if (!search) throw new Error('Expected authorization URL to be opened.')
+  return search
+}
+
 async function callbackEnvelope(options: {
   envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>
   id?: Rpc.Id | null | undefined
@@ -132,7 +155,7 @@ describe('mobileWebAuth', () => {
     const authorization = await authorizationFrom(
       Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
     )
-    const request = MobileWebAuth.firstRequest(authorization.message)
+    const request = MobileWebAuth.request(authorization)
 
     expect({
       callback: authorization.callback,
@@ -149,6 +172,49 @@ describe('mobileWebAuth', () => {
         "stateLength": 32,
       }
     `)
+  })
+
+  test('parses authorization search params from URLSearchParams and router records', async () => {
+    const search = await authorizationSearchFrom(
+      Envelope.rpcRequests([Rpc.request({ id: 1, method: 'ping', params: [] })]),
+    )
+    const fromParams = MobileWebAuth.parseAuthorizationSearch(search)
+    const fromRecord = MobileWebAuth.parseAuthorizationSearch(Object.fromEntries(search))
+
+    expect({
+      paramsMethod: MobileWebAuth.request(fromParams).method,
+      recordMethod: MobileWebAuth.request(fromRecord).method,
+    }).toMatchInlineSnapshot(`
+      {
+        "paramsMethod": "ping",
+        "recordMethod": "ping",
+      }
+    `)
+  })
+
+  test('parseAuthorizationSearch rejects non-string record values', () => {
+    expect(() =>
+      MobileWebAuth.parseAuthorizationSearch({
+        callback,
+        id: consumerOrigin,
+        message: 1,
+        pubkey: '',
+        state: '',
+        version: '1',
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `[MobileWebAuth.PreVerificationError: search parameter \`message\` must be a string]`,
+    )
+  })
+
+  test('request throws when an authorization only carries notifications', async () => {
+    const authorization = await authorizationFrom(
+      Envelope.rpcRequests([Rpc.notification({ method: 'ping', params: [] })]),
+    )
+
+    expect(() => MobileWebAuth.request(authorization)).toThrowErrorMatchingInlineSnapshot(
+      `[MobileWebAuth.RequestNotFoundError: mobile-web-auth authorization does not contain a JSON-RPC request]`,
+    )
   })
 
   test('serializes and restores authorization records', async () => {
