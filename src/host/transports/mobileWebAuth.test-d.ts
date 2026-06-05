@@ -55,9 +55,13 @@ describe('mobileWebAuth (host)', () => {
   test('host helper types expose authorization parsing and callback URLs', async () => {
     const authorization = MobileWebAuth.parseAuthorization('https://wallet.example/auth/mobile')
     expectTypeOf(authorization).toEqualTypeOf<MobileWebAuth.Authorization>()
-    expectTypeOf(MobileWebAuth.firstRequest(authorization.message)).toEqualTypeOf<
-      Rpc.Request | undefined
-    >()
+    expectTypeOf(
+      MobileWebAuth.parseAuthorizationSearch(new URLSearchParams()),
+    ).toEqualTypeOf<MobileWebAuth.Authorization>()
+    expectTypeOf(
+      MobileWebAuth.parseAuthorizationSearch({ state: 'state' }),
+    ).toEqualTypeOf<MobileWebAuth.Authorization>()
+    expectTypeOf(MobileWebAuth.request(authorization)).toEqualTypeOf<Rpc.Request>()
     expectTypeOf(
       MobileWebAuth.parseSerializedAuthorization(''),
     ).toEqualTypeOf<MobileWebAuth.Authorization>()

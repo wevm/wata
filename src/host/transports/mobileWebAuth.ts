@@ -196,18 +196,6 @@ export declare namespace errorUrl {
   type ReturnType = string
 }
 
-/** Returns the first JSON-RPC request carried by an envelope. */
-export function firstRequest(envelope: Envelope.Envelope): firstRequest.ReturnType {
-  if (envelope.type !== 'rpc-requests') return undefined
-  for (const message of envelope.payload) if ('id' in message) return message
-  return undefined
-}
-
-export declare namespace firstRequest {
-  /** Return type for {@link firstRequest}. */
-  type ReturnType = Rpc.Request | undefined
-}
-
 /** Parses a mobile-web-auth authorization URL or browser request. */
 export function parseAuthorization(input: parseAuthorization.Input): parseAuthorization.ReturnType {
   const url = urlFromInput(input)
@@ -235,6 +223,22 @@ export declare namespace parseAuthorization {
   /** Input accepted by {@link parseAuthorization}. */
   type Input = Request | string | URL
   /** Return type for {@link parseAuthorization}. */
+  type ReturnType = Authorization
+}
+
+/** Parses mobile-web-auth authorization search parameters with string values. */
+export function parseAuthorizationSearch(
+  search: parseAuthorizationSearch.Input,
+): parseAuthorizationSearch.ReturnType {
+  const url = new URL('https://mobile-web-auth.local/')
+  for (const [key, value] of searchEntries(search)) url.searchParams.set(key, value)
+  return parseAuthorization(url)
+}
+
+export declare namespace parseAuthorizationSearch {
+  /** Input accepted by {@link parseAuthorizationSearch}. */
+  type Input = Record<string, unknown> | URLSearchParams
+  /** Return type for {@link parseAuthorizationSearch}. */
   type ReturnType = Authorization
 }
 
@@ -305,6 +309,18 @@ export declare namespace responseUrl {
   }
   /** Return type for {@link responseUrl}. */
   type ReturnType = string
+}
+
+/** Returns the first JSON-RPC request carried by an authorization. */
+export function request(authorization: Authorization): request.ReturnType {
+  if (authorization.message.type !== 'rpc-requests') throw new RequestNotFoundError()
+  for (const message of authorization.message.payload) if ('id' in message) return message
+  throw new RequestNotFoundError()
+}
+
+export declare namespace request {
+  /** Return type for {@link request}. */
+  type ReturnType = Rpc.Request
 }
 
 /** Serializes a mobile-web-auth authorization for app-managed persistence. */
@@ -644,6 +660,17 @@ function requiredParam(url: URL, key: string): string {
   return value
 }
 
+function searchEntries(search: parseAuthorizationSearch.Input): [string, string][] {
+  if (search instanceof URLSearchParams) return [...search.entries()]
+  return Object.entries(search).map(([key, value]) => {
+    if (typeof value !== 'string')
+      throw new PreVerificationError(`search parameter \`${key}\` must be a string`, {
+        status: 400,
+      })
+    return [key, value]
+  })
+}
+
 function urlFromInput(input: parseAuthorization.Input): URL {
   try {
     if (input instanceof URL) return input
@@ -671,6 +698,17 @@ export class PreVerificationError<
   ) {
     super(message, options)
     this.status = options.status
+  }
+}
+
+/** Thrown when an authorization does not carry a JSON-RPC request. */
+export class RequestNotFoundError<
+  cause extends Error | undefined = Error | undefined,
+> extends Errors.BaseError<cause> {
+  override name = 'MobileWebAuth.RequestNotFoundError'
+
+  constructor(options: Errors.BaseError.Options<cause> = {} as never) {
+    super('mobile-web-auth authorization does not contain a JSON-RPC request', options)
   }
 }
 
