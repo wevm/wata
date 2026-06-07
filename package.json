@@ -37,7 +37,6 @@
     "@noble/hashes": "catalog:",
     "hono": "catalog:",
     "ox": "catalog:",
-    "rettime": "catalog:",
     "zod": "catalog:"
   },
   "sideEffects": false,

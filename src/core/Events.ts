@@ -1,24 +1,17 @@
 /**
- * Thin namespace wrapper around the [`rettime`](https://github.com/kettanaito/rettime)
- * library so the rest of the codebase imports event primitives via
- * `import * as Events from '../core/Events.js'` and never reaches into
- * `rettime` directly.
+ * Small event primitive used by the rest of the codebase via
+ * `import * as Events from '../core/Events.js'`.
  *
- * Every public/internal event emitter in `wata` is a rettime
- * `Emitter` under the hood, but exposed through a payload-style
- * surface: `.on(eventName, listener)` (listener receives the payload
- * directly) and `.emit(eventName, payload)` (no `TypedEvent`
- * boilerplate at the call site). Event values that are non-empty
- * tuples are spread into listener arguments, so maps can model
- * multi-argument events without bespoke adapters.
+ * Every public/internal event emitter in `wata` is exposed through a
+ * payload-style surface: `.on(eventName, listener)` (listener receives
+ * the payload directly) and `.emit(eventName, payload)`. Event values
+ * that are non-empty tuples are spread into listener arguments, so maps
+ * can model multi-argument events without bespoke adapters.
  *
  * Event maps are written as `{ eventName: payload }` for normal
  * single-payload events, or `{ eventName: [a, b] }` for multi-argument
- * events. `create` lifts them into the rettime-shaped `TypedEvent`
- * map internally.
+ * events.
  */
-
-import { Emitter as RettimeEmitter, TypedEvent as RettimeTypedEvent } from 'rettime'
 
 /**
  * Arguments delivered for an event map payload. Non-empty tuples are
@@ -29,7 +22,7 @@ export type EventArgs<payload> = [payload] extends [[unknown, ...unknown[]]] ? p
 
 /**
  * Listener for an {@link Emitter} event. Receives the typed payload
- * directly (the rettime `TypedEvent` is unwrapped at the boundary).
+ * directly.
  */
 export type Listener<payload> = (...payload: EventArgs<payload>) => unknown
 
@@ -72,9 +65,8 @@ export type Emitter<map extends Record<string, unknown>> = {
 }
 
 /**
- * Create a payload-style {@link Emitter} backed by a rettime
- * `Emitter`. Listener errors are caught and swallowed so a buggy
- * subscriber can't disrupt the dispatch path.
+ * Create a payload-style {@link Emitter}. Listener errors are caught
+ * and swallowed so a buggy subscriber can't disrupt the dispatch path.
  *
  * @example
  * ```ts
@@ -91,35 +83,63 @@ export type Emitter<map extends Record<string, unknown>> = {
  * ```
  */
 export function create<map extends Record<string, unknown>>(): Emitter<map> {
-  const inner = new RettimeEmitter<{
-    [K in keyof map & string]: RettimeTypedEvent<EventArgs<map[K]>>
-  }>()
-  const wrappers = new WeakMap<object, (event: RettimeTypedEvent<unknown[]>) => unknown>()
+  type AnyListener = (...payload: unknown[]) => unknown
+  const listeners = new Map<string, Set<AnyListener>>()
+  const cleanups = new Map<string, WeakMap<object, () => void>>()
+
+  function cleanupMap(type: string): WeakMap<object, () => void> {
+    const existing = cleanups.get(type)
+    if (existing) return existing
+    const next = new WeakMap<object, () => void>()
+    cleanups.set(type, next)
+    return next
+  }
+
+  function remove(type: string, listener: AnyListener): void {
+    const set = listeners.get(type)
+    if (!set) return
+    set.delete(listener)
+    if (set.size === 0) listeners.delete(type)
+    const map = cleanupMap(type)
+    const cleanup = map.get(listener)
+    if (!cleanup) return
+    cleanup()
+    map.delete(listener)
+  }
+
   return {
     emit(type, ...payload) {
-      return inner.emit(new RettimeTypedEvent<unknown[]>(type, { data: payload }) as never)
-    },
-    listenerCount(type) {
-      return inner.listenerCount(type as never)
-    },
-    off(type, listener) {
-      const wrapped = wrappers.get(listener)
-      if (!wrapped) return
-      inner.removeListener(type as never, wrapped as never)
-      wrappers.delete(listener)
-    },
-    on(type, listener, options) {
-      const wrapped = (event: RettimeTypedEvent<unknown[]>) => {
+      const set = listeners.get(type)
+      if (!set?.size) return false
+      for (const listener of Array.from(set))
         try {
-          return (listener as (...payload: unknown[]) => unknown)(...event.data)
+          listener(...payload)
         } catch {
           // Swallow listener errors so a buggy subscriber can't break the
           // dispatch path. Match the legacy `createBus` semantics.
-          return undefined
         }
+      return true
+    },
+    listenerCount(type) {
+      if (type) return listeners.get(type)?.size ?? 0
+      let count = 0
+      for (const set of listeners.values()) count += set.size
+      return count
+    },
+    off(type, listener) {
+      remove(type, listener as AnyListener)
+    },
+    on(type, listener, options) {
+      if (options?.signal?.aborted) return
+      const set = listeners.get(type) ?? new Set<AnyListener>()
+      listeners.set(type, set)
+      set.add(listener as AnyListener)
+      if (!options?.signal) return
+      const abort = () => {
+        remove(type, listener as AnyListener)
       }
-      wrappers.set(listener, wrapped)
-      inner.on(type as never, wrapped as never, options as never)
+      options.signal.addEventListener('abort', abort, { once: true })
+      cleanupMap(type).set(listener, () => options.signal?.removeEventListener('abort', abort))
     },
   }
 }
