@@ -663,6 +663,8 @@ function requiredParam(url: URL, key: string): string {
 function searchEntries(search: parseAuthorizationSearch.Input): [string, string][] {
   if (search instanceof URLSearchParams) return [...search.entries()]
   return Object.entries(search).map(([key, value]) => {
+    if (key === 'version' && typeof value === 'number' && Number.isFinite(value))
+      return [key, String(value)]
     if (typeof value !== 'string')
       throw new PreVerificationError(`search parameter \`${key}\` must be a string`, {
         status: 400,
