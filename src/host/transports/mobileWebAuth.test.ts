@@ -180,12 +180,18 @@ describe('mobileWebAuth', () => {
     )
     const fromParams = MobileWebAuth.parseAuthorizationSearch(search)
     const fromRecord = MobileWebAuth.parseAuthorizationSearch(Object.fromEntries(search))
+    const fromNumericVersion = MobileWebAuth.parseAuthorizationSearch({
+      ...Object.fromEntries(search),
+      version: 1,
+    })
 
     expect({
+      numericVersionMethod: MobileWebAuth.request(fromNumericVersion).method,
       paramsMethod: MobileWebAuth.request(fromParams).method,
       recordMethod: MobileWebAuth.request(fromRecord).method,
     }).toMatchInlineSnapshot(`
       {
+        "numericVersionMethod": "ping",
         "paramsMethod": "ping",
         "recordMethod": "ping",
       }

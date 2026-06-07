@@ -59,7 +59,7 @@ describe('mobileWebAuth (host)', () => {
       MobileWebAuth.parseAuthorizationSearch(new URLSearchParams()),
     ).toEqualTypeOf<MobileWebAuth.Authorization>()
     expectTypeOf(
-      MobileWebAuth.parseAuthorizationSearch({ state: 'state' }),
+      MobileWebAuth.parseAuthorizationSearch({ state: 'state', version: 1 }),
     ).toEqualTypeOf<MobileWebAuth.Authorization>()
     expectTypeOf(MobileWebAuth.request(authorization)).toEqualTypeOf<Rpc.Request>()
     expectTypeOf(
