@@ -1,5 +1,0 @@
----
-"wata": patch
----
-
-Initial release.
