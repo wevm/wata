@@ -1,11 +1,14 @@
 import { Kv, Wata, deviceCode, postMessage, webhookCallback } from 'wata/host'
+import * as Identity from 'wata/identity'
 
 export const baseUrl = 'http://localhost:5173'
 
 export const host = Wata.create({
   baseUrl,
+  identity: Identity.fromPrivateKey(
+    '0x2222222222222222222222222222222222222222222222222222222222222222',
+  ),
   meta: { name: 'Kitchen Sink Host' },
-  privateKey: '0x2222222222222222222222222222222222222222222222222222222222222222',
   transports: [
     deviceCode({
       html: {

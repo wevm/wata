@@ -11,7 +11,7 @@
  * 2. Resolves once the host accepts (`200 OK`, with
  *    `auth_req_id` / `verification_uri`) and returns registration metadata
  *    so the caller can fan the user out to the verification URI.
- * 3. The transport's `.fetch` / `.listener` handle the incoming
+ * 3. The transport's `.fetch` handles the incoming
  *    `POST <baseUrl><path>` from the host: verify RFC 9421 signature
  *    against the host's pinned `identity_pubkey`, verify the
  *    `Content-Digest`, enforce per-`auth_req_id` nonce replay
@@ -31,7 +31,7 @@
  * const wata = Wata.create({
  *   baseUrl: 'https://acme.dev',
  *   meta,
- *   privateKey,
+ *   identity,
  *   transports: [
  *     webhookCallback({
  *       host: 'https://wallet.example',
@@ -117,7 +117,7 @@ export type Options = {
 
 /**
  * Webhook-callback transport extension: bare {@link Transport.Transport}
- * plus the `.fetch` / `.listener` pair the consumer needs to serve
+ * plus the `.fetch` handler the consumer needs to serve
  * incoming webhook deliveries, plus an explicit {@link cancel} hook.
  */
 export type WebhookCallback = Transport.Transport<'consumer', 'webhookCallback', Registration> &
@@ -175,7 +175,7 @@ export function webhookCallback(options: Options): WebhookCallback {
   function getIdentity(): Transport.Identity {
     if (identity_bound) return identity_bound
     throw new Transport.TransportError(
-      'webhook-callback identity could not be derived before `Wata.create({ privateKey })` bound the transport',
+      'webhook-callback identity could not be derived before `Wata.create({ identity })` bound the transport',
     )
   }
 
@@ -277,7 +277,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       'content-digest',
       'urpc-public-key',
     ]
-    const signedHeaders = MessageSig.sign({
+    const signedHeaders = await identity.sign({
       components,
       message: {
         headers: {
@@ -289,7 +289,6 @@ export function webhookCallback(options: Options): WebhookCallback {
         url: registerUrl,
       },
       parameters: { alg: 'ed25519', created, keyid: getKeyid(), nonce },
-      privateKey: identity.privateKey,
     })
 
     let response: Response
@@ -503,7 +502,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     return c.json({ ok: true }, { status: 200 })
   })
 
-  const { fetch, listener } = Http.fromHono(app)
+  const { fetch } = Http.fromHono(app)
 
   async function cancel(): Promise<void> {
     if (!state.activeAuthReqId) return
@@ -515,11 +514,10 @@ export function webhookCallback(options: Options): WebhookCallback {
     const created = Math.floor(Date.now() / 1000)
     const identity = getIdentity()
     const components = ['@method', '@target-uri', '@authority', 'urpc-public-key']
-    const signedHeaders = MessageSig.sign({
+    const signedHeaders = await identity.sign({
       components,
       message: { headers: { 'urpc-public-key': identity.publicKey }, method: 'DELETE', url },
       parameters: { alg: 'ed25519', created, keyid: getKeyid(), nonce },
-      privateKey: identity.privateKey,
     })
     let response: Response
     try {
@@ -569,7 +567,6 @@ export function webhookCallback(options: Options): WebhookCallback {
     },
     exchange: 'single_exchange',
     fetch,
-    listener,
     name: 'webhookCallback',
     on: emitter.on,
     get publicKey() {

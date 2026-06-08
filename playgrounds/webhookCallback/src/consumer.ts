@@ -6,7 +6,7 @@
  * consumer also boots a small Hono server on a separate port so the
  * host can deliver the signed webhook back to `/cb`. Discovery is
  * auto-published off the same `wata.fetch`: `Wata.create({ baseUrl,
- * meta, privateKey })` derives `identity_pubkey` and lifts the
+ * identity, meta })` publishes `identity_pubkey` and lifts the
  * transport's `callbackUrls`
  * into `/.well-known/urpc/consumer.json` automatically.
  *
@@ -24,7 +24,7 @@ import * as Clack from '@clack/prompts'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { Ed25519 } from 'ox'
-import { Kv, Wata, webhookCallback } from 'wata'
+import { Identity, Kv, Wata, webhookCallback } from 'wata'
 
 const port = Number(process.env.PORT ?? 4646)
 const baseUrl = process.env.BASE_URL ?? `http://localhost:${port}`
@@ -35,6 +35,7 @@ const webhookPath = '/cb'
 // otherwise generate a fresh one and log it so the user can pin it
 // across runs (real consumers persist this in a secret store).
 const privateKey = process.env.PRIVATE_KEY ?? Ed25519.createKeyPair().privateKey
+const identity = Identity.fromPrivateKey(privateKey)
 
 Clack.intro('uRPC webhook-callback consumer')
 if (!process.env.PRIVATE_KEY)
@@ -45,12 +46,12 @@ Clack.log.info(`webhook listener: ${baseUrl}${webhookPath}`)
 
 const wata = Wata.create({
   baseUrl,
+  identity,
   meta: {
     description: 'uRPC webhook-callback playground consumer',
     icon: 'https://api.dicebear.com/9.x/identicon/svg?seed=acme-cli',
     name: 'Acme CLI',
   },
-  privateKey,
   transports: [
     webhookCallback({
       host: hostUrl,
@@ -62,7 +63,7 @@ const wata = Wata.create({
 
 // Boot the listener. `wata.fetch` serves both
 // `/.well-known/urpc/consumer.json` (auto-built from `meta` +
-// `privateKey` + `transport.callbackUrls`) and the
+// `identity` + `transport.callbackUrls`) and the
 // transport's `/cb` webhook handler.
 const app = new Hono()
   .all('/.well-known/*', (c) => wata.fetch(c.req.raw))

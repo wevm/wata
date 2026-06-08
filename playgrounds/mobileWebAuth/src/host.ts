@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { Ed25519 } from 'ox'
 import { Wata, mobileWebAuth } from 'wata/host'
+import * as Identity from 'wata/identity'
 
 const port = Number(process.env.PORT ?? 4780)
 const baseUrl = (process.env.BASE_URL ?? `http://localhost:${port}`).replace(/\/+$/, '')
@@ -11,12 +12,12 @@ const privateKey = process.env.PRIVATE_KEY ?? Ed25519.createKeyPair().privateKey
 
 const wata = Wata.create({
   baseUrl,
+  identity: Identity.fromPrivateKey(privateKey),
   meta: {
     description: 'mobileWebAuth playground host',
     name: 'Example Wallet',
     websiteUrl: baseUrl,
   },
-  privateKey,
   transports: [
     mobileWebAuth({
       fetch: async (input): Promise<Response> => {

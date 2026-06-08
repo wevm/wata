@@ -24,11 +24,10 @@
  * transport boundary stays stable across schema and protocol revisions.
  */
 
-import type { Hex } from 'ox'
-
 import * as Envelope from './Envelope.js'
 import * as Errors from './Errors.js'
 import * as Events from './Events.js'
+import type * as MessageSig from './MessageSig.js'
 
 /** Side of the protocol this transport speaks for. */
 export type Role = 'consumer' | 'host'
@@ -70,16 +69,22 @@ export type MessageArgs<meta extends MessageMeta = MessageMeta> = keyof meta ext
 export type NoMessageMeta = {}
 
 /**
- * Long-term Ed25519 identity material owned by the wrapping `Wata`
- * application and lazy-bound into transports that need to sign or
- * publish authenticated discovery fields.
+ * Signer-backed identity owned by the wrapping `Wata` application and
+ * lazy-bound into transports that need to sign or publish authenticated
+ * discovery fields.
  */
 export type Identity = {
-  /** Ed25519 private seed (`0x`-prefixed 32-byte hex). */
-  privateKey: Hex.Hex
   /** Ed25519 public key encoded as unpadded base64url. */
   publicKey: string
+  /** Sign an HTTP message under the identity key. */
+  sign: (options: IdentitySignOptions) => IdentitySignReturn | Promise<IdentitySignReturn>
 }
+
+/** Options passed to an identity signer. */
+export type IdentitySignOptions = Omit<MessageSig.sign.Options, 'privateKey'>
+
+/** RFC 9421 headers returned by an identity signer. */
+export type IdentitySignReturn = MessageSig.Headers
 
 /**
  * Parent `Wata.create` context lazy-bound into transports that need
@@ -88,7 +93,7 @@ export type Identity = {
 export type Binding = {
   /** Public origin shared by the wrapping application. */
   baseUrl?: string | undefined
-  /** Long-term Ed25519 identity material derived by `Wata.create`. */
+  /** Signer-backed identity supplied to `Wata.create`. */
   identity?: Identity | undefined
   /** Human-facing app metadata. */
   meta?: unknown | undefined
@@ -145,7 +150,7 @@ export type Transport<
 > = {
   /**
    * Apply parent application context to this transport. Lazy-bound by
-   * `Wata.create({ baseUrl, meta, privateKey })` so transports can
+   * `Wata.create({ baseUrl, identity, meta })` so transports can
    * derive discovery URLs, sign messages, and surface peer-facing
    * metadata from one app-level call. Idempotent: constructor-level
    * transport options still win.
@@ -193,7 +198,7 @@ export type Transport<
   role: role
   /**
    * HTTP route prefixes owned by this transport, when it exposes
-   * `.fetch` / `.listener`. Composite `Wata.create({ transports })`
+   * `.fetch`. Composite `Wata.create({ transports })`
    * uses these to route requests without probing every transport.
    */
   routes?: readonly string[] | undefined

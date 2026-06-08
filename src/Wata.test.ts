@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vp/test'
 import {
   Envelope,
   Errors,
+  Identity,
   Kv,
   Rpc,
   Schema,
@@ -20,6 +21,7 @@ import {
 import { z } from 'zod/mini'
 
 const privateKey = `0x${'11'.repeat(32)}` as Hex.Hex
+const identity = Identity.fromPrivateKey(privateKey)
 // 43-char unpadded base64url Ed25519 pubkey per uRPC discovery.md §2.2.
 const publicKey = '0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc'
 
@@ -820,9 +822,7 @@ describe('send', () => {
 
     await expect(
       consumer.send({ method: 'ping', params: [] }),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Rpc.RpcError: internal error]`,
-    )
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: internal error]`)
   })
 
   test('event.respond validation failures settle the request with an internal error', async () => {
@@ -841,9 +841,7 @@ describe('send', () => {
 
     await expect(
       consumer.send({ method: 'ping', params: [] }),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Rpc.RpcError: internal error]`,
-    )
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: internal error]`)
     expect(failure).toMatchInlineSnapshot(`
       [ProtocolError: schema validation failed
       Details: <root>: Invalid input]
@@ -864,7 +862,8 @@ describe('send', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    await expect(host.respond(captured!.id, 'not the ping result')).rejects.toThrowErrorMatchingInlineSnapshot(`
+    await expect(host.respond(captured!.id, 'not the ping result')).rejects
+      .toThrowErrorMatchingInlineSnapshot(`
       [ProtocolError: schema validation failed
       Details: <root>: Invalid input]
     `)
@@ -1144,7 +1143,7 @@ describe('baseUrl + meta auto-publishing', () => {
     const host = HostWata.create({
       baseUrl: 'https://wallet.example',
       meta: { icon: 'https://wallet.example/icon.png', name: 'Example Wallet' },
-      privateKey,
+      identity,
       transports: [
         hostDeviceCode({
           html: {
@@ -1191,7 +1190,7 @@ describe('baseUrl + meta auto-publishing', () => {
     const host = HostWata.create({
       baseUrl: 'https://wallet.example',
       meta: { name: 'Example Wallet' },
-      privateKey,
+      identity,
       transports: [
         hostDeviceCode({
           html: {
@@ -1292,7 +1291,7 @@ describe('baseUrl + meta auto-publishing', () => {
       HostWata.create({
         baseUrl: 'https://wallet.example',
         meta: { name: 'Example Wallet' },
-        privateKey,
+        identity,
         transports: [
           httpTransport({ discoveryId: 'same', name: 'alpha', routes: ['/alpha'] }),
           httpTransport({ discoveryId: 'same', name: 'beta', routes: ['/beta'] }),
@@ -1305,7 +1304,7 @@ describe('baseUrl + meta auto-publishing', () => {
     const host = HostWata.create({
       baseUrl: 'https://wallet.example',
       meta: { name: 'Example Wallet' },
-      privateKey,
+      identity,
       transports: [
         hostDeviceCode({
           html: {
@@ -1359,7 +1358,7 @@ describe('baseUrl + meta auto-publishing', () => {
     )
   })
 
-  test('host `Wata.create({ baseUrl, meta })` without `privateKey` throws (required per spec §2.2)', () => {
+  test('host `Wata.create({ baseUrl, meta })` without `identity` throws (required per spec §2.2)', () => {
     expect(() =>
       HostWata.create({
         baseUrl: 'https://wallet.example',
@@ -1376,8 +1375,8 @@ describe('baseUrl + meta auto-publishing', () => {
       }),
     ).toThrowErrorMatchingInlineSnapshot(
       `
-      [BaseError: \`privateKey\` is required when \`meta\` is set
-      Details: host.json publishes the long-term Ed25519 identity pubkey derived from the private seed]
+      [BaseError: \`identity\` is required when \`meta\` is set
+      Details: host.json publishes the long-term Ed25519 identity public key]
     `,
     )
   })
@@ -1486,7 +1485,7 @@ describe('baseUrl + meta auto-publishing', () => {
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',
       meta: { name: 'Acme CLI' },
-      privateKey,
+      identity,
       transports: [consumer],
     })
 

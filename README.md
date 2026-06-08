@@ -159,9 +159,13 @@ Mounts the device-code endpoints under `/auth/device`, renders a minimal approva
 ```ts
 import { createServer } from 'node:http'
 import { Wata, Kv, deviceCode } from 'wata/host'
+import * as Identity from 'wata/identity'
+import { Server } from 'wata/server'
 
 const wata = Wata.create({
   baseUrl: 'https://wallet.example',
+  identity: Identity.fromPrivateKey(privateKey),
+  meta: { name: 'Example Wallet' },
   transports: [
     deviceCode({
       html: {
@@ -188,7 +192,7 @@ wata.on('request', async (c) => {
     await c.respond(['0x0000000000000000000000000000000000000001'])
 })
 
-createServer(wata.listener).listen(3000)
+createServer(Server.node(wata).listener).listen(3000)
 ```
 
 ### `mobileWebAuth`
@@ -203,7 +207,8 @@ Opens the host authorization URL with the platform's browser auth-session API. T
 
 ```ts
 import * as WebBrowser from 'expo-web-browser'
-import { Wata, mobileWebAuth } from 'wata'
+import { Wata } from 'wata/consumer'
+import { mobileWebAuth } from 'wata/consumer/transports/mobileWebAuth'
 
 const wata = Wata.create({
   baseUrl: 'https://app.example',
@@ -234,11 +239,13 @@ Publishes `host.json`, renders an approval form at `/auth/mobile`, and redirects
 ```ts
 import { createServer } from 'node:http'
 import { Wata, mobileWebAuth } from 'wata/host'
+import * as Identity from 'wata/identity'
+import { Server } from 'wata/server'
 
 const wata = Wata.create({
   baseUrl: 'https://wallet.example',
+  identity: Identity.fromPrivateKey(privateKey),
   meta: { name: 'Example Wallet' },
-  privateKey,
   transports: [
     mobileWebAuth({
       html: {
@@ -266,7 +273,7 @@ wata.on('request', async (event) => {
     await event.respond(['0x0000000000000000000000000000000000000001'])
 })
 
-createServer(wata.listener).listen(3000)
+createServer(Server.node(wata).listener).listen(3000)
 ```
 
 ### `webhookCallback`
@@ -280,12 +287,12 @@ Server-to-server session where the consumer registers a signed intent with the h
 Publishes `consumer.json`, serves a web page that starts the request, opens the host's verification URL for the user, then receives the callback response at its webhook endpoint.
 
 ```ts
-import { Kv, Wata, webhookCallback } from 'wata'
+import { Identity, Kv, Wata, webhookCallback } from 'wata'
 
 const wata = Wata.create({
   baseUrl: 'https://app.example',
+  identity: Identity.fromPrivateKey(privateKey),
   meta: { name: 'Example App' },
-  privateKey,
   transports: [
     webhookCallback({
       host: 'https://wallet.example',
@@ -314,11 +321,12 @@ Publishes `host.json`, accepts signed registrations, renders an approval form, a
 
 ```ts
 import { Wata, Kv, webhookCallback } from 'wata/host'
+import * as Identity from 'wata/identity'
 
 const wata = Wata.create({
   baseUrl: 'https://wallet.example',
+  identity: Identity.fromPrivateKey(privateKey),
   meta: { name: 'Example Wallet' },
-  privateKey,
   transports: [
     webhookCallback({
       html: {

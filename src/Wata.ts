@@ -18,9 +18,6 @@
  * HTTP handlers through the wrapped transport.
  */
 
-import { Ed25519, type Hex } from 'ox'
-
-import * as Crypto from './core/Crypto.js'
 import * as Discovery from './core/Discovery.js'
 import * as Envelope from './core/Envelope.js'
 import * as Errors from './core/Errors.js'
@@ -235,8 +232,6 @@ export type ConsumerBase<
    * transport exposes HTTP routes or when discovery is auto-published.
    */
   fetch: Http.HandlersForTransports<transports>['fetch']
-  /** See {@link fetch}. */
-  listener: Http.HandlersForTransports<transports>['listener']
   /** Remove a previously subscribed consumer listener. */
   off: <type extends keyof ConsumerEventMap<schema, context>>(
     type: type,
@@ -380,8 +375,7 @@ export function create<
   const transports = options.transports as transports
   const schema = options.schema as schema
   const context = options.context as context
-  const { baseUrl, meta, privateKey } = options
-  const identity = privateKey ? identityFromPrivateKey(privateKey) : undefined
+  const { baseUrl, identity, meta } = options
 
   if (meta && !baseUrl)
     throw new Errors.BaseError('`baseUrl` is required when `meta` is set', {
@@ -399,7 +393,6 @@ export function create<
   )
   const routed = Http.composeRouted(transports.filter(isHttpServer))
   let httpFetch = routed?.fetch
-  let httpListener = routed?.listener
   if (meta && baseUrl) {
     const publicKey = identity?.publicKey ?? collectPublicKey(transports)
     const callbackUrls = collectCallbackUrls(transports)
@@ -415,7 +408,6 @@ export function create<
       wellknownPath: Wellknown.consumerPath,
     })
     httpFetch = wrapped.fetch
-    httpListener = wrapped.listener
   }
 
   if (sessions.length === 1) {
@@ -423,7 +415,6 @@ export function create<
     return {
       ...session,
       fetch: httpFetch as Consumer<schema, transports, RequestContextOf<context>>['fetch'],
-      listener: httpListener as Consumer<schema, transports, RequestContextOf<context>>['listener'],
       transports,
     } as unknown as Consumer<schema, transports, RequestContextOf<context>>
   }
@@ -441,7 +432,6 @@ export function create<
       emitter.emit('close', cause)
     },
     fetch: httpFetch as Consumer<schema, transports, RequestContextOf<context>>['fetch'],
-    listener: httpListener as Consumer<schema, transports, RequestContextOf<context>>['listener'],
     off: emitter.off,
     on(
       type: keyof ConsumerEventMap<schema, RequestContextOf<context>>,
@@ -797,22 +787,21 @@ export declare namespace create {
      */
     context?: context | undefined
     /**
+     * Optional signer-backed identity. When set, `Wata` publishes its
+     * public key in discovery and lazy-injects the signer into transports
+     * that need authenticated HTTP messages.
+     */
+    identity?: Transport.Identity | undefined
+    /**
      * Optional human-facing app metadata. When set together with
      * {@link baseUrl}, `Wata` auto-publishes a
      * `/.well-known/urpc/consumer.json` off the transport's
-     * `.fetch` / `.listener` (or as a standalone surface if the
+     * `.fetch` (or as a standalone surface if the
      * transport doesn't expose its own HTTP handlers).
      * Lazy-injected into transports via
      * {@link Transport.Transport.bind}.
      */
     meta?: Discovery.Meta | undefined
-    /**
-     * Consumer's long-term Ed25519 identity private seed. `Wata`
-     * derives the unpadded base64url public key for discovery and
-     * lazy-injects both values into transports that need identity
-     * signing.
-     */
-    privateKey?: Hex.Hex | undefined
     /** Optional method-registry schema (typed `send` / `notify` payloads). */
     schema?: schema | undefined
     /** Consumer-role transports this wata wraps. */
@@ -856,15 +845,10 @@ function isHttpServer<transport extends Transport.Transport<Transport.Role, stri
   transport: transport,
 ): transport is transport & Http.RoutedServer {
   const candidate = transport as Partial<Http.RoutedServer>
-  return typeof candidate.fetch === 'function' && typeof candidate.listener === 'function'
+  return typeof candidate.fetch === 'function'
 }
 
 type Pending = {
   reject: (error: Error) => void
   resolve: (result: SendResult<unknown>) => void
-}
-
-function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {
-  const publicKey = Crypto.encodePublicKey(Ed25519.getPublicKey({ privateKey }))
-  return { privateKey, publicKey }
 }

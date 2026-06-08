@@ -9,9 +9,6 @@
  * - {@link DeviceCode.fetch} — `(req: Request) => Promise<Response>`.
  *   The canonical fetch-style handler. Same code runs on Cloudflare
  *   Workers, Bun, Deno, Vercel Edge, or `Hono` mounted at any path.
- * - {@link DeviceCode.listener} — Node `http.RequestListener`
- *   adapter, powered by `@hono/node-server`'s `getRequestListener`.
- *
  * Routes (all under {@link Options.path}, defaults to `/`):
  *
  * | Route             | Handled by transport | Purpose |
@@ -29,6 +26,7 @@
  * ```ts
  * import { createServer } from 'node:http'
  * import { Wata, Kv, deviceCode } from 'wata/host'
+ * import { Server } from 'wata/server'
  *
  * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
@@ -55,7 +53,7 @@
  *   await event.respond({ ok: true })
  * })
  *
- * createServer(wata.listener).listen(3000)
+ * createServer(Server.node(wata).listener).listen(3000)
  * ```
  */
 
@@ -236,7 +234,7 @@ export declare namespace html {
   }
 }
 
-/** `transport.fetch` / `transport.listener`-augmented {@link Transport.Transport}. */
+/** `transport.fetch`-augmented {@link Transport.Transport}. */
 export type DeviceCode = Transport.Transport<'host', 'deviceCode'> & Http.Server
 
 /**
@@ -611,11 +609,7 @@ export function deviceCode(options: Options): DeviceCode {
     return resolved
   }
 
-  // Bundle the Hono app into the standard `.fetch` + `.listener` pair
-  // that every HTTP-server-shaped host transport exposes. The Node
-  // `.listener` is lazy-loaded on first invocation; see
-  // {@link Http.fromHono} for details.
-  const { fetch, listener } = Http.fromHono(app)
+  const { fetch } = Http.fromHono(app)
 
   return {
     bind(binding) {
@@ -646,7 +640,6 @@ export function deviceCode(options: Options): DeviceCode {
     },
     exchange: 'single_exchange',
     fetch,
-    listener,
     name: 'deviceCode',
     on: emitter.on,
     role: 'host',

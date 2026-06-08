@@ -20,19 +20,21 @@ import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { Ed25519 } from 'ox'
 import { Kv, Wata, deviceCode } from 'wata/host'
+import * as Identity from 'wata/identity'
 
 const port = Number(process.env.PORT ?? 4747)
 const baseUrl = process.env.BASE_URL ?? `http://localhost:${port}`
 const privateKey = process.env.PRIVATE_KEY ?? Ed25519.createKeyPair().privateKey
+const identity = Identity.fromPrivateKey(privateKey)
 
 const wata = Wata.create({
   baseUrl,
+  identity,
   meta: {
     description: 'Device-code playground host',
     name: 'Example Wallet',
     websiteUrl: baseUrl,
   },
-  privateKey,
   transports: [
     deviceCode({
       baseUrl,
