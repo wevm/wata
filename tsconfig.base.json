@@ -8,7 +8,19 @@
     "target": "esnext",
     "paths": {
       "wata": ["./src/index.ts"],
+      "wata/consumer": ["./src/consumer.ts"],
+      "wata/consumer/transports/deviceCode": ["./src/consumer/transports/deviceCode.ts"],
+      "wata/consumer/transports/mobileWebAuth": ["./src/consumer/transports/mobileWebAuth.ts"],
+      "wata/consumer/transports/postMessage": ["./src/consumer/transports/postMessage.ts"],
+      "wata/consumer/transports/webhookCallback": [
+        "./src/consumer/transports/webhookCallback.ts"
+      ],
       "wata/host": ["./src/host/index.ts"],
+      "wata/host/transports/deviceCode": ["./src/host/transports/deviceCode.ts"],
+      "wata/host/transports/mobileWebAuth": ["./src/host/transports/mobileWebAuth.ts"],
+      "wata/host/transports/postMessage": ["./src/host/transports/postMessage.ts"],
+      "wata/host/transports/webhookCallback": ["./src/host/transports/webhookCallback.ts"],
+      "wata/identity": ["./src/identity.ts"],
       "wata/server": ["./src/server/index.ts"]
     },
     "types": ["node"],

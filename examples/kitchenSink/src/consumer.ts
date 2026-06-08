@@ -1,11 +1,13 @@
-import { Kv, PostMessage, Wata, deviceCode, postMessage, webhookCallback } from 'wata'
+import { Identity, Kv, PostMessage, Wata, deviceCode, postMessage, webhookCallback } from 'wata'
 
 export const baseUrl = 'http://localhost:5173'
 
 export const consumer = Wata.create({
   baseUrl,
+  identity: Identity.fromPrivateKey(
+    '0x1111111111111111111111111111111111111111111111111111111111111111',
+  ),
   meta: { name: 'Kitchen Sink Consumer' },
-  privateKey: '0x1111111111111111111111111111111111111111111111111111111111111111',
   transports: [
     deviceCode({
       onPrompt({ userCode, verificationUriFull }) {

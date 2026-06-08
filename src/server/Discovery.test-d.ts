@@ -1,21 +1,21 @@
 import { describe, expectTypeOf, test } from 'vp/test'
-import { hostWellknown, consumerWellknown } from 'wata/server'
+import { Server, hostWellknown, consumerWellknown } from 'wata/server'
 
 describe('hostWellknown', () => {
-  test('returns `{ fetch, listener }`', () => {
+  test('returns `{ fetch }`', () => {
     const server = hostWellknown({
       meta: { name: 'X' },
       transports: { 'device-code': { register_url: 'https://x/r', token_url: 'https://x/t' } },
     })
     expectTypeOf(server.fetch).toEqualTypeOf<(request: Request) => Promise<Response>>()
-    expectTypeOf(server.listener).toBeFunction()
+    expectTypeOf(Server.node(server).listener).toBeFunction()
   })
 })
 
 describe('consumerWellknown', () => {
-  test('returns `{ fetch, listener }`', () => {
+  test('returns `{ fetch }`', () => {
     const server = consumerWellknown({ meta: { name: 'Y' } })
     expectTypeOf(server.fetch).toEqualTypeOf<(request: Request) => Promise<Response>>()
-    expectTypeOf(server.listener).toBeFunction()
+    expectTypeOf(Server.node(server).listener).toBeFunction()
   })
 })

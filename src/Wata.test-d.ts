@@ -2,26 +2,48 @@ import type { Hex } from 'ox'
 import { describe, expectTypeOf, test } from 'vp/test'
 import {
   Discovery,
+  Identity,
   Kv,
   Rpc,
   Schema,
   Transport,
   Wata,
   WebhookCallback,
+  deviceCode,
   loopback,
+  mobileWebAuth,
+  postMessage,
   webhookCallback,
 } from 'wata'
+import { Wata as ConsumerWata, loopback as loopback_consumer } from 'wata/consumer'
+import { deviceCode as deviceCode_consumer } from 'wata/consumer/transports/deviceCode'
+import { mobileWebAuth as mobileWebAuth_entry } from 'wata/consumer/transports/mobileWebAuth'
+import { postMessage as postMessage_entry } from 'wata/consumer/transports/postMessage'
+import { webhookCallback as webhookCallback_consumer } from 'wata/consumer/transports/webhookCallback'
 import {
   Discovery as HostDiscovery,
   Schema as HostSchema,
   Wata as HostWata,
+  deviceCode as hostDeviceCode,
+  mobileWebAuth as hostMobileWebAuth,
   postMessage as hostPostMessage,
+  webhookCallback as hostWebhookCallback,
 } from 'wata/host'
+import { deviceCode as deviceCode_host } from 'wata/host/transports/deviceCode'
+import { mobileWebAuth as mobileWebAuth_host } from 'wata/host/transports/mobileWebAuth'
+import { postMessage as postMessage_host } from 'wata/host/transports/postMessage'
+import { webhookCallback as webhookCallback_host } from 'wata/host/transports/webhookCallback'
+import * as Identity_entry from 'wata/identity'
 import { z } from 'zod/mini'
 
 const privateKey = '0x' as Hex.Hex
+const identity = Identity.fromPrivateKey(privateKey)
 declare const portHandle: MessagePort
 declare const popupHandle: Window
+
+function fromPrivateKey(privateKey: Hex.Hex) {
+  return Identity.fromPrivateKey(privateKey)
+}
 
 const schema = Schema.create({
   methods: {
@@ -66,6 +88,20 @@ function namedPair<const name extends string>(name: name) {
 }
 
 describe('create', () => {
+  test('client-safe subpaths expose consumer Wata and transport factories', () => {
+    expectTypeOf(ConsumerWata.create).toEqualTypeOf<typeof Wata.create>()
+    expectTypeOf(Identity_entry.fromPrivateKey).toEqualTypeOf<typeof Identity.fromPrivateKey>()
+    expectTypeOf(deviceCode_consumer).toEqualTypeOf<typeof deviceCode>()
+    expectTypeOf(loopback_consumer).toEqualTypeOf<typeof loopback>()
+    expectTypeOf(mobileWebAuth_entry).toEqualTypeOf<typeof mobileWebAuth>()
+    expectTypeOf(postMessage_entry).toEqualTypeOf<typeof postMessage>()
+    expectTypeOf(webhookCallback_consumer).toEqualTypeOf<typeof webhookCallback>()
+    expectTypeOf(deviceCode_host).toEqualTypeOf<typeof hostDeviceCode>()
+    expectTypeOf(mobileWebAuth_host).toEqualTypeOf<typeof hostMobileWebAuth>()
+    expectTypeOf(postMessage_host).toEqualTypeOf<typeof hostPostMessage>()
+    expectTypeOf(webhookCallback_host).toEqualTypeOf<typeof hostWebhookCallback>()
+  })
+
   test('returns a Consumer when given a consumer transport', () => {
     const { consumer } = loopback()
     const wata = Wata.create({ transports: [consumer], schema })
@@ -436,7 +472,7 @@ describe('Consumer events', () => {
     })
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',
-      privateKey: privateKey,
+      identity: fromPrivateKey(privateKey),
       transports: [consumer, transport],
     })
     const registration = await wata.webhookCallback.send({ method: 'ping', params: [] })
@@ -462,19 +498,19 @@ describe('baseUrl + meta options', () => {
     Wata.create({ baseUrl: 'https://acme.dev', meta, transports: [consumer] })
   })
 
-  test('consumer accepts `privateKey` as an Ed25519 private seed', () => {
+  test('consumer accepts signer-backed `identity`', () => {
     const { consumer } = loopback()
-    Wata.create({ privateKey, transports: [consumer] })
+    Wata.create({ identity, transports: [consumer] })
   })
 
   test('host accepts `baseUrl` and `meta` typed as host Discovery.Meta', () => {
     const { host } = loopback()
     const meta: HostDiscovery.Meta = { name: 'Wallet' }
-    HostWata.create({ baseUrl: 'https://wallet.example', meta, privateKey, transports: [host] })
+    HostWata.create({ baseUrl: 'https://wallet.example', meta, identity, transports: [host] })
   })
 
-  test('host accepts `privateKey` as an Ed25519 private seed', () => {
+  test('host accepts signer-backed `identity`', () => {
     const { host } = loopback()
-    HostWata.create({ privateKey, transports: [host] })
+    HostWata.create({ identity, transports: [host] })
   })
 })

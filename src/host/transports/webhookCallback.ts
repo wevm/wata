@@ -31,10 +31,11 @@
  * ```ts
  * import { createServer } from 'node:http'
  * import { Wata, Kv, webhookCallback } from 'wata/host'
+ * import { Server } from 'wata/server'
  *
  * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
- *   privateKey,
+ *   identity,
  *   transports: [
  *     webhookCallback({
  *       html: {
@@ -55,7 +56,7 @@
  *   ],
  * })
  *
- * createServer(wata.listener).listen(3000)
+ * createServer(Server.node(wata).listener).listen(3000)
  * ```
  */
 
@@ -337,7 +338,7 @@ export declare namespace html {
   }
 }
 
-/** `transport.fetch` / `transport.listener`-augmented {@link Transport.Transport}. */
+/** `transport.fetch`-augmented {@link Transport.Transport}. */
 export type WebhookCallback = Transport.Transport<'host', 'webhookCallback'> & Http.Server
 
 type DeliveryAttempt = { type: 'delivered' } | { error: Error; retryable: boolean; type: 'failed' }
@@ -355,7 +356,7 @@ type RegistrationRateLimit = { max: number; windowSeconds: number }
  *
  * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
- *   privateKey,
+ *   identity,
  *   transports: [
  *     webhookCallback({
  *       html: { render, authenticate },
@@ -432,7 +433,7 @@ export function webhookCallback(options: Options): WebhookCallback {
   function getIdentity(): Transport.Identity {
     if (identity_bound) return identity_bound
     throw new Transport.TransportError(
-      'webhook-callback host identity could not be derived before `Wata.create({ privateKey })` bound the transport',
+      'webhook-callback host identity could not be derived before `Wata.create({ identity })` bound the transport',
     )
   }
 
@@ -1083,7 +1084,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     return c.json({ closeTab: true })
   })
 
-  const { fetch, listener } = Http.fromHono(app)
+  const { fetch } = Http.fromHono(app)
 
   // ── outbound webhook delivery ───────────────────────────────────────
 
@@ -1116,11 +1117,10 @@ export function webhookCallback(options: Options): WebhookCallback {
       'urpc-idempotency-key': record.authReqId,
       'urpc-public-key': identity.publicKey,
     }
-    const signedHeaders = MessageSig.sign({
+    const signedHeaders = await identity.sign({
       components,
       message: { headers, method: 'POST', url: record.webhookUrl },
       parameters: { alg: 'ed25519', created, keyid: resolveKeyid(), nonce },
-      privateKey: identity.privateKey,
     })
     headers['signature'] = signedHeaders.signature
     headers['signature-input'] = signedHeaders.signatureInput
@@ -1541,7 +1541,6 @@ export function webhookCallback(options: Options): WebhookCallback {
     },
     exchange: 'single_exchange',
     fetch,
-    listener,
     name: 'webhookCallback',
     on: emitter.on,
     role: 'host',

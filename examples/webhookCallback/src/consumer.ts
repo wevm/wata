@@ -1,16 +1,17 @@
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { Kv, Wata, webhookCallback } from 'wata'
+import { Identity, Kv, Wata, webhookCallback } from 'wata'
 
 const port = 4646
 const baseUrl = `http://localhost:${port}`
 const hostUrl = 'http://localhost:4747'
 const privateKey = '0x1111111111111111111111111111111111111111111111111111111111111111'
+const identity = Identity.fromPrivateKey(privateKey)
 
 const wata = Wata.create({
   baseUrl,
+  identity,
   meta: { name: 'Example Consumer' },
-  privateKey,
   transports: [
     webhookCallback({
       host: hostUrl,

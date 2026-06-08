@@ -24,6 +24,7 @@ import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { Base64, Bytes, Ed25519 } from 'ox'
 import { Kv, Wata, webhookCallback } from 'wata/host'
+import * as Identity from 'wata/identity'
 
 const port = Number(process.env.PORT ?? 4747)
 const baseUrl = process.env.BASE_URL ?? `http://localhost:${port}`
@@ -34,6 +35,7 @@ const baseUrl = process.env.BASE_URL ?? `http://localhost:${port}`
 // store — rotation invalidates every consumer that has pinned the
 // previous `identity_pubkey`.
 const privateKey = process.env.PRIVATE_KEY ?? Ed25519.createKeyPair().privateKey
+const identity = Identity.fromPrivateKey(privateKey)
 const publicKey = Base64.fromBytes(Bytes.from(Ed25519.getPublicKey({ privateKey })), {
   pad: false,
   url: true,
@@ -47,12 +49,12 @@ console.log(`[host] identity_pubkey (base64url): ${publicKey}`)
 
 const wata = Wata.create({
   baseUrl,
+  identity,
   meta: {
     description: 'Webhook-callback playground host',
     name: 'Example Wallet',
     websiteUrl: baseUrl,
   },
-  privateKey,
   transports: [
     webhookCallback({
       baseUrl,

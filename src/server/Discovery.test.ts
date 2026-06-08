@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vp/test'
 import { Discovery } from 'wata'
-import { hostWellknown, consumerWellknown } from 'wata/server'
+import { Server, hostWellknown, consumerWellknown } from 'wata/server'
 
 // 43-char unpadded base64url Ed25519 pubkey per uRPC discovery.md §2.2.
 const publicKey = 'A'.repeat(43)
@@ -289,8 +289,8 @@ describe('etag', () => {
   })
 })
 
-describe('listener', () => {
-  test('host and consumer factories expose a Node-shaped listener', () => {
+describe('Server.node', () => {
+  test('adapts host and consumer discovery fetch surfaces to Node listeners', () => {
     const host = hostWellknown({
       meta: { name: 'X' },
       publicKey,
@@ -298,8 +298,8 @@ describe('listener', () => {
     })
     const consumer = consumerWellknown({ meta: { name: 'Y' } })
     expect({
-      consumerListener: typeof consumer.listener,
-      hostListener: typeof host.listener,
+      consumerListener: typeof Server.node(consumer).listener,
+      hostListener: typeof Server.node(host).listener,
     }).toMatchInlineSnapshot(`
       {
         "consumerListener": "function",

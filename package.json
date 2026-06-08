@@ -50,11 +50,11 @@
       "react-native": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./Wata": {
-      "types": "./dist/Wata.d.ts",
-      "src": "./src/Wata.ts",
-      "react-native": "./dist/Wata.js",
-      "default": "./dist/Wata.js"
+    "./consumer": {
+      "types": "./dist/consumer.d.ts",
+      "src": "./src/consumer.ts",
+      "react-native": "./dist/consumer.js",
+      "default": "./dist/consumer.js"
     },
     "./consumer/transports/deviceCode": {
       "types": "./dist/consumer/transports/deviceCode.d.ts",
@@ -86,12 +86,6 @@
       "react-native": "./dist/host/index.js",
       "default": "./dist/host/index.js"
     },
-    "./host/Wata": {
-      "types": "./dist/host/Wata.d.ts",
-      "src": "./src/host/Wata.ts",
-      "react-native": "./dist/host/Wata.js",
-      "default": "./dist/host/Wata.js"
-    },
     "./host/transports/deviceCode": {
       "types": "./dist/host/transports/deviceCode.d.ts",
       "src": "./src/host/transports/deviceCode.ts",
@@ -115,6 +109,12 @@
       "src": "./src/host/transports/webhookCallback.ts",
       "react-native": "./dist/host/transports/webhookCallback.js",
       "default": "./dist/host/transports/webhookCallback.js"
+    },
+    "./identity": {
+      "types": "./dist/identity.d.ts",
+      "src": "./src/identity.ts",
+      "react-native": "./dist/identity.js",
+      "default": "./dist/identity.js"
     },
     "./server": {
       "types": "./dist/server/index.d.ts",

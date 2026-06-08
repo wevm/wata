@@ -12,7 +12,7 @@
 
 import { Base64, Bytes, Ed25519, Hex } from 'ox'
 import { describe, expect, test, vi } from 'vp/test'
-import { Discovery, Envelope, Kv, MessageSig, Rpc, Wata, webhookCallback } from 'wata'
+import { Discovery, Envelope, Identity, Kv, MessageSig, Rpc, Wata, webhookCallback } from 'wata'
 import {
   Wata as HostWata,
   WebhookCallback as HostWebhookCallback,
@@ -33,6 +33,10 @@ vi.doMock('node:dns/promises', async () => {
 
 function ed25519Pubkey(publicKey: Hex.Hex): string {
   return Base64.fromBytes(Bytes.from(publicKey), { pad: false, url: true })
+}
+
+function fromPrivateKey(privateKey: Hex.Hex) {
+  return Identity.fromPrivateKey(privateKey)
 }
 
 const expectedApprovalSurfaceCsp = [
@@ -401,10 +405,13 @@ describe('webhookCallback end-to-end', () => {
     const { approve, consumerTransport, hostTransport } = setup
     const wata = Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(setup.hostKeypair.privateKey),
+      transports: [hostTransport],
+    })
     const events: Array<{ meta: Wata.RpcEnvelopeMeta; responses: Wata.RpcResponsesPayload }> = []
     wata.on('rpc-responses', (responses, meta) => events.push({ meta, responses }))
 
@@ -447,10 +454,13 @@ describe('webhookCallback end-to-end', () => {
     const setup = pair({ hostIncomingOrigin: 'http://internal.local:8787' })
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(setup.hostKeypair.privateKey),
+      transports: [setup.hostTransport],
+    })
 
     await setup.consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
@@ -482,10 +492,13 @@ describe('webhookCallback end-to-end', () => {
     })
     const wata = Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(setup.hostKeypair.privateKey),
+      transports: [setup.hostTransport],
+    })
 
     const sendPromise = wata.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
@@ -518,7 +531,7 @@ describe('webhookCallback end-to-end', () => {
     })
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
 
@@ -538,7 +551,7 @@ describe('webhookCallback end-to-end', () => {
     })
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
 
@@ -562,7 +575,10 @@ describe('webhookCallback end-to-end', () => {
       path: hostPath,
       store: hostStore,
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(hostKeypair.privateKey),
+      transports: [hostTransport],
+    })
     const consumerOrigin = 'https://acme.dev'
     const consumerPublicKey = ed25519Pubkey(consumerKeypair.publicKey)
     const registerUrl = `${hostOrigin}${hostPath}/register`
@@ -611,7 +627,10 @@ describe('webhookCallback end-to-end', () => {
       store: memoryWithScan(),
       validateOutboundRequest: () => {},
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [transport] })
+    HostWata.create({
+      identity: fromPrivateKey(hostKeypair.privateKey),
+      transports: [transport],
+    })
     const consumerKeypair = Ed25519.createKeyPair()
     const consumerOrigin = 'https://acme.dev'
     const consumerPublicKey = ed25519Pubkey(consumerKeypair.publicKey)
@@ -661,10 +680,13 @@ describe('webhookCallback end-to-end', () => {
     })
     const wata = Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(setup.hostKeypair.privateKey),
+      transports: [setup.hostTransport],
+    })
     const events: Wata.RpcResponsesPayload[] = []
     wata.on('rpc-responses', (responses) => events.push(responses))
 
@@ -700,10 +722,13 @@ describe('webhookCallback end-to-end', () => {
     })
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(setup.hostKeypair.privateKey),
+      transports: [setup.hostTransport],
+    })
 
     await setup.consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
@@ -754,10 +779,13 @@ describe('webhookCallback end-to-end', () => {
     })
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(setup.hostKeypair.privateKey),
+      transports: [setup.hostTransport],
+    })
 
     await setup.consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
@@ -793,10 +821,13 @@ describe('webhookCallback end-to-end', () => {
       pair()
     const wata = Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(hostKeypair.privateKey),
+      transports: [hostTransport],
+    })
     const events: Wata.RpcResponsesPayload[] = []
     wata.on('rpc-responses', (responses) => events.push(responses))
 
@@ -838,11 +869,11 @@ describe('webhookCallback end-to-end', () => {
     const { consumerKeypair, consumerOrigin, consumerTransport, hostKeypair, hostTransport } = setup
     const consumer = Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
     const host = HostWata.create({
-      privateKey: hostKeypair.privateKey,
+      identity: fromPrivateKey(hostKeypair.privateKey),
       transports: [hostTransport],
     })
     host.on('request', (event) => event.respond({ ok: true }))
@@ -898,11 +929,11 @@ describe('webhookCallback end-to-end', () => {
     const { consumerKeypair, consumerOrigin, consumerTransport, hostKeypair, hostTransport } = setup
     const consumer = Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
     const host = HostWata.create({
-      privateKey: hostKeypair.privateKey,
+      identity: fromPrivateKey(hostKeypair.privateKey),
       transports: [hostTransport],
     })
     host.on('request', (event) => event.respond({ ok: true }))
@@ -1271,7 +1302,7 @@ describe('webhookCallback end-to-end', () => {
       })
       Wata.create({
         baseUrl: setup.consumerOrigin,
-        privateKey: setup.consumerKeypair.privateKey,
+        identity: fromPrivateKey(setup.consumerKeypair.privateKey),
         transports: [setup.consumerTransport],
       })
 
@@ -1301,7 +1332,7 @@ describe('webhookCallback end-to-end', () => {
     })
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
 
@@ -1321,7 +1352,7 @@ describe('webhookCallback end-to-end', () => {
     const setup = pair()
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
 
@@ -1373,7 +1404,7 @@ describe('webhookCallback end-to-end', () => {
       })
       Wata.create({
         baseUrl: 'https://acme.dev',
-        privateKey: consumerKeypair.privateKey,
+        identity: fromPrivateKey(consumerKeypair.privateKey),
         transports: [transport],
       })
 
@@ -1429,7 +1460,7 @@ describe('webhookCallback end-to-end', () => {
       })
       Wata.create({
         baseUrl: 'https://acme.dev',
-        privateKey: consumerKeypair.privateKey,
+        identity: fromPrivateKey(consumerKeypair.privateKey),
         transports: [transport],
       })
 
@@ -1496,7 +1527,7 @@ describe('webhookCallback end-to-end', () => {
     expect(fetches).toEqual([])
     Wata.create({
       baseUrl: 'https://acme.dev',
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [transport],
     })
     expect(fetches).toEqual([])
@@ -1555,7 +1586,7 @@ describe('webhookCallback end-to-end', () => {
     })
     Wata.create({
       baseUrl: 'https://acme.dev',
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [transport],
     })
 
@@ -1606,7 +1637,7 @@ describe('webhookCallback end-to-end', () => {
       })
       Wata.create({
         baseUrl: 'https://acme.dev',
-        privateKey: consumerKeypair.privateKey,
+        identity: fromPrivateKey(consumerKeypair.privateKey),
         transports: [transport],
       })
 
@@ -1660,7 +1691,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -1690,7 +1721,7 @@ describe('webhookCallback end-to-end', () => {
     const setup = pair()
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
 
@@ -1740,10 +1771,13 @@ describe('webhookCallback end-to-end', () => {
     const setup = pair()
     const consumer = Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
-    HostWata.create({ privateKey: setup.hostKeypair.privateKey, transports: [setup.hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(setup.hostKeypair.privateKey),
+      transports: [setup.hostTransport],
+    })
     const events: Wata.RpcResponsesPayload[] = []
     consumer.on('rpc-responses', (responses) => events.push(responses))
 
@@ -1790,7 +1824,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -1835,7 +1869,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -1868,7 +1902,7 @@ describe('webhookCallback end-to-end', () => {
     const setup = pair()
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
 
@@ -1910,7 +1944,7 @@ describe('webhookCallback end-to-end', () => {
     })
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
 
@@ -1989,7 +2023,7 @@ describe('webhookCallback end-to-end', () => {
     })
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
 
@@ -2033,7 +2067,7 @@ describe('webhookCallback end-to-end', () => {
     const setup = pair()
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
 
@@ -2073,7 +2107,7 @@ describe('webhookCallback end-to-end', () => {
     const setup = pair()
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
 
@@ -2114,7 +2148,7 @@ describe('webhookCallback end-to-end', () => {
     const setup = pair()
     Wata.create({
       baseUrl: setup.consumerOrigin,
-      privateKey: setup.consumerKeypair.privateKey,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
       transports: [setup.consumerTransport],
     })
 
@@ -2155,7 +2189,7 @@ describe('webhookCallback end-to-end', () => {
     const { consumerKeypair, consumerOrigin, consumerTransport, hostStore } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -2714,7 +2748,7 @@ describe('webhookCallback end-to-end', () => {
     })
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -2739,10 +2773,13 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(hostKeypair.privateKey),
+      transports: [hostTransport],
+    })
 
     const sendPromise = consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
@@ -2777,7 +2814,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -2827,7 +2864,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     const consumer = Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -2870,10 +2907,13 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(hostKeypair.privateKey),
+      transports: [hostTransport],
+    })
 
     await consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
@@ -2914,7 +2954,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -3005,7 +3045,7 @@ describe('webhookCallback end-to-end', () => {
     const { consumerKeypair, consumerOrigin, consumerTransport, findActiveCode, hostStore } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -3042,10 +3082,13 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(hostKeypair.privateKey),
+      transports: [hostTransport],
+    })
 
     await consumerTransport.send(
       Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
@@ -3077,7 +3120,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -3170,7 +3213,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -3238,7 +3281,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -3307,7 +3350,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -3376,7 +3419,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -3444,7 +3487,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -3513,7 +3556,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     const consumer = Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
     const events: Wata.RpcResponsesPayload[] = []
@@ -3601,7 +3644,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -3668,7 +3711,7 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
 
@@ -3728,10 +3771,13 @@ describe('webhookCallback end-to-end', () => {
     } = pair()
     const wata = Wata.create({
       baseUrl: consumerOrigin,
-      privateKey: consumerKeypair.privateKey,
+      identity: fromPrivateKey(consumerKeypair.privateKey),
       transports: [consumerTransport],
     })
-    HostWata.create({ privateKey: hostKeypair.privateKey, transports: [hostTransport] })
+    HostWata.create({
+      identity: fromPrivateKey(hostKeypair.privateKey),
+      transports: [hostTransport],
+    })
     const events: Wata.RpcResponsesPayload[] = []
     wata.on('rpc-responses', (responses) => events.push(responses))
 

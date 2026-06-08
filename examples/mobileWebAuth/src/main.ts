@@ -1,5 +1,7 @@
-import { Wata, mobileWebAuth } from 'wata'
+import { Wata } from 'wata/consumer'
 import { Wata as HostWata, mobileWebAuth as hostMobileWebAuth } from 'wata/host'
+import * as Identity from 'wata/identity'
+import { mobileWebAuth } from 'wata/consumer/transports/mobileWebAuth'
 
 const callback = 'com.example.app://callback'
 const consumerOrigin = 'https://app.example'
@@ -8,8 +10,10 @@ const hostUrl = `${hostOrigin}/auth/mobile`
 
 const host = HostWata.create({
   baseUrl: hostOrigin,
+  identity: Identity.fromPrivateKey(
+    '0x2222222222222222222222222222222222222222222222222222222222222222',
+  ),
   meta: { name: 'Example Wallet' },
-  privateKey: '0x2222222222222222222222222222222222222222222222222222222222222222',
   transports: [
     hostMobileWebAuth({
       fetch: async (): Promise<Response> =>

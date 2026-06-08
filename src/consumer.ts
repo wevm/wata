@@ -1,0 +1,21 @@
+// wata/consumer: shared client-safe consumer primitives.
+
+export * as Aad from './core/Aad.js'
+export * as Aead from './core/Aead.js'
+export * as Crypto from './core/Crypto.js'
+export * as Discovery from './core/Discovery.js'
+export * as Envelope from './core/Envelope.js'
+export * as Errors from './core/Errors.js'
+export * as Events from './core/Events.js'
+export * as Fetch from './core/Fetch.js'
+export * as Kdf from './core/Kdf.js'
+export * as Kv from './core/Kv.js'
+export * as MessageSig from './core/MessageSig.js'
+export * as Nonce from './core/Nonce.js'
+export * as Rpc from './core/Rpc.js'
+export * as Schema from './core/Schema.js'
+export * as Session from './core/Session.js'
+export * as Transport from './core/Transport.js'
+export * as Wata from './Wata.js'
+
+export { loopback } from './core/transports/loopback.js'

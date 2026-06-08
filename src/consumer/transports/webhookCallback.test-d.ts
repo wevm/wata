@@ -1,9 +1,13 @@
 import type { Hex } from 'ox'
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Kv, Transport, WebhookCallback, Wata, webhookCallback } from 'wata'
+import { Identity, Kv, Transport, WebhookCallback, Wata, webhookCallback } from 'wata'
+
+function fromPrivateKey(privateKey: Hex.Hex) {
+  return Identity.fromPrivateKey(privateKey)
+}
 
 describe('webhookCallback (consumer)', () => {
-  test('returns a single-exchange consumer-role transport with `.fetch` + `.listener`', () => {
+  test('returns a single-exchange consumer-role transport with `.fetch`', () => {
     const transport = webhookCallback({
       host: 'https://wallet.example',
       path: '/cb',
@@ -15,7 +19,6 @@ describe('webhookCallback (consumer)', () => {
       Transport.Transport<'consumer', 'webhookCallback', WebhookCallback.Registration>
     >()
     expectTypeOf(transport.fetch).toEqualTypeOf<(request: Request) => Promise<Response>>()
-    expectTypeOf(transport.listener).toBeFunction()
     expectTypeOf(transport.cancel).toEqualTypeOf<() => Promise<void>>()
     expectTypeOf(transport.callbackUrls).toEqualTypeOf<readonly string[] | undefined>()
   })
@@ -29,7 +32,7 @@ describe('webhookCallback (consumer)', () => {
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',
       meta: { name: 'Acme CLI' },
-      privateKey: '0x' as Hex.Hex,
+      identity: fromPrivateKey('0x' as Hex.Hex),
       transports: [transport],
     })
     expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
@@ -44,7 +47,7 @@ describe('webhookCallback (consumer)', () => {
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',
       meta: { name: 'Acme CLI' },
-      privateKey: '0x' as Hex.Hex,
+      identity: fromPrivateKey('0x' as Hex.Hex),
       transports: [transport],
     })
     const registration = await wata.send({ method: 'ping', params: [] })

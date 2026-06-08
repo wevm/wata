@@ -12,9 +12,6 @@
  * pollute the consumer namespace.
  */
 
-import { Ed25519, type Hex } from 'ox'
-
-import * as Crypto from '../core/Crypto.js'
 import * as Discovery from '../core/Discovery.js'
 import * as Envelope from '../core/Envelope.js'
 import * as Errors from '../core/Errors.js'
@@ -274,16 +271,13 @@ export type Host<
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
   /**
-   * Web-standard fetch handler + Node `http.RequestListener` pair
-   * forwarded from the transport when present. HTTP-shaped transports
-   * (`deviceCode`, `webhookCallback`, …) expose the standard
-   * {@link Http.Server} signatures that drop onto Cloudflare Workers,
-   * Bun, Deno, Vercel Edge, `node:http`, etc. Non-HTTP transports
-   * (`postMessage`, `loopback`, …) leave both `undefined`.
+   * Web-standard fetch handler forwarded from the transport when
+   * present. HTTP-shaped transports (`deviceCode`, `webhookCallback`,
+   * …) expose the standard {@link Http.Server} signature that drops
+   * onto Cloudflare Workers, Bun, Deno, Vercel Edge, etc. Non-HTTP
+   * transports (`postMessage`, `loopback`, …) leave it `undefined`.
    */
   fetch: Http.HandlersForTransports<transports>['fetch']
-  /** See {@link fetch}. */
-  listener: Http.HandlersForTransports<transports>['listener']
   /**
    * Send a typed JSON-RPC notification from the host to the consumer.
    * Auto-starts transports that support host-origin notifications.
@@ -447,17 +441,15 @@ export function create<
   const transports = options.transports as transports
   const schema = options.schema as schema
   const context = options.context as context
-  const { baseUrl, meta, privateKey } = options
-  const identity = privateKey ? identityFromPrivateKey(privateKey) : undefined
+  const { baseUrl, identity, meta } = options
 
   if (meta && !baseUrl)
     throw new Errors.BaseError('`baseUrl` is required when `meta` is set', {
       details: 'host_id and transport bindings need a fully-qualified origin',
     })
-  if (meta && !privateKey)
-    throw new Errors.BaseError('`privateKey` is required when `meta` is set', {
-      details:
-        'host.json publishes the long-term Ed25519 identity pubkey derived from the private seed',
+  if (meta && !identity)
+    throw new Errors.BaseError('`identity` is required when `meta` is set', {
+      details: 'host.json publishes the long-term Ed25519 identity public key',
     })
   assertUniqueTransportNames(transports)
 
@@ -932,9 +924,8 @@ export function create<
   // serves the auto-built document and every other request falls
   // through to the underlying transport routes. Transports without
   // `.fetch` can still publish a well-known (the wrapper exposes
-  // its own `.fetch` / `.listener` even when nothing else is mounted).
+  // its own `.fetch` even when nothing else is mounted).
   let httpFetch = routed?.fetch
-  let httpListener = routed?.listener
   if (meta && baseUrl && identity) {
     const document = Wellknown.buildHostDocument({
       baseUrl,
@@ -948,7 +939,6 @@ export function create<
       wellknownPath: Wellknown.hostPath,
     })
     httpFetch = wrapped.fetch
-    httpListener = wrapped.listener
   }
 
   return {
@@ -959,7 +949,6 @@ export function create<
       emitter.emit('close', cause)
     },
     fetch: httpFetch as Host<schema, transports, Wata.RequestContextOf<context>>['fetch'],
-    listener: httpListener as Host<schema, transports, Wata.RequestContextOf<context>>['listener'],
     notify,
     off(
       type: keyof HostEventMap<schema, transports, Wata.RequestContextOf<context>>,
@@ -1055,9 +1044,9 @@ export declare namespace create {
     context?: context | undefined
     /**
      * Optional human-facing app metadata. When set together with
-     * {@link baseUrl} and {@link privateKey}, `Wata` auto-publishes
+     * {@link baseUrl} and {@link identity}, `Wata` auto-publishes
      * a `/.well-known/urpc/host.json` off the transport's existing
-     * `.fetch` / `.listener`. No separate mount required. The
+     * `.fetch`. No separate mount required. The
      * published doc's `transports` map is auto-built from the
      * transport's {@link Transport.Transport.discovery} binding.
      * Lazy-injected into transports that opt into
@@ -1065,11 +1054,10 @@ export declare namespace create {
      */
     meta?: Discovery.Meta | undefined
     /**
-     * Host's long-term Ed25519 identity private seed. `Wata` derives
-     * the unpadded base64url public key required by host discovery and
-     * lazy-injects both values into transports that sign as the host.
+     * Signer-backed host identity. Required with {@link meta}; also
+     * lazy-injected into transports that sign as the host.
      */
-    privateKey?: Hex.Hex | undefined
+    identity?: Transport.Identity | undefined
     /** Optional method-registry schema (typed `'request'` / `'notification'` payloads). */
     schema?: schema | undefined
     /** Host-role transports this wata wraps. */
@@ -1087,11 +1075,6 @@ function hostEventMeta(
   metadata?: Transport.MessageMeta | undefined,
 ): HostEventMeta {
   return { ...metadata, transport: transport.name }
-}
-
-function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {
-  const publicKey = Crypto.encodePublicKey(Ed25519.getPublicKey({ privateKey }))
-  return { privateKey, publicKey }
 }
 
 function assertUniqueTransportNames(transports: readonly HostTransport[]): void {
@@ -1134,7 +1117,7 @@ function isHttpServer<transport extends HostTransport>(
   transport: transport,
 ): transport is transport & Http.RoutedServer {
   const candidate = transport as Partial<Http.RoutedServer>
-  return typeof candidate.fetch === 'function' && typeof candidate.listener === 'function'
+  return typeof candidate.fetch === 'function'
 }
 
 /**
