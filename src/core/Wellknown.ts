@@ -2,7 +2,7 @@
  * Hono-free helpers used by both consumer-side and host-side
  * `Wata.create({ baseUrl, meta })` to auto-publish
  * `/.well-known/urpc/{host,consumer}.json` off the transport's
- * existing `.fetch` / `.listener` handlers.
+ * existing `.fetch` handler.
  *
  * Kept separate from `src/server/Discovery.ts` (which exposes the
  * standalone `hostWellknown` / `consumerWellknown` factories on
@@ -10,10 +10,6 @@
  * just to import `Wata.create`. The standalone factories are an
  * ops-side surface; the embedded `Wata.create({ baseUrl, meta })`
  * path needs only document construction + a small inline route check.
- *
- * The Node `.listener` is built via the same lazy `@hono/node-server`
- * pattern as {@link "./Http".fromHono}
- * so Workers / browser bundles never load the node-only module.
  */
 
 import { sha256 } from '@noble/hashes/sha2.js'
@@ -119,11 +115,10 @@ export function buildConsumerDocument(options: {
 }
 
 /**
- * Wrap a base `.fetch` / `.listener` pair so that GET requests to
- * `wellknownPath` serve the supplied `document` and everything else
- * falls through to `base.fetch`. When `base.fetch` is omitted (the
- * wrapped transport doesn't expose HTTP handlers), non-well-known
- * requests return `404`.
+ * Wrap a base `.fetch` handler so that GET requests to `wellknownPath`
+ * serve the supplied `document` and everything else falls through to
+ * `base.fetch`. When `base.fetch` is omitted (the wrapped transport
+ * doesn't expose HTTP handlers), non-well-known requests return `404`.
  */
 export function wrapFetch(options: {
   base: { fetch?: ((request: Request) => Promise<Response>) | undefined } | undefined
@@ -154,23 +149,5 @@ export function wrapFetch(options: {
     return new Response(null, { status: 404 })
   }
 
-  // Lazy `@hono/node-server` import mirrors {@link Http.fromHono} so
-  // Workers / browser bundles never load the node-only module unless
-  // `.listener` is actually invoked at runtime.
-  let nodeListener: Http.NodeListener | undefined
-  let nodeListenerLoad: Promise<Http.NodeListener> | undefined
-  const listener: Http.NodeListener = (req, res) => {
-    if (nodeListener) {
-      nodeListener(req, res)
-      return
-    }
-    if (!nodeListenerLoad)
-      nodeListenerLoad = import('@hono/node-server').then(({ getRequestListener }) => {
-        nodeListener = getRequestListener(fetch) as Http.NodeListener
-        return nodeListener
-      })
-    void nodeListenerLoad.then((handler) => handler(req, res))
-  }
-
-  return { fetch, listener }
+  return { fetch }
 }

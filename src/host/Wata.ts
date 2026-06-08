@@ -16,13 +16,11 @@ import { Ed25519, type Hex } from 'ox'
 
 import * as Crypto from '../core/Crypto.js'
 import * as Discovery from '../core/Discovery.js'
-import * as Envelope from '../core/Envelope.js'
 import * as Errors from '../core/Errors.js'
-import * as Events from '../core/Events.js'
 import * as Http from '../core/Http.js'
 import * as Rpc from '../core/Rpc.js'
+import * as Runtime from '../core/Runtime.js'
 import * as Schema from '../core/Schema.js'
-import * as SchemaRuntime from '../core/SchemaRuntime.js'
 import * as Transport from '../core/Transport.js'
 import * as Wellknown from '../core/Wellknown.js'
 import * as Wata from '../Wata.js'
@@ -171,7 +169,7 @@ type HostRequestListener<
   event: HostRequestEventOf<schema, method, transport, context>,
 ) => Host.ResultOf<schema, method> | Promise<Host.ResultOf<schema, method> | void> | void
 
-type HostRequestDispatchListener<
+export type HostRequestDispatchListener<
   schema extends Schema.Schema | undefined,
   transports extends HostTransports,
   context extends Rpc.RequestContext,
@@ -274,16 +272,14 @@ export type Host<
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
   /**
-   * Web-standard fetch handler + Node `http.RequestListener` pair
-   * forwarded from the transport when present. HTTP-shaped transports
-   * (`deviceCode`, `webhookCallback`, …) expose the standard
-   * {@link Http.Server} signatures that drop onto Cloudflare Workers,
-   * Bun, Deno, Vercel Edge, `node:http`, etc. Non-HTTP transports
-   * (`postMessage`, `loopback`, …) leave both `undefined`.
+   * Web-standard fetch handler forwarded from the transport when
+   * present. HTTP-shaped transports (`deviceCode`, `webhookCallback`,
+   * …) expose the standard {@link Http.Server} signature that drops
+   * onto Cloudflare Workers, Bun, Deno, Vercel Edge, Hono, etc. Node
+   * `http.RequestListener` adapters live behind `wata/server`
+   * `Handler` helpers.
    */
   fetch: Http.HandlersForTransports<transports>['fetch']
-  /** See {@link fetch}. */
-  listener: Http.HandlersForTransports<transports>['listener']
   /**
    * Send a typed JSON-RPC notification from the host to the consumer.
    * Auto-starts transports that support host-origin notifications.
@@ -466,475 +462,8 @@ export function create<
   // from one app-wide config.
   for (const transport of transports) transport.bind?.({ baseUrl, identity, meta })
 
-  const emitter = Events.create<HostEventMap<schema, transports, Wata.RequestContextOf<context>>>()
-  // User-supplied `request` listeners, in registration order. The
-  // `request` dispatch loop iterates these directly so it can capture
-  // each listener's return value (and thrown error) for the
-  // first-non-undefined-wins resolution semantics. Tracked here rather
-  // than via `emitter.on('request', ...)` because the wrapper swallows
-  // listener errors and never surfaces return values back to the caller.
-  type RequestPayload = HostEventMap<schema, transports, Wata.RequestContextOf<context>>['request']
-  type RequestListener = (payload: RequestPayload) => unknown
-  type RequestListenerEntry = {
-    listener: RequestListener
-    method?: string | undefined
-    source: object
-  }
-  const requestListeners = new Set<RequestListenerEntry>()
-  function addRequestListener(
-    listener: RequestListener,
-    source: object,
-    method?: string | undefined,
-  ): RequestListenerEntry {
-    const entry: RequestListenerEntry = {
-      listener,
-      source,
-      ...(method === undefined ? {} : { method }),
-    }
-    requestListeners.add(entry)
-    return entry
-  }
-
-  function removeRequestListener(source: object, method?: string | undefined): void {
-    for (const entry of requestListeners)
-      if (entry.source === source && entry.method === method) requestListeners.delete(entry)
-  }
-
-  type Runtime = {
-    phase: 'pre-key' | 'keyed'
-    started: boolean
-    startPromise: Promise<void> | undefined
-    transport: HostTransport
-  }
-  const runtimes: Runtime[] = transports.map((transport) => ({
-    phase: 'pre-key',
-    started: false,
-    startPromise: undefined,
-    transport,
-  }))
-  const invalid_context = Symbol('invalid context')
-  const pending = new Map<string, PendingRequest>()
-  let startPromise: Promise<void> | undefined
-
-  /**
-   * Returns the in-flight send Promise so callers that need to know
-   * the response actually flushed (popup hosts closing the window,
-   * worker hosts terminating, etc.) can `await` it. Resolves with
-   * `false` when no pending request matched `id`.
-   */
-  function settle(transport: HostTransport, id: Rpc.Id, response: Rpc.Response): Promise<boolean> {
-    const key = pendingKey(transport, id)
-    const entry = pending.get(key)
-    if (!entry) return Promise.resolve(false)
-    pending.delete(key)
-    return sendResponses(transport, [response]).then(() => true)
-  }
-
-  function success(id: Rpc.Id, method: string, result: unknown): Rpc.Success {
-    const value = schema ? SchemaRuntime.validateResultForMethod(schema, method, result) : result
-    return Rpc.success({ id, result: value })
-  }
-
-  function settleInternalError(
-    transport: HostTransport,
-    id: Rpc.Id,
-    cause: unknown,
-  ): Promise<boolean> {
-    const error = cause instanceof Error ? cause : new Errors.BaseError(String(cause))
-    emitter.emit('error', error)
-    return settle(
-      transport,
-      id,
-      Rpc.error({
-        code: -32603,
-        data: error.message,
-        id,
-        message: 'internal error',
-      }),
-    )
-  }
-
-  function settleSuccess(
-    transport: HostTransport,
-    id: Rpc.Id,
-    method: string,
-    result: unknown,
-  ): Promise<boolean> {
-    const response = success(id, method, result)
-    return settle(transport, id, response)
-  }
-
-  function resolvePending(id: Rpc.Id): PendingRequest | undefined {
-    const matches = Array.from(pending.values()).filter((entry) => entry.request.id === id)
-    if (matches.length === 0) return undefined
-    if (matches.length > 1)
-      throw new AmbiguousRequestError(
-        id,
-        matches.map((entry) => entry.transport.name),
-      )
-    return matches[0]
-  }
-
-  function clearPending(transport: HostTransport): void {
-    for (const [key, entry] of pending) if (entry.transport === transport) pending.delete(key)
-  }
-
-  async function respond(id: Rpc.Id, result: unknown): Promise<void> {
-    const entry = resolvePending(id)
-    const ok = entry
-      ? await settle(entry.transport, id, success(id, entry.request.method, result))
-      : false
-    if (!ok) throw new UnknownRequestError(id)
-  }
-
-  async function reject(id: Rpc.Id, error: reject.Error): Promise<void> {
-    const { code, data, message } = error
-    const entry = resolvePending(id)
-    const ok = entry
-      ? await settle(entry.transport, id, Rpc.error({ code, data, id, message }))
-      : false
-    if (!ok) throw new UnknownRequestError(id)
-  }
-
-  function startRuntime(runtime: Runtime): Promise<void> {
-    if (runtime.started) return Promise.resolve()
-    if (!runtime.startPromise) {
-      runtime.startPromise = runtime.transport
-        .start()
-        .then(() => {
-          runtime.started = true
-        })
-        .finally(() => {
-          runtime.startPromise = undefined
-        })
-    }
-    return runtime.startPromise
-  }
-
-  async function start(): Promise<void> {
-    if (startPromise) return startPromise
-    if (runtimes.every((runtime) => runtime.started)) return
-    startPromise = Promise.all(runtimes.map(startRuntime))
-      .then(() => {
-        emitter.emit('open', undefined)
-      })
-      .finally(() => {
-        startPromise = undefined
-      })
-    return startPromise
-  }
-
-  function lazyConnect(): void {
-    void start().catch((error: Error) => emitter.emit('error', error))
-  }
-
-  async function sendResponses(
-    transport: HostTransport,
-    responses: ReadonlyArray<Rpc.Response>,
-  ): Promise<void> {
-    const envelope = Envelope.rpcResponses(responses)
-    emitter.emit('rpc-responses', envelope.payload as Wata.RpcResponsesPayload<schema>, {
-      direction: 'outgoing',
-      transport: transport.name,
-      type: 'rpc-responses',
-    })
-    try {
-      await transport.send(envelope)
-    } catch {
-      // The transport surfaces its own error to listeners; swallow here so
-      // the host loop doesn't blow up after a peer disconnect.
-    }
-  }
-
-  function emitRpcRequests(
-    transport: HostTransport,
-    envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>,
-    direction: Wata.RpcEnvelopeMeta['direction'],
-  ): void {
-    emitter.emit(
-      'rpc-requests',
-      envelope.payload as unknown as Wata.RpcRequestsPayload<
-        schema,
-        Wata.RequestContextOf<context>
-      >,
-      {
-        direction,
-        transport: transport.name,
-        type: 'rpc-requests',
-      },
-    )
-  }
-
-  async function dispatchRequest(
-    runtime: Runtime,
-    request: Rpc.Request,
-    metadata?: Transport.MessageMeta | undefined,
-  ) {
-    const context_value = await (async () => {
-      if (request.context === undefined) return undefined
-      try {
-        return (
-          context
-            ? Schema.validate(context, request.context)
-            : Schema.validate(Rpc.schema.requestContext, request.context)
-        ) as Wata.RequestContextOf<context>
-      } catch (cause) {
-        await sendResponses(runtime.transport, [
-          Rpc.error({
-            code: -32600,
-            data: (cause as Error).message,
-            id: request.id,
-            message: 'invalid context',
-          }),
-        ])
-        return invalid_context
-      }
-    })()
-    if (context_value === invalid_context) return
-    const request_value = {
-      id: request.id,
-      jsonrpc: request.jsonrpc,
-      method: request.method,
-      params: request.params,
-      ...(context_value === undefined ? {} : { context: context_value }),
-    }
-    if (schema) {
-      try {
-        SchemaRuntime.validateParamsForMethod(schema, request_value.method, request_value.params)
-      } catch (cause) {
-        await sendResponses(runtime.transport, [
-          Rpc.error({
-            code: -32602,
-            data: (cause as Error).message,
-            id: request_value.id,
-            message: 'invalid params',
-          }),
-        ])
-        return
-      }
-    }
-
-    const snapshot = Array.from(requestListeners).filter(
-      (entry) => entry.method === undefined || entry.method === request_value.method,
-    )
-
-    // No matching listener has any chance of answering this request. Fall
-    // through to JSON-RPC `method not found` so the consumer doesn't hang.
-    if (snapshot.length === 0) {
-      await sendResponses(runtime.transport, [
-        Rpc.error({
-          code: -32601,
-          data: request_value.method,
-          id: request_value.id,
-          message: 'method not found',
-        }),
-      ])
-      return
-    }
-
-    // Track the request so `event.respond` / `event.reject` and the
-    // top-level `wata.respond` / `wata.reject` can all settle
-    // by id. The entry stays in `pending` until a listener answers
-    // (now or later) or the wata closes.
-    const key = pendingKey(runtime.transport, request_value.id)
-    pending.set(key, { request: request_value, transport: runtime.transport })
-
-    const payload = {
-      context: context_value,
-      id: request_value.id,
-      meta: hostEventMeta(runtime.transport, metadata),
-      method: request_value.method,
-      params: request_value.params,
-      reject: (rpcError: { code: number; data?: unknown; message: string }) =>
-        settle(
-          runtime.transport,
-          request_value.id,
-          Rpc.error({
-            code: rpcError.code,
-            data: rpcError.data,
-            id: request_value.id,
-            message: rpcError.message,
-          }),
-        ).then(() => undefined),
-      request: request_value,
-      respond: async (result: unknown) => {
-        try {
-          await settleSuccess(runtime.transport, request_value.id, request_value.method, result)
-        } catch (cause) {
-          await settleInternalError(runtime.transport, request_value.id, cause)
-          throw cause
-        }
-      },
-      transport: runtime.transport.name,
-    } as HostEventMap<schema, transports, Wata.RequestContextOf<context>>['request']
-
-    // Iterate the user-registered listeners directly so we can capture
-    // each one's outcome (return value or thrown error). Snapshot first
-    // because a listener may unsubscribe siblings during dispatch.
-    let firstError: Error | undefined
-    for (const entry of snapshot) {
-      if (!pending.has(key)) break
-      let value: unknown
-      try {
-        value = entry.listener(payload)
-      } catch (cause) {
-        firstError ??= cause as Error
-        continue
-      }
-      try {
-        const resolved = await Promise.resolve(value)
-        if (entry.method !== undefined && resolved !== undefined) {
-          try {
-            await settleSuccess(runtime.transport, request_value.id, request_value.method, resolved)
-          } catch (cause) {
-            await settleInternalError(runtime.transport, request_value.id, cause)
-          }
-          break
-        }
-      } catch (cause) {
-        firstError ??= cause as Error
-      }
-    }
-
-    if (pending.has(key) && firstError) {
-      if (firstError instanceof Rpc.RpcError)
-        await settle(
-          runtime.transport,
-          request_value.id,
-          Rpc.error({
-            code: firstError.code,
-            data: firstError.data,
-            id: request_value.id,
-            message: firstError.message,
-          }),
-        )
-      else
-        await settle(
-          runtime.transport,
-          request_value.id,
-          Rpc.error({
-            code: -32603,
-            data: firstError.message,
-            id: request_value.id,
-            message: 'internal error',
-          }),
-        )
-    }
-
-    // Otherwise: the request stays pending. A listener acknowledged it
-    // by being registered, so the host trusts the application to settle
-    // later via `wata.respond(id, ...)` / `wata.reject(id, ...)`.
-  }
-
-  function dispatchNotification(
-    runtime: Runtime,
-    message: Rpc.Notification,
-    metadata?: Transport.MessageMeta | undefined,
-  ) {
-    if (schema) {
-      try {
-        SchemaRuntime.validateParamsForMethod(schema, message.method, message.params)
-      } catch (cause) {
-        emitter.emit('error', cause as Error)
-        return
-      }
-    }
-    const payload = {
-      meta: hostEventMeta(runtime.transport, metadata),
-      method: message.method,
-      notification: message,
-      params: message.params,
-      transport: runtime.transport.name,
-    } as HostEventMap<schema, transports, Wata.RequestContextOf<context>>['notification']
-    emitter.emit(
-      'notification',
-      ...([payload] as Events.EventArgs<
-        HostEventMap<schema, transports, Wata.RequestContextOf<context>>['notification']
-      >),
-    )
-  }
-
-  /**
-   * Spec §7 mode-discipline rejection. Sends the peer an unsolicited
-   * JSON-RPC `-32600` error (`id: null`, since we have no request to
-   * correlate against), tears the transport down, and surfaces the
-   * cause to local listeners.
-   */
-  function rejectModeViolation(runtime: Runtime, reason: string): void {
-    const error = new Errors.ProtocolError(reason)
-    void (async () => {
-      await sendResponses(runtime.transport, [
-        Rpc.error({ code: -32600, data: reason, id: null, message: 'invalid request' }),
-      ])
-      try {
-        await runtime.transport.close(error)
-      } catch {
-        // Surface via the local `error` event regardless.
-      }
-      emitter.emit('error', error)
-    })()
-  }
-
-  for (const runtime of runtimes) {
-    runtime.transport.on('message', async (envelope, metadata) => {
-      if (runtime.phase === 'pre-key' && envelope.type === 'encrypted') {
-        rejectModeViolation(runtime, 'encrypted envelope received before key derivation')
-        return
-      }
-      if (runtime.phase === 'keyed' && envelope.type !== 'encrypted') {
-        rejectModeViolation(runtime, 'plaintext envelope received after key derivation')
-        return
-      }
-      if (envelope.type === 'rpc-requests') {
-        emitRpcRequests(runtime.transport, envelope, 'incoming')
-        for (const message of envelope.payload) {
-          if ('id' in message) await dispatchRequest(runtime, message, metadata)
-          else dispatchNotification(runtime, message, metadata)
-        }
-      }
-    })
-
-    runtime.transport.on('close', (cause) => {
-      if (!runtime.started) return
-      runtime.started = false
-      clearPending(runtime.transport)
-      emitter.emit('close', cause)
-    })
-
-    runtime.transport.on('error', (error) => {
-      emitter.emit('error', error)
-    })
-  }
-
   const routed = Http.composeRouted(transports.filter(isHttpServer))
-
-  async function notify(
-    options: Host.NotifyOptions<schema, Host.MethodName<schema>>,
-  ): Promise<void> {
-    const targets = runtimes.filter((runtime) => runtime.transport.capabilities.notifications.host)
-    if (targets.length === 0)
-      throw new Transport.UnsupportedError('no configured transport supports host notifications')
-    if (schema) SchemaRuntime.validateParamsForMethod(schema, options.method, options.params)
-    const envelope = Envelope.rpcRequests([
-      Rpc.notification({ method: options.method, params: options.params }),
-    ])
-    await Promise.all(
-      targets.map(async (runtime) => {
-        await startRuntime(runtime)
-        emitRpcRequests(runtime.transport, envelope, 'outgoing')
-        await runtime.transport.send(envelope)
-      }),
-    )
-  }
-
-  // When `meta` + `baseUrl` are both set, wrap routed transport fetch so
-  // GET `/.well-known/urpc/host.json`
-  // serves the auto-built document and every other request falls
-  // through to the underlying transport routes. Transports without
-  // `.fetch` can still publish a well-known (the wrapper exposes
-  // its own `.fetch` / `.listener` even when nothing else is mounted).
   let httpFetch = routed?.fetch
-  let httpListener = routed?.listener
   if (meta && baseUrl && identity) {
     const document = Wellknown.buildHostDocument({
       baseUrl,
@@ -948,84 +477,13 @@ export function create<
       wellknownPath: Wellknown.hostPath,
     })
     httpFetch = wrapped.fetch
-    httpListener = wrapped.listener
   }
 
+  const runtime = Runtime.create({ context, schema, transports })
   return {
-    async close(cause) {
-      pending.clear()
-      for (const runtime of runtimes) runtime.started = false
-      await Promise.all(transports.map((transport) => transport.close(cause)))
-      emitter.emit('close', cause)
-    },
+    ...runtime,
     fetch: httpFetch as Host<schema, transports, Wata.RequestContextOf<context>>['fetch'],
-    listener: httpListener as Host<schema, transports, Wata.RequestContextOf<context>>['listener'],
-    notify,
-    off(
-      type: keyof HostEventMap<schema, transports, Wata.RequestContextOf<context>>,
-      method_or_listener:
-        | string
-        | HostRequestDispatchListener<schema, transports, Wata.RequestContextOf<context>>
-        | Wata.Listener<
-            HostEventMap<schema, transports, Wata.RequestContextOf<context>>[typeof type]
-          >,
-      listener?: unknown,
-    ) {
-      if (type === 'request') {
-        removeRequestListener(
-          typeof method_or_listener === 'string'
-            ? (listener as object)
-            : (method_or_listener as object),
-          typeof method_or_listener === 'string' ? method_or_listener : undefined,
-        )
-        return
-      }
-      emitter.off(type, method_or_listener as never)
-    },
-    on(
-      type: keyof HostEventMap<schema, transports, Wata.RequestContextOf<context>>,
-      method_or_listener:
-        | string
-        | HostRequestDispatchListener<schema, transports, Wata.RequestContextOf<context>>
-        | Wata.Listener<
-            HostEventMap<schema, transports, Wata.RequestContextOf<context>>[typeof type]
-          >,
-      listener?: unknown,
-    ) {
-      const controller = new AbortController()
-      if (type === 'request') {
-        const source =
-          typeof method_or_listener === 'string'
-            ? (listener as object)
-            : (method_or_listener as object)
-        const entry = addRequestListener(
-          (typeof method_or_listener === 'string'
-            ? listener
-            : method_or_listener) as RequestListener,
-          source,
-          typeof method_or_listener === 'string' ? method_or_listener : undefined,
-        )
-        controller.signal.addEventListener(
-          'abort',
-          () => {
-            requestListeners.delete(entry)
-          },
-          { once: true },
-        )
-        lazyConnect()
-        return controller
-      }
-      emitter.on(type, method_or_listener as never, { signal: controller.signal })
-      lazyConnect()
-      return controller
-    },
-    reject,
-    respond,
-    role: 'host',
-    schema,
-    start,
-    transports,
-  }
+  } as Host<schema, transports, Wata.RequestContextOf<context>>
 }
 
 export declare namespace create {
@@ -1057,7 +515,7 @@ export declare namespace create {
      * Optional human-facing app metadata. When set together with
      * {@link baseUrl} and {@link privateKey}, `Wata` auto-publishes
      * a `/.well-known/urpc/host.json` off the transport's existing
-     * `.fetch` / `.listener`. No separate mount required. The
+     * `.fetch`. No separate mount required. The
      * published doc's `transports` map is auto-built from the
      * transport's {@link Transport.Transport.discovery} binding.
      * Lazy-injected into transports that opt into
@@ -1075,18 +533,6 @@ export declare namespace create {
     /** Host-role transports this wata wraps. */
     transports: transports
   }
-}
-
-type PendingRequest = {
-  request: Rpc.Request
-  transport: HostTransport
-}
-
-function hostEventMeta(
-  transport: HostTransport,
-  metadata?: Transport.MessageMeta | undefined,
-): HostEventMeta {
-  return { ...metadata, transport: transport.name }
 }
 
 function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {
@@ -1126,15 +572,11 @@ export function collectTransports(
   return documentTransports
 }
 
-function pendingKey(transport: HostTransport, id: Rpc.Id): string {
-  return JSON.stringify([transport.name, id])
-}
-
 function isHttpServer<transport extends HostTransport>(
   transport: transport,
 ): transport is transport & Http.RoutedServer {
   const candidate = transport as Partial<Http.RoutedServer>
-  return typeof candidate.fetch === 'function' && typeof candidate.listener === 'function'
+  return typeof candidate.fetch === 'function'
 }
 
 /**
@@ -1142,25 +584,13 @@ function isHttpServer<transport extends HostTransport>(
  * transport has a pending request with the supplied id. Use the request
  * event's `respond` / `reject` helpers to target the delivering transport.
  */
-export class AmbiguousRequestError extends Errors.BaseError {
-  override name = 'Wata.AmbiguousRequestError'
-
-  constructor(id: Rpc.Id, transports: readonly string[]) {
-    super(`multiple pending requests with id \`${String(id)}\``, {
-      details: `matching transports: ${transports.join(', ')}`,
-    })
-  }
-}
+export const AmbiguousRequestError = Runtime.AmbiguousRequestError
+export type AmbiguousRequestError = Runtime.AmbiguousRequestError
 
 /**
  * Thrown by {@link Host.respond} / {@link Host.reject} when no inbound
  * request with the supplied id is currently pending. Means the request
  * was already settled, never received, or the wata has closed.
  */
-export class UnknownRequestError extends Errors.BaseError {
-  override name = 'Wata.UnknownRequestError'
-
-  constructor(id: Rpc.Id) {
-    super(`no pending request with id \`${String(id)}\``)
-  }
-}
+export const UnknownRequestError = Runtime.UnknownRequestError
+export type UnknownRequestError = Runtime.UnknownRequestError

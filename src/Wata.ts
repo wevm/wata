@@ -22,13 +22,12 @@ import { Ed25519, type Hex } from 'ox'
 
 import * as Crypto from './core/Crypto.js'
 import * as Discovery from './core/Discovery.js'
-import * as Envelope from './core/Envelope.js'
 import * as Errors from './core/Errors.js'
 import * as Events from './core/Events.js'
 import * as Http from './core/Http.js'
 import * as Rpc from './core/Rpc.js'
+import * as Runtime from './core/Runtime.js'
 import * as Schema from './core/Schema.js'
-import * as SchemaRuntime from './core/SchemaRuntime.js'
 import * as Transport from './core/Transport.js'
 import * as Wellknown from './core/Wellknown.js'
 
@@ -235,8 +234,6 @@ export type ConsumerBase<
    * transport exposes HTTP routes or when discovery is auto-published.
    */
   fetch: Http.HandlersForTransports<transports>['fetch']
-  /** See {@link fetch}. */
-  listener: Http.HandlersForTransports<transports>['listener']
   /** Remove a previously subscribed consumer listener. */
   off: <type extends keyof ConsumerEventMap<schema, context>>(
     type: type,
@@ -394,12 +391,8 @@ export function create<
   // one app-level `Wata.create` call.
   for (const transport of transports) transport.bind?.({ baseUrl, identity, meta })
 
-  const sessions = transports.map((transport) =>
-    createConsumerSession({ context, schema, transport }),
-  )
   const routed = Http.composeRouted(transports.filter(isHttpServer))
   let httpFetch = routed?.fetch
-  let httpListener = routed?.listener
   if (meta && baseUrl) {
     const publicKey = identity?.publicKey ?? collectPublicKey(transports)
     const callbackUrls = collectCallbackUrls(transports)
@@ -415,361 +408,13 @@ export function create<
       wellknownPath: Wellknown.consumerPath,
     })
     httpFetch = wrapped.fetch
-    httpListener = wrapped.listener
   }
 
-  if (sessions.length === 1) {
-    const session = sessions[0]!
-    return {
-      ...session,
-      fetch: httpFetch as Consumer<schema, transports, RequestContextOf<context>>['fetch'],
-      listener: httpListener as Consumer<schema, transports, RequestContextOf<context>>['listener'],
-      transports,
-    } as unknown as Consumer<schema, transports, RequestContextOf<context>>
-  }
-
-  const emitter = Events.create<ConsumerEventMap<schema, RequestContextOf<context>>>()
-  for (const session of sessions) {
-    session.on('error', (error) => emitter.emit('error', error))
-    session.on('notification', (...payload) => emitter.emit('notification', ...payload))
-    session.on('rpc-requests', (payload, meta) => emitter.emit('rpc-requests', payload, meta))
-    session.on('rpc-responses', (payload, meta) => emitter.emit('rpc-responses', payload, meta))
-  }
-  const consumer = {
-    async close(cause?: Error) {
-      await Promise.all(sessions.map((session) => session.close(cause)))
-      emitter.emit('close', cause)
-    },
-    fetch: httpFetch as Consumer<schema, transports, RequestContextOf<context>>['fetch'],
-    listener: httpListener as Consumer<schema, transports, RequestContextOf<context>>['listener'],
-    off: emitter.off,
-    on(
-      type: keyof ConsumerEventMap<schema, RequestContextOf<context>>,
-      listener: Listener<ConsumerEventMap<schema, RequestContextOf<context>>[typeof type]>,
-    ) {
-      const controller = new AbortController()
-      emitter.on(type, listener as never, { signal: controller.signal })
-      return controller
-    },
-    role: 'consumer' as const,
-    schema,
-    transports,
-  }
-  for (const session of sessions) Object.assign(consumer, { [session.transport.name]: session })
-  return consumer as unknown as Consumer<schema, transports, RequestContextOf<context>>
-}
-
-function createConsumerSession<
-  const schema extends Schema.Schema | undefined,
-  const transport extends Transport.Transport<'consumer', string, unknown>,
-  const context extends Schema.Context | undefined,
->(parameters: {
-  context: context
-  schema: schema
-  transport: transport
-}): ConsumerSession<schema, transport, RequestContextOf<context>> {
-  const { context, schema, transport } = parameters
-
-  const emitter = Events.create<ConsumerEventMap<schema, RequestContextOf<context>>>()
-  const pending = new Map<Rpc.Id, Pending>()
-  const methodById = new Map<Rpc.Id, string>()
-  // `started` = currently in an active session. After close, drops back
-  // to `false`, and the next `send()` / `notify()` lazily re-starts the
-  // transport. Popups closing externally are a normal end-of-session
-  // event, not a permanent wata failure.
-  //
-  // `phase` enforces the spec §7 mode-discipline gate: while `pre-key`,
-  // any inbound `encrypted` envelope is rejected with JSON-RPC `-32600`
-  // and the session is torn down. Once the AEAD layer flips it to
-  // `keyed` (after key derivation), the inverse rule kicks in: any
-  // inbound plaintext envelope is rejected the same
-  // way. The transition is one-way; never reverts.
-  type State = { phase: 'pre-key' | 'keyed'; started: boolean }
-  const state: State = {
-    phase: 'pre-key',
-    started: false,
-  }
-  let startPromise: Promise<void> | undefined
-  let nextId = 1
-
-  function rejectPending(cause: Error) {
-    for (const [, deferred] of pending) deferred.reject(cause)
-    pending.clear()
-    methodById.clear()
-  }
-
-  function rejectResponseValidation(message: Rpc.Response, cause: unknown): void {
-    if ('error' in message || message.id === null) {
-      emitter.emit('error', cause as Error)
-      return
-    }
-    const deferred = pending.get(message.id)
-    if (!deferred) {
-      emitter.emit('error', cause as Error)
-      return
-    }
-    pending.delete(message.id)
-    methodById.delete(message.id)
-    emitter.emit('error', cause as Error)
-    deferred.reject(cause as Error)
-  }
-
-  function validateResponseMessage(message: Rpc.Response): Rpc.Response {
-    if ('error' in message) return message
-    if (!schema) return message
-    const method = message.id === null ? undefined : methodById.get(message.id)
-    const result = SchemaRuntime.validateResultForMethod(schema, method, message.result)
-    return {
-      id: message.id,
-      jsonrpc: message.jsonrpc,
-      result,
-    }
-  }
-
-  function handleResponse(message: Rpc.Response, options: { validated?: boolean } = {}) {
-    if ('error' in message) {
-      const id = message.id
-      if (id === null) return
-      const deferred = pending.get(id)
-      if (!deferred) return
-      pending.delete(id)
-      methodById.delete(id)
-      const { code, data, message: text } = message.error
-      deferred.reject(new Rpc.RpcError(text, { code, data }))
-      return
-    }
-    const id = message.id
-    if (id === null) return
-    const deferred = pending.get(id)
-    if (!deferred) return
-    pending.delete(id)
-    const method = methodById.get(id)
-    methodById.delete(id)
-    try {
-      const validated = options.validated
-        ? message.result
-        : schema
-          ? SchemaRuntime.validateResultForMethod(schema, method, message.result)
-          : message.result
-      deferred.resolve({ id, result: validated })
-    } catch (cause) {
-      deferred.reject(cause as Error)
-    }
-  }
-
-  function dispatchNotification(message: Rpc.Notification): void {
-    if (schema) {
-      try {
-        SchemaRuntime.validateParamsForMethod(schema, message.method, message.params)
-      } catch (cause) {
-        emitter.emit('error', cause as Error)
-        return
-      }
-    }
-    const payload = {
-      method: message.method,
-      notification: message,
-      params: message.params,
-      transport: transport.name,
-    } as ConsumerEventMap<schema, RequestContextOf<context>>['notification']
-    emitter.emit(
-      'notification',
-      ...([payload] as Events.EventArgs<
-        ConsumerEventMap<schema, RequestContextOf<context>>['notification']
-      >),
-    )
-  }
-
-  function emitRpcResponses(
-    envelope: Extract<Envelope.Envelope, { type: 'rpc-responses' }>,
-    direction: RpcEnvelopeMeta['direction'],
-  ): void {
-    emitter.emit('rpc-responses', envelope.payload as RpcResponsesPayload<schema>, {
-      direction,
-      transport: transport.name,
-      type: 'rpc-responses',
-    })
-  }
-
-  function emitRpcRequests(
-    envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>,
-    direction: RpcEnvelopeMeta['direction'],
-  ): void {
-    emitter.emit(
-      'rpc-requests',
-      envelope.payload as unknown as RpcRequestsPayload<schema, RequestContextOf<context>>,
-      {
-        direction,
-        transport: transport.name,
-        type: 'rpc-requests',
-      },
-    )
-  }
-
-  /**
-   * Spec §7 mode-discipline rejection. Sends the peer an unsolicited
-   * JSON-RPC `-32600` error (`id: null`, since we have no request to
-   * correlate against), tears the transport down, and surfaces the
-   * cause to local listeners.
-   */
-  function rejectModeViolation(reason: string): void {
-    const error = new Errors.ProtocolError(reason)
-    void (async () => {
-      try {
-        const envelope = Envelope.rpcResponses([
-          Rpc.error({ code: -32600, data: reason, id: null, message: 'invalid request' }),
-        ])
-        emitRpcResponses(envelope, 'outgoing')
-        await transport.send(envelope)
-      } catch {
-        // Peer may already be unreachable; the teardown below is what matters.
-      }
-      try {
-        await transport.close(error)
-      } catch {
-        // Same: surface via the local `error` event below regardless.
-      }
-      emitter.emit('error', error)
-    })()
-  }
-
-  transport.on('message', (envelope) => {
-    // Pre-key phase: encrypted frames are not yet allowed (the AEAD
-    // layer has not derived keys for this session). Spec §7 mandates
-    // a JSON-RPC `-32600` response and immediate teardown.
-    if (state.phase === 'pre-key' && envelope.type === 'encrypted') {
-      rejectModeViolation('encrypted envelope received before key derivation')
-      return
-    }
-    // Keyed phase: the inverse, any plaintext envelope is rejected
-    // because the spec forbids mixing plaintext and ciphertext after
-    // keying. Reachable once a session enters keyed mode; harmless
-    // while nothing flips `state.phase` to `keyed`.
-    if (state.phase === 'keyed' && envelope.type !== 'encrypted') {
-      rejectModeViolation('plaintext envelope received after key derivation')
-      return
-    }
-    if (envelope.type === 'rpc-responses') {
-      const payload: Rpc.Response[] = []
-      for (const message of envelope.payload) {
-        try {
-          payload.push(validateResponseMessage(message))
-        } catch (cause) {
-          rejectResponseValidation(message, cause)
-        }
-      }
-      if (payload.length === 0) return
-      const envelope_validated = Envelope.rpcResponses(payload)
-      emitRpcResponses(envelope_validated, 'incoming')
-      for (const message of envelope_validated.payload) handleResponse(message, { validated: true })
-      return
-    }
-    if (envelope.type === 'rpc-requests') {
-      emitRpcRequests(envelope, 'incoming')
-      for (const message of envelope.payload) if (!('id' in message)) dispatchNotification(message)
-      return
-    }
-    // `ready` / `hello` ride at the transport layer.
-  })
-
-  transport.on('close', (cause) => {
-    if (!state.started) return
-    state.started = false
-    rejectPending(cause ?? new Transport.ClosedError('wata transport closed'))
-    emitter.emit('close', cause)
-  })
-
-  transport.on('error', (error) => {
-    emitter.emit('error', error)
-  })
-
-  async function start(): Promise<void> {
-    if (state.started) return
-    if (startPromise) return startPromise
-    startPromise = (async () => {
-      try {
-        await transport.start()
-        state.started = true
-        emitter.emit('open', undefined)
-      } finally {
-        startPromise = undefined
-      }
-    })()
-    return startPromise
-  }
-
+  const runtime = Runtime.create({ context, schema, transports })
   return {
-    async close(cause) {
-      if (!state.started) return
-      state.started = false
-      rejectPending(cause ?? new Transport.ClosedError('wata closed locally'))
-      await transport.close(cause)
-      emitter.emit('close', cause)
-    },
-    async notify(opts) {
-      if (!transport.capabilities.notifications.consumer)
-        throw new Transport.UnsupportedError(
-          `transport \`${transport.name}\` does not support consumer notifications`,
-        )
-      if (!state.started) await start()
-      if (schema) SchemaRuntime.validateParamsForMethod(schema, opts.method, opts.params)
-      const envelope = Envelope.rpcRequests([
-        Rpc.notification({ method: opts.method, params: opts.params }),
-      ])
-      emitRpcRequests(envelope, 'outgoing')
-      await transport.send(envelope)
-    },
-    off: emitter.off,
-    on(type, listener) {
-      const controller = new AbortController()
-      emitter.on(type, listener, { signal: controller.signal })
-      return controller
-    },
-    role: 'consumer',
-    schema,
-    async send(opts) {
-      if (!state.started) await start()
-
-      const id = opts.id ?? nextId++
-      if (schema) SchemaRuntime.validateParamsForMethod(schema, opts.method, opts.params)
-      const context_value =
-        opts.context === undefined
-          ? undefined
-          : context
-            ? Schema.validate(context, opts.context)
-            : Schema.validate(Rpc.schema.requestContext, opts.context)
-
-      const deferred = new Promise<SendResult<unknown>>((resolve, reject) => {
-        pending.set(id, { reject, resolve })
-      })
-      methodById.set(id, opts.method)
-
-      try {
-        const envelope = Envelope.rpcRequests([
-          Rpc.request({
-            context: context_value,
-            id,
-            method: opts.method,
-            params: opts.params,
-          }),
-        ])
-        emitRpcRequests(envelope, 'outgoing')
-        const metadata = await transport.send(envelope)
-        if (metadata !== undefined) {
-          void deferred.catch(() => undefined)
-          return metadata as Consumer.SendReturn<schema, transport, typeof opts.method>
-        }
-      } catch (cause) {
-        pending.delete(id)
-        methodById.delete(id)
-        throw cause
-      }
-
-      return (await deferred) as Consumer.SendReturn<schema, transport, typeof opts.method>
-    },
-    start,
-    transport,
-  }
+    ...runtime,
+    fetch: httpFetch as Consumer<schema, transports, RequestContextOf<context>>['fetch'],
+  } as unknown as Consumer<schema, transports, RequestContextOf<context>>
 }
 
 export declare namespace create {
@@ -800,7 +445,7 @@ export declare namespace create {
      * Optional human-facing app metadata. When set together with
      * {@link baseUrl}, `Wata` auto-publishes a
      * `/.well-known/urpc/consumer.json` off the transport's
-     * `.fetch` / `.listener` (or as a standalone surface if the
+     * `.fetch` (or as a standalone surface if the
      * transport doesn't expose its own HTTP handlers).
      * Lazy-injected into transports via
      * {@link Transport.Transport.bind}.
@@ -856,12 +501,7 @@ function isHttpServer<transport extends Transport.Transport<Transport.Role, stri
   transport: transport,
 ): transport is transport & Http.RoutedServer {
   const candidate = transport as Partial<Http.RoutedServer>
-  return typeof candidate.fetch === 'function' && typeof candidate.listener === 'function'
-}
-
-type Pending = {
-  reject: (error: Error) => void
-  resolve: (result: SendResult<unknown>) => void
+  return typeof candidate.fetch === 'function'
 }
 
 function identityFromPrivateKey(privateKey: Hex.Hex): Transport.Identity {

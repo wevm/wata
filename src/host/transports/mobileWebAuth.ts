@@ -540,7 +540,7 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     })
   }
 
-  const { fetch, listener } = Http.fromHono(app)
+  const { fetch } = Http.fromHono(app)
 
   return {
     capabilities: {
@@ -565,7 +565,6 @@ export function mobileWebAuth(options: Options): MobileWebAuth {
     },
     exchange: 'single_exchange',
     fetch,
-    listener,
     name: 'mobileWebAuth',
     on: emitter.on,
     role: 'host',

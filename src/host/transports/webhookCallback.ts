@@ -31,6 +31,7 @@
  * ```ts
  * import { createServer } from 'node:http'
  * import { Wata, Kv, webhookCallback } from 'wata/host'
+ * import { Handler } from 'wata/server'
  *
  * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
@@ -55,7 +56,7 @@
  *   ],
  * })
  *
- * createServer(wata.listener).listen(3000)
+ * createServer(Handler.listener(wata.fetch)).listen(3000)
  * ```
  */
 
@@ -337,7 +338,7 @@ export declare namespace html {
   }
 }
 
-/** `transport.fetch` / `transport.listener`-augmented {@link Transport.Transport}. */
+/** `transport.fetch`-augmented {@link Transport.Transport}. */
 export type WebhookCallback = Transport.Transport<'host', 'webhookCallback'> & Http.Server
 
 type DeliveryAttempt = { type: 'delivered' } | { error: Error; retryable: boolean; type: 'failed' }
@@ -1083,7 +1084,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     return c.json({ closeTab: true })
   })
 
-  const { fetch, listener } = Http.fromHono(app)
+  const { fetch } = Http.fromHono(app)
 
   // ── outbound webhook delivery ───────────────────────────────────────
 
@@ -1541,7 +1542,6 @@ export function webhookCallback(options: Options): WebhookCallback {
     },
     exchange: 'single_exchange',
     fetch,
-    listener,
     name: 'webhookCallback',
     on: emitter.on,
     role: 'host',

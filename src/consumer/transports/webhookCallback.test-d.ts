@@ -3,7 +3,7 @@ import { describe, expectTypeOf, test } from 'vp/test'
 import { Kv, Transport, WebhookCallback, Wata, webhookCallback } from 'wata'
 
 describe('webhookCallback (consumer)', () => {
-  test('returns a single-exchange consumer-role transport with `.fetch` + `.listener`', () => {
+  test('returns a single-exchange consumer-role transport with `.fetch`', () => {
     const transport = webhookCallback({
       host: 'https://wallet.example',
       path: '/cb',
@@ -15,7 +15,6 @@ describe('webhookCallback (consumer)', () => {
       Transport.Transport<'consumer', 'webhookCallback', WebhookCallback.Registration>
     >()
     expectTypeOf(transport.fetch).toEqualTypeOf<(request: Request) => Promise<Response>>()
-    expectTypeOf(transport.listener).toBeFunction()
     expectTypeOf(transport.cancel).toEqualTypeOf<() => Promise<void>>()
     expectTypeOf(transport.callbackUrls).toEqualTypeOf<readonly string[] | undefined>()
   })

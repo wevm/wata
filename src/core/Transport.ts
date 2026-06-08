@@ -193,8 +193,8 @@ export type Transport<
   role: role
   /**
    * HTTP route prefixes owned by this transport, when it exposes
-   * `.fetch` / `.listener`. Composite `Wata.create({ transports })`
-   * uses these to route requests without probing every transport.
+   * `.fetch`. Composite `Wata.create({ transports })` uses these to
+   * route requests without probing every transport.
    */
   routes?: readonly string[] | undefined
   /** Send a single envelope frame to the peer. */

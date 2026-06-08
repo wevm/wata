@@ -3,7 +3,7 @@ import { describe, expectTypeOf, test } from 'vp/test'
 import { Kv, MessageSig, Transport, WebhookCallback, Wata, webhookCallback } from 'wata/host'
 
 describe('webhookCallback (host)', () => {
-  test('returns a single-exchange host-role transport with `.fetch` + `.listener`', () => {
+  test('returns a single-exchange host-role transport with `.fetch`', () => {
     const transport = webhookCallback({
       baseUrl: 'https://wallet.example',
       html: {
@@ -17,7 +17,6 @@ describe('webhookCallback (host)', () => {
     expectTypeOf(transport.exchange).toEqualTypeOf<Transport.Exchange>()
     expectTypeOf(transport).toMatchTypeOf<Transport.Transport<'host'>>()
     expectTypeOf(transport.fetch).toEqualTypeOf<(request: Request) => Promise<Response>>()
-    expectTypeOf(transport.listener).toBeFunction()
   })
 
   test('feeds Wata.create as a host transport', () => {

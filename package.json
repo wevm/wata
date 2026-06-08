@@ -56,6 +56,12 @@
       "react-native": "./dist/Wata.js",
       "default": "./dist/Wata.js"
     },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "src": "./src/core/index.ts",
+      "react-native": "./dist/core/index.js",
+      "default": "./dist/core/index.js"
+    },
     "./consumer/transports/deviceCode": {
       "types": "./dist/consumer/transports/deviceCode.d.ts",
       "src": "./src/consumer/transports/deviceCode.ts",

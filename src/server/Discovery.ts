@@ -13,10 +13,10 @@
  * - Multi-tenant servers where the doc is assembled per tenant.
  * - Pre-route-mount inspection in tests.
  *
- * Both factories return the same {@link Http.Server} shape
- * (`.fetch` + `.listener`) that every HTTP-server-shaped surface in
- * the library exposes, so mounting is identical to mounting a host
- * transport's routes.
+ * Both factories return the same fetch-first {@link Http.Server} shape
+ * that every HTTP-shaped surface in the library exposes. Node
+ * `http.RequestListener` adapters live behind `wata/server`
+ * `Handler` helpers.
  *
  * @example minimal Cloudflare Worker publishing `consumer.json`
  * ```ts
@@ -122,7 +122,7 @@ export type ConsumerOptions = {
 }
 
 /**
- * Create an `{ fetch, listener }` pair that serves
+ * Create a `{ fetch }` server that serves
  * `/.well-known/urpc/host.json` for a host wallet.
  *
  * @example
@@ -158,7 +158,7 @@ export function hostWellknown(options: HostOptions = {}): Http.Server {
 }
 
 /**
- * Create an `{ fetch, listener }` pair that serves
+ * Create a `{ fetch }` server that serves
  * `/.well-known/urpc/consumer.json` for a consumer app.
  *
  * @example

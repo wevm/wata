@@ -70,7 +70,6 @@ function httpTransport<const name extends string>(options: {
   routes?: readonly string[] | undefined
 }): Transport.Transport<'host', name> & {
   fetch: (request: Request) => Promise<Response>
-  listener: (req: unknown, res: unknown) => void
 } {
   const { discoveryId, name, routes } = options
   return {
@@ -89,7 +88,6 @@ function httpTransport<const name extends string>(options: {
       : {}),
     exchange: 'single_exchange',
     fetch: async () => new Response(name),
-    listener() {},
     name,
     on() {},
     role: 'host',
@@ -820,9 +818,7 @@ describe('send', () => {
 
     await expect(
       consumer.send({ method: 'ping', params: [] }),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Rpc.RpcError: internal error]`,
-    )
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: internal error]`)
   })
 
   test('event.respond validation failures settle the request with an internal error', async () => {
@@ -841,9 +837,7 @@ describe('send', () => {
 
     await expect(
       consumer.send({ method: 'ping', params: [] }),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Rpc.RpcError: internal error]`,
-    )
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: internal error]`)
     expect(failure).toMatchInlineSnapshot(`
       [ProtocolError: schema validation failed
       Details: <root>: Invalid input]
@@ -864,7 +858,8 @@ describe('send', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    await expect(host.respond(captured!.id, 'not the ping result')).rejects.toThrowErrorMatchingInlineSnapshot(`
+    await expect(host.respond(captured!.id, 'not the ping result')).rejects
+      .toThrowErrorMatchingInlineSnapshot(`
       [ProtocolError: schema validation failed
       Details: <root>: Invalid input]
     `)

@@ -5,6 +5,7 @@ import { playwright } from 'vp/test/browser-playwright'
 export default defineConfig({
   resolve: {
     alias: {
+      'wata/core': path.resolve(import.meta.dirname, 'src/core/index.ts'),
       'wata/host': path.resolve(import.meta.dirname, 'src/host/index.ts'),
       'wata/server': path.resolve(import.meta.dirname, 'src/server/index.ts'),
       wata: path.resolve(import.meta.dirname, 'src'),

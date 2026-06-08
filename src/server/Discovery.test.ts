@@ -289,8 +289,8 @@ describe('etag', () => {
   })
 })
 
-describe('listener', () => {
-  test('host and consumer factories expose a Node-shaped listener', () => {
+describe('fetch', () => {
+  test('host and consumer factories expose fetch handlers', () => {
     const host = hostWellknown({
       meta: { name: 'X' },
       publicKey,
@@ -298,12 +298,12 @@ describe('listener', () => {
     })
     const consumer = consumerWellknown({ meta: { name: 'Y' } })
     expect({
-      consumerListener: typeof consumer.listener,
-      hostListener: typeof host.listener,
+      consumerFetch: typeof consumer.fetch,
+      hostFetch: typeof host.fetch,
     }).toMatchInlineSnapshot(`
       {
-        "consumerListener": "function",
-        "hostListener": "function",
+        "consumerFetch": "function",
+        "hostFetch": "function",
       }
     `)
   })

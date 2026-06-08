@@ -11,7 +11,7 @@
  * 2. Resolves once the host accepts (`200 OK`, with
  *    `auth_req_id` / `verification_uri`) and returns registration metadata
  *    so the caller can fan the user out to the verification URI.
- * 3. The transport's `.fetch` / `.listener` handle the incoming
+ * 3. The transport's `.fetch` handles the incoming
  *    `POST <baseUrl><path>` from the host: verify RFC 9421 signature
  *    against the host's pinned `identity_pubkey`, verify the
  *    `Content-Digest`, enforce per-`auth_req_id` nonce replay
@@ -117,8 +117,8 @@ export type Options = {
 
 /**
  * Webhook-callback transport extension: bare {@link Transport.Transport}
- * plus the `.fetch` / `.listener` pair the consumer needs to serve
- * incoming webhook deliveries, plus an explicit {@link cancel} hook.
+ * plus the `.fetch` handler the consumer needs to serve incoming
+ * webhook deliveries, plus an explicit {@link cancel} hook.
  */
 export type WebhookCallback = Transport.Transport<'consumer', 'webhookCallback', Registration> &
   Http.Server & {
@@ -503,7 +503,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     return c.json({ ok: true }, { status: 200 })
   })
 
-  const { fetch, listener } = Http.fromHono(app)
+  const { fetch } = Http.fromHono(app)
 
   async function cancel(): Promise<void> {
     if (!state.activeAuthReqId) return
@@ -569,7 +569,6 @@ export function webhookCallback(options: Options): WebhookCallback {
     },
     exchange: 'single_exchange',
     fetch,
-    listener,
     name: 'webhookCallback',
     on: emitter.on,
     get publicKey() {

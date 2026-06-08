@@ -8,6 +8,7 @@
     "target": "esnext",
     "paths": {
       "wata": ["./src/index.ts"],
+      "wata/core": ["./src/core/index.ts"],
       "wata/host": ["./src/host/index.ts"],
       "wata/server": ["./src/server/index.ts"]
     },

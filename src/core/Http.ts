@@ -5,28 +5,21 @@
  * (`deviceCode`, `webhookCallback`, the callback halves of
  * `mobileWebAuth` / `mobileLink`), the standalone well-known publishers
  * (`hostWellknown` / `consumerWellknown`), and the embedded
- * `Wata.create({ baseUrl, meta })` wrappers — uses the same {@link Server}
- * pair:
+ * `Wata.create({ baseUrl, meta })` wrappers — uses the same
+ * {@link Server} shape:
  *
  * - `fetch: (request: Request) => Promise<Response>` — web-standard,
  *   runs on Cloudflare Workers / Bun / Deno / Vercel Edge / browsers
  *   without any Node-specific dependencies loading.
- * - `listener: (req, res) => void` — Node `http.RequestListener`-shaped
- *   adapter, lazily backed by `@hono/node-server`'s `getRequestListener`.
  *
- * {@link fromHono} bundles a Hono app into both shapes in one call.
- * The Node listener is **lazily** instantiated on first invocation: the
- * underlying `@hono/node-server` module has top-level value imports of
- * `node:http2` / `node:stream` / `node:process` that would crash a
- * Workers / browser bundle at module-evaluation time. Deferring the
- * `import('@hono/node-server')` until `.listener` is actually called
- * keeps the load path completely free of node primitives for runtimes
- * that only use `.fetch`.
+ * Node `http.RequestListener` adapters live behind `wata/server`
+ * `Handler` helpers so browser and React Native bundles never resolve
+ * Node server modules through the universal import graph.
  *
  * {@link Handlers} is the conditional helper `Wata` types use to
  * forward `Server` onto the consumer / host surface when the wrapped
- * transport carries HTTP routes (and collapse it to all-`undefined`
- * when it doesn't).
+ * transport carries HTTP routes (and collapse it to `undefined` when
+ * it doesn't).
  */
 
 import type { Hono } from 'hono'
@@ -41,37 +34,21 @@ import * as Errors from './Errors.js'
  */
 export type NodeListener = (req: unknown, res: unknown) => void
 
-/**
- * Fetch + lazy Node listener pair returned by {@link fromHono} and
- * exposed by every HTTP-shaped transport / well-known publisher.
- */
+/** Fetch handler exposed by every HTTP-shaped transport / publisher. */
 export type Server = {
   /** Web-standard fetch handler. Runs on every Request/Response runtime. */
   fetch: (request: Request) => Promise<Response>
-  /**
-   * Node `http.RequestListener`-shaped adapter. Lazily backed by
-   * `@hono/node-server`'s `getRequestListener` on first invocation so
-   * Workers / browser bundles never load the node-only module.
-   */
-  listener: NodeListener
 }
 
 /**
  * Conditional that resolves to {@link Server} when `transport` carries
- * HTTP handlers, or to the all-`undefined` counterpart otherwise. Lets
- * `Consumer` / `Host` expose `fetch` + `listener` with a single composed
- * shape instead of two parallel `transport extends { fetch: infer fn }
- * ? fn : undefined` inferences that have to stay in lockstep.
+ * HTTP handlers, or to the all-`undefined` counterpart otherwise.
  */
-export type Handlers<transport> = transport extends Server
-  ? Server
-  : { fetch: undefined; listener: undefined }
+export type Handlers<transport> = transport extends Server ? Server : { fetch: undefined }
 
 /** Conditional HTTP handler forwarding for a tuple of transports. */
 export type HandlersForTransports<transports extends readonly unknown[]> =
-  Extract<transports[number], Server> extends never
-    ? { fetch: undefined; listener: undefined }
-    : Server
+  Extract<transports[number], Server> extends never ? { fetch: undefined } : Server
 
 /** HTTP server with route metadata used by composite `Wata.create`. */
 export type RoutedServer = Server & {
@@ -82,14 +59,14 @@ export type RoutedServer = Server & {
 }
 
 /**
- * Wrap a Hono app in the standard {@link Server} pair used by every
- * HTTP-server-shaped host transport and well-known publisher.
+ * Wrap a Hono app in the standard {@link Server} used by every
+ * HTTP-shaped host transport and well-known publisher.
  *
  * @example
  * ```ts
  * const app = new Hono().basePath('/auth/device')
  * app.post('/register', registerHandler)
- * const { fetch, listener } = Http.fromHono(app)
+ * const { fetch } = Http.fromHono(app)
  * ```
  */
 export function fromHono(app: Hono): Server {
@@ -101,31 +78,11 @@ export function fromHono(app: Hono): Server {
   // `Response | Promise<Response>` union.
   const fetch = (request: Request): Promise<Response> => Promise.resolve(app.fetch(request))
 
-  // Lazy-loaded `getRequestListener` from `@hono/node-server`. Created
-  // on first `.listener` invocation so the host transport modules can
-  // be imported on Cloudflare Workers (where `@hono/node-server`'s
-  // top-level `node:http2` / `node:stream` / `node:process` imports
-  // would crash the bundle at module load time).
-  let nodeListener: NodeListener | undefined
-  let nodeListenerLoad: Promise<NodeListener> | undefined
-  const listener: NodeListener = (req, res) => {
-    if (nodeListener) {
-      nodeListener(req, res)
-      return
-    }
-    if (!nodeListenerLoad)
-      nodeListenerLoad = import('@hono/node-server').then(({ getRequestListener }) => {
-        nodeListener = getRequestListener(fetch) as NodeListener
-        return nodeListener
-      })
-    void nodeListenerLoad.then((handler) => handler(req, res))
-  }
-
-  return { fetch, listener }
+  return { fetch }
 }
 
 /**
- * Compose multiple routed HTTP servers into one `{ fetch, listener }`.
+ * Compose multiple routed HTTP servers into one `{ fetch }`.
  * Requests are dispatched by path prefix. Overlapping route prefixes
  * throw at construction time so runtime dispatch has one clear owner.
  */
@@ -158,22 +115,7 @@ export function composeRouted(servers: readonly RoutedServer[]): Server | undefi
     return await route.server.fetch(request)
   }
 
-  let nodeListener: NodeListener | undefined
-  let nodeListenerLoad: Promise<NodeListener> | undefined
-  const listener: NodeListener = (req, res) => {
-    if (nodeListener) {
-      nodeListener(req, res)
-      return
-    }
-    if (!nodeListenerLoad)
-      nodeListenerLoad = import('@hono/node-server').then(({ getRequestListener }) => {
-        nodeListener = getRequestListener(fetch) as NodeListener
-        return nodeListener
-      })
-    void nodeListenerLoad.then((handler) => handler(req, res))
-  }
-
-  return { fetch, listener }
+  return { fetch }
 }
 
 function normalizeRoute(route: string): string {

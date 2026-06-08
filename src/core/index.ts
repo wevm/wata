@@ -1,0 +1,21 @@
+// wata/core: runtime-only and shared client-safe primitives.
+
+export * as Aad from './Aad.js'
+export * as Aead from './Aead.js'
+export * as Crypto from './Crypto.js'
+export * as Discovery from './Discovery.js'
+export * as Envelope from './Envelope.js'
+export * as Errors from './Errors.js'
+export * as Events from './Events.js'
+export * as Fetch from './Fetch.js'
+export * as Kdf from './Kdf.js'
+export * as Kv from './Kv.js'
+export * as MessageSig from './MessageSig.js'
+export * as Nonce from './Nonce.js'
+export * as Rpc from './Rpc.js'
+export * as Runtime from './Runtime.js'
+export * as Schema from './Schema.js'
+export * as Session from './Session.js'
+export * as Transport from './Transport.js'
+
+export { loopback } from './transports/loopback.js'
