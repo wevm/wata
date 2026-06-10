@@ -276,6 +276,11 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
       // `'*'` means "accept any origin"; matches the postMessage outbound
       // semantics on the same field.
       if (expectedOrigin !== '*' && event.origin !== expectedOrigin) return
+      // Origin alone can't tell two same-origin windows apart, so when the
+      // browser identifies the sender, drop frames from any window but the
+      // one we opened (else sibling same-origin sessions cross-read). Absent
+      // `event.source` falls through to the origin pin.
+      if (event.source && event.source !== (handle as unknown as MessageEventSource)) return
       handleInbound(event.data, { origin: event.origin } as MessageMeta<target>)
     }
     source.addEventListener('message', listener as EventListener)
