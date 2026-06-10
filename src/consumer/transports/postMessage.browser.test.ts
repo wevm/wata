@@ -165,6 +165,68 @@ describe('postMessage (consumer)', () => {
     await transport.close()
   })
 
+  test('pins inbound frames to the bound peer window, dropping same-origin siblings', async () => {
+    // Two real iframes stand in for two same-origin wallet windows: the one
+    // this transport opened (`handle`) and a sibling session's window. Their
+    // `contentWindow`s are genuine, distinct `WindowProxy`s — valid
+    // `MessageEvent.source` values the browser would never let one forge.
+    const boundFrame = document.createElement('iframe')
+    const siblingFrame = document.createElement('iframe')
+    document.body.append(boundFrame, siblingFrame)
+    const handle = boundFrame.contentWindow as Window
+    const sibling = siblingFrame.contentWindow as Window
+
+    const transport = postMessage_consumer({
+      target: () => handle,
+      host: 'https://wallet.example',
+      source: window,
+    })
+    await transport.start()
+
+    const seen: unknown[] = []
+    transport.on('message', (envelope) => seen.push(envelope))
+
+    // Right origin, *other* window (a sibling same-origin session) — dropped.
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: protocol.withId(
+          Envelope.rpcRequests([Rpc.notification({ method: 'sibling', params: [] })]),
+        ),
+        origin: 'https://wallet.example',
+        source: sibling,
+      }),
+    )
+    // Right origin, bound window — delivered.
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: protocol.withId(
+          Envelope.rpcRequests([Rpc.notification({ method: 'bound', params: [] })]),
+        ),
+        origin: 'https://wallet.example',
+        source: handle,
+      }),
+    )
+
+    expect(seen).toMatchInlineSnapshot(`
+    	[
+    	  {
+    	    "payload": [
+    	      {
+    	        "jsonrpc": "2.0",
+    	        "method": "bound",
+    	        "params": [],
+    	      },
+    	    ],
+    	    "type": "rpc-requests",
+    	  },
+    	]
+    `)
+
+    await transport.close()
+    boundFrame.remove()
+    siblingFrame.remove()
+  })
+
   test('emits `error` when an inbound payload fails to parse as an envelope', async () => {
     const { port1, port2 } = new MessageChannel()
     const transport = postMessage_consumer({ target: () => port1 })
