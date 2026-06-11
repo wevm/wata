@@ -49,9 +49,9 @@ import * as Errors from '../../core/Errors.js'
 import * as Transport from '../../core/Transport.js'
 
 /**
- * Options accepted by the host-side {@link postMessage}. Both `target`
- * and `targetOrigin` are optional — the host genuinely doesn't know its
- * peer up front.
+ * Options accepted by the host-side {@link postMessage}. `target`
+ * defaults to the opener / parent window; `targetOrigin` — the consumer's
+ * origin, conveyed out of band — is required for `Window` targets.
  */
 export type Options<target extends ConsumerPostMessage.Target = Window> = {
   /**
@@ -72,11 +72,13 @@ export type Options<target extends ConsumerPostMessage.Target = Window> = {
    */
   target?: (() => target | Promise<target>) | undefined
   /**
-   * `postMessage` `targetOrigin`. Defaults to `'*'` because the host
-   * can't know the consumer's origin up front. Tighten this to a
-   * specific origin (passed via URL param, derived from
-   * `document.referrer`, or pinned after the first inbound frame)
-   * whenever the consumer's identity is known.
+   * `postMessage` `targetOrigin` — the consumer's origin, which the
+   * consumer conveys out of band (e.g. a URL parameter) before the
+   * session (spec §3.1). Required for `Window` / `WindowProxy` targets:
+   * the transport never broadcasts to `'*'`, so a Window host given no
+   * `targetOrigin` rejects the session (its sends throw
+   * {@link PostMessage.TargetOriginRequiredError}). Ignored for
+   * `MessagePort` targets, which carry no origin.
    */
   targetOrigin?: string | undefined
 }
@@ -115,7 +117,7 @@ export function postMessage<const target extends ConsumerPostMessage.Target = Wi
       close: options.close,
       source: options.source,
       target: target_resolved,
-      targetOrigin: options.targetOrigin ?? '*',
+      targetOrigin: options.targetOrigin,
     },
     handshake: { expect: protocol.consumerHello.type, send: protocol.hostReady },
     role: 'host',

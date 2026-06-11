@@ -16,7 +16,12 @@ const log = document.getElementById('log') as HTMLPreElement
 
 let current: { id: number | string } | undefined
 
-const wata = Wata.create({ transports: [postMessage()] })
+// The consumer conveys its origin out of band on the host URL (spec §3.1).
+const wata = Wata.create({
+  transports: [
+    postMessage({ targetOrigin: new URL(location.href).searchParams.get('origin') ?? undefined }),
+  ],
+})
 
 wata.on('open', () => append('open'))
 wata.on('close', (cause) => append(`close${cause ? `: ${cause.message}` : ''}`))

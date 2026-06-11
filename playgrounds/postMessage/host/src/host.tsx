@@ -50,7 +50,8 @@ function App() {
     const wata = Wata.create({
       transports: [
         postMessage<Window>({
-          targetOrigin: peer.origin ?? '*',
+          // The consumer conveys its origin out of band (spec §3.1); pin it.
+          targetOrigin: peer.origin,
           target: () => peer.window,
         }),
       ],
@@ -193,7 +194,7 @@ function consumerMessage(params: unknown): string {
 
 function detectPeer(): { window: Window; origin: string | undefined } | undefined {
   const url = new URL(window.location.href)
-  const origin = url.searchParams.get('consumerOrigin') ?? undefined
+  const origin = url.searchParams.get('origin') ?? undefined
   if (window.opener) return { window: window.opener as Window, origin }
   if (window.parent !== window) return { window: window.parent, origin }
   return undefined
