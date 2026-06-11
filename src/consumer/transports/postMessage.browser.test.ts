@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vp/test'
+import { describe, expect, test, vi } from 'vp/test'
 import { Envelope, Wata, PostMessage, Rpc, Schema, postMessage as postMessage_consumer } from 'wata'
 import { Wata as HostWata, postMessage as postMessage_host } from 'wata/host'
 import { z } from 'zod/mini'
@@ -58,10 +58,14 @@ describe('postMessage (consumer)', () => {
     const { port1, port2 } = new MessageChannel()
     const transport = postMessage_consumer({ target: () => port1 })
 
-    // Strip the wire `id` so snapshots stay stable across runs.
+    // Strip the wire `id` and ignore handshake control frames (hello/ready,
+    // including the consumer's re-announce) so the snapshot shows only the
+    // buffered user frames.
     const received: unknown[] = []
     port2.addEventListener('message', (event) => {
-      received.push(protocol.readFrame(event.data)?.frame ?? event.data)
+      const frame = protocol.readFrame(event.data)?.frame ?? event.data
+      if (protocol.isControlFrame(frame)) return
+      received.push(frame)
     })
     port2.start()
 
@@ -73,9 +77,6 @@ describe('postMessage (consumer)', () => {
     // outbound frames should be buffered locally.
     await transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'one', params: [] })]))
     await transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'two', params: [] })]))
-
-    // Drop the hello so the snapshot only shows the user frames.
-    received.length = 0
 
     // Now signal readiness — the buffered frames flush in order.
     port2.postMessage(protocol.withId(protocol.hostReady))
@@ -225,6 +226,35 @@ describe('postMessage (consumer)', () => {
     await transport.close()
     boundFrame.remove()
     siblingFrame.remove()
+  })
+
+  test('re-announces hello when it first hears the host, so a late host still readies', async () => {
+    // A host that mounts after the consumer's first hello (iframe still
+    // loading) misses it. The consumer must re-announce on the host's ready
+    // so the host receives a consumer frame, marks ready, and can flush its
+    // buffered outbound. MessagePort target keeps this focused on the
+    // handshake (no origin/source pinning).
+    const { port1, port2 } = new MessageChannel()
+    const transport = postMessage_consumer({ target: () => port1 })
+
+    const hellos: unknown[] = []
+    port2.addEventListener('message', (event) => {
+      const inbound = protocol.readFrame(event.data)
+      if (inbound && (inbound.frame as { type?: string }).type === protocol.consumerHello.type)
+        hellos.push(event.data)
+    })
+    port2.start()
+
+    await transport.start()
+    await vi.waitFor(() => expect(hellos).toHaveLength(1)) // initial hello
+
+    // The host (which "missed" the first hello) sends its ready.
+    port2.postMessage(protocol.withId(protocol.hostReady))
+
+    // The consumer re-announces, so a late host now gets a consumer frame.
+    await vi.waitFor(() => expect(hellos).toHaveLength(2))
+
+    await transport.close()
   })
 
   test('emits `error` when an inbound payload fails to parse as an envelope', async () => {

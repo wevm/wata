@@ -206,6 +206,50 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
     await consumer.close()
   })
 
+  test('re-announced hello flushes a host notification when the host missed the first hello', async () => {
+    // An iframe host that mounts after the consumer's first hello never sees
+    // it. Drop that first hello on the wire: unless the consumer re-announces
+    // on the host's `ready`, the host never marks ready and its buffered
+    // notification strands forever. Relay between two channels so we can
+    // selectively swallow the first consumer hello.
+    const toHost = new MessageChannel() // consumer <-> relay
+    const toConsumer = new MessageChannel() // relay <-> host
+    let droppedHello = false
+    toHost.port2.addEventListener('message', (event) => {
+      const inbound = protocol.readFrame(event.data)
+      const isHello =
+        inbound && (inbound.frame as { type?: string }).type === protocol.consumerHello.type
+      if (isHello && !droppedHello) {
+        droppedHello = true // the late host "misses" this one
+        return
+      }
+      toConsumer.port1.postMessage(event.data)
+    })
+    toConsumer.port1.addEventListener('message', (event) => {
+      toHost.port2.postMessage(event.data)
+    })
+    toHost.port2.start()
+    toConsumer.port1.start()
+
+    const consumer = Wata.create({
+      transports: [postMessage_consumer({ target: () => toHost.port1 })],
+    })
+    const host = HostWata.create({ transports: [postMessage({ target: () => toConsumer.port2 })] })
+
+    const seen: Rpc.Notification[] = []
+    consumer.on('notification', ({ notification }) => seen.push(notification))
+
+    await Promise.all([consumer.start(), host.start()])
+    // Buffered until the re-announced hello makes the host ready.
+    await host.notify({ method: 'accountsChanged', params: [] })
+
+    await waitFor(() => seen.length === 1)
+    expect(droppedHello).toBe(true)
+    expect(seen[0]?.method).toMatchInlineSnapshot(`"accountsChanged"`)
+
+    await consumer.close()
+  })
+
   test('passes MessageEvent origin through host request and notification metadata', async () => {
     const source = Object.assign(new EventTarget(), { postMessage() {} }) as unknown as Window &
       EventTarget
