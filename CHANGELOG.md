@@ -1,5 +1,11 @@
 # wata
 
+## 0.0.4
+
+### Patch Changes
+
+- 7b874e5: Required an explicit `targetOrigin` on the host-side `postMessage` transport for Window targets, dropping the insecure `'*'` default.
+
 ## 0.0.3
 
 ### Patch Changes
