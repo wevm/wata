@@ -314,13 +314,10 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
       if (frame.type === handshake.expect) {
         const was_ready = state.ready
         markReady()
-        // The first time we hear the peer's handshake, re-announce our own.
-        // Our initial handshake may have been sent before the peer was
-        // listening (e.g. an iframe host that mounted after the consumer's
-        // hello) — without this echo the host never receives a consumer
-        // frame, never marks ready, and buffers its outbound frames (an
-        // unsolicited host notification) forever. The host already re-replies
-        // ready on hello, so only the consumer needs to echo.
+        // Re-announce our hello the first time we hear the peer's ready: the
+        // initial hello may have raced a host that hadn't mounted yet, leaving
+        // it never-ready and buffering its outbound frames forever. The host
+        // re-replies ready on hello, so only the consumer needs to echo.
         if (!was_ready && role === 'consumer')
           try {
             postRaw(handshake.send)
