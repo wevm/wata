@@ -305,13 +305,18 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     }
     const { frame } = inbound
     if (protocol.isControlFrame(frame)) {
-      if (role === 'host' && frame.type === protocol.consumerHello.type)
-        try {
-          postRaw(protocol.hostReady)
-        } catch (error) {
-          emitError(error as Error)
-        }
-      if (frame.type === handshake.expect) markReady()
+      // The first time we hear the peer, announce back before draining: a host
+      // that mounted after our initial announce (e.g. a still-loading iframe)
+      // otherwise never hears us, never readies, and strands its buffered frames.
+      if (frame.type === handshake.expect) {
+        if (!state.ready)
+          try {
+            postRaw(handshake.send)
+          } catch (error) {
+            emitError(error as Error)
+          }
+        markReady()
+      }
       return
     }
     let envelope: Envelope.Envelope
