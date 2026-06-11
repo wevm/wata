@@ -55,7 +55,7 @@ export const host = Wata.create({
       pollingInterval: 1_000,
       store: Kv.memory(),
     }),
-    postMessage(),
+    postMessage({ targetOrigin: new URL(location.href).searchParams.get('origin') ?? undefined }),
     webhookCallback({
       html: {
         async authenticate({ actions, code, request }) {

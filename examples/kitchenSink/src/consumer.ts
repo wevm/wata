@@ -22,7 +22,9 @@ export const consumer = Wata.create({
       target({ host }) {
         if (typeof window === 'undefined')
           throw new PostMessage.PopupBlockedError('postMessage demo runs in the browser')
-        const popup = window.open(host, 'wata-host', 'popup=1,width=420,height=360')
+        // Convey our origin out of band so the host can pin it (spec §3.1).
+        const url = `${host}?origin=${encodeURIComponent(location.origin)}`
+        const popup = window.open(url, 'wata-host', 'popup=1,width=420,height=360')
         if (!popup) throw new PostMessage.PopupBlockedError('popup was blocked')
         return popup
       },

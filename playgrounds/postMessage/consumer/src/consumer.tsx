@@ -52,6 +52,8 @@ function App() {
           target: ({ host }) => {
             if (!host) throw new Error('host is required')
             const url = new URL(host)
+            // Convey our origin out of band so the host can pin it (spec §3.1).
+            url.searchParams.set('origin', location.origin)
             if (mount === 'popup') {
               const popup = window.open(
                 url.toString(),

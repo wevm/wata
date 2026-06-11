@@ -20,7 +20,9 @@ const wata = Wata.create({
     postMessage({
       host: hostOrigin,
       target: ({ host }) => {
-        const popup = window.open(host, 'wata-host', 'popup=1,width=400,height=300')
+        // Convey our origin out of band so the host can pin it (spec §3.1).
+        const url = `${host}?origin=${encodeURIComponent(location.origin)}`
+        const popup = window.open(url, 'wata-host', 'popup=1,width=400,height=300')
         if (!popup) throw new PostMessage.PopupBlockedError('popup was blocked')
         return popup
       },
