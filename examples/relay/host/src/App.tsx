@@ -20,16 +20,16 @@ export default function App() {
   // Register the hoisted session's listeners once.
   React.useEffect(() => {
     const subscriptions = [
-      wata.on('request', (event) => {
+      wata.onRequest((event) => {
         append(`request: ${event.method} ${JSON.stringify(event.params)} — approve or deny`)
         setPending((queue) => [...queue, event])
       }),
-      wata.on('close', (cause) => {
+      wata.onClose((cause) => {
         append(cause ? `closed: ${cause.message}` : 'closed')
         setConnected(false)
         setPending([])
       }),
-      wata.on('error', (error) => append(`error: ${error.message}`)),
+      wata.onError((error) => append(`error: ${error.message}`)),
     ]
     return () => subscriptions.forEach((subscription) => subscription.abort())
   }, [append])

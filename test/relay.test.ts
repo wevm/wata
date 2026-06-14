@@ -36,14 +36,14 @@ describe('relay', () => {
         }),
       ],
     })
-    consumer.on('prompt', ({ uri }) => prompt.resolve(uri))
+    consumer.onPrompt(({ uri }) => prompt.resolve(uri))
     const pending = consumer.send({ method: 'ping', params: [] })
     const uri = await prompt.promise
     expect(uri).toMatch(/^urpc:\/\/\?consumer_pubkey=/)
 
     // Mobile app (host): constructed from the scanned pairing link.
     const host = HostWata.create({ transports: [hostRelay({ fetch: serverFetch(server), uri })] })
-    host.on('request', async (event) => {
+    host.onRequest(async (event) => {
       if (event.method === 'ping') await event.respond('pong')
       if (event.method === 'add') {
         const [a, b] = event.params as [number, number]
@@ -62,7 +62,7 @@ describe('relay', () => {
 
     // Host → consumer notification over the same encrypted channel.
     const notified = deferred<{ method: string; params: unknown }>()
-    const subscription = consumer.on('notification', (event) =>
+    const subscription = consumer.onNotification((event) =>
       notified.resolve({ method: event.method, params: event.params }),
     )
     await host.notify({ method: 'accountsChanged', params: [['0xabc']] })
@@ -88,14 +88,14 @@ describe('relay', () => {
         }),
       ],
     })
-    consumer.on('prompt', ({ uri }) => prompt.resolve(uri))
+    consumer.onPrompt(({ uri }) => prompt.resolve(uri))
     const pending = consumer.send({ method: 'ping', params: [] })
     const uri = await prompt.promise
 
     const host = HostWata.create({
       transports: [hostRelay({ fetch: serverFetch(server), receive: 'poll', uri })],
     })
-    host.on('request', async (event) => {
+    host.onRequest(async (event) => {
       if (event.method === 'ping') await event.respond('pong')
       if (event.method === 'add') {
         const [a, b] = event.params as [number, number]
@@ -111,7 +111,7 @@ describe('relay', () => {
     expect(second.result).toBe(5)
 
     const notified = deferred<{ method: string; params: unknown }>()
-    const subscription = consumer.on('notification', (event) =>
+    const subscription = consumer.onNotification((event) =>
       notified.resolve({ method: event.method, params: event.params }),
     )
     await host.notify({ method: 'accountsChanged', params: [['0xabc']] })
@@ -134,8 +134,8 @@ describe('relay', () => {
       ],
     })
     const closed = deferred<Error | undefined>()
-    consumer.on('prompt', ({ uri }) => prompt.resolve(uri))
-    consumer.on('close', (cause) => closed.resolve(cause))
+    consumer.onPrompt(({ uri }) => prompt.resolve(uri))
+    consumer.onClose((cause) => closed.resolve(cause))
     const pending = consumer.send({ method: 'ping', params: [] })
     pending.catch(() => undefined)
     const uri = await prompt.promise
@@ -185,7 +185,7 @@ describe('relay', () => {
     const host = HostWata.create({
       transports: [hostRelay({ fetch: serverFetch(server) })],
     })
-    host.on('request', async (event) => {
+    host.onRequest(async (event) => {
       if (event.method === 'ping') return event.respond('pong')
       return event.respond(null)
     })
@@ -195,7 +195,7 @@ describe('relay', () => {
       const consumer = Wata.create({
         transports: [relay({ fetch: serverFetch(server), url: 'https://relay.test' })],
       })
-      consumer.on('prompt', ({ uri }) => prompt.resolve(uri))
+      consumer.onPrompt(({ uri }) => prompt.resolve(uri))
       const pending = consumer.send({ method: 'ping', params: [] })
       // Supply the scanned link at start time — no external pairing source.
       await host.relay.start({ pairingUri: await prompt.promise })
@@ -247,7 +247,7 @@ describe('relay receive modes', () => {
         }),
       ],
     })
-    consumer.on('prompt', ({ uri }) => prompt.resolve(uri))
+    consumer.onPrompt(({ uri }) => prompt.resolve(uri))
     const pending = consumer.send({ method: 'ping', params: [] })
     const uri = await prompt.promise
     const host = HostWata.create({
@@ -255,7 +255,7 @@ describe('relay receive modes', () => {
         hostRelay({ fetch: serverFetch(server), pollInterval: 10, receive: receive.host, uri }),
       ],
     })
-    host.on('request', async (event) => {
+    host.onRequest(async (event) => {
       if (event.method === 'ping') return event.respond('pong')
       if (event.method === 'add') {
         const [a, b] = event.params as [number, number]
@@ -295,7 +295,7 @@ describe('relay receive modes', () => {
       const { consumer, host } = await session(receive)
       const received: number[] = []
       const done = deferred<void>()
-      const subscription = consumer.on('notification', (event) => {
+      const subscription = consumer.onNotification((event) => {
         received.push((event.params as [number])[0])
         if (received.length === 8) done.resolve()
       })

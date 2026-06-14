@@ -95,8 +95,9 @@ const spinner = Clack.spinner()
 
 try {
   const result = new Promise<unknown>((resolve, reject) => {
-    wata.on('rpc-responses', (responses) => {
-      const response = responses[0]
+    wata.onEnvelope((envelope) => {
+      if (envelope.type !== 'rpc-responses') return
+      const response = envelope.payload[0]
       if (!response) return
       if ('error' in response) reject(new Error(response.error.message))
       else resolve(response.result)

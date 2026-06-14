@@ -4,10 +4,10 @@ const status = document.getElementById('status') as HTMLElement
 
 status.textContent = `waiting for ${host.role} request`
 
-host.on('open', () => {
+host.onOpen(() => {
   status.textContent = 'ready'
 })
 
-host.on('error', (error) => {
+host.onError((error) => {
   status.textContent = error.message
 })

@@ -67,7 +67,7 @@ const wata = Wata.create({
   transports: [postMessage()],
 })
 
-wata.on('request', async (c) => {
+wata.onRequest(async (c) => {
   if (c.method === 'wallet_connect')
     await c.respond(['0x0000000000000000000000000000000000000001'])
 })
@@ -90,7 +90,7 @@ const wata = Wata.create({
   transports: [deviceCode({ url: 'https://wallet.example/auth/device' })],
 })
 
-wata.on('prompt', (prompt) => {
+wata.onPrompt((prompt) => {
   console.log(`Visit ${prompt.verificationUri} and enter ${prompt.userCode}`)
 })
 
@@ -135,7 +135,7 @@ const wata = Wata.create({
   ],
 })
 
-wata.on('request', async (c) => {
+wata.onRequest(async (c) => {
   if (c.method === 'wallet_connect')
     await c.respond(['0x0000000000000000000000000000000000000001'])
 })
@@ -216,7 +216,7 @@ const wata = Wata.create({
   ],
 })
 
-wata.on('request', async (event) => {
+wata.onRequest(async (event) => {
   if (event.method === 'wallet_connect')
     await event.respond(['0x0000000000000000000000000000000000000001'])
 })
@@ -250,8 +250,9 @@ const wata = Wata.create({
   ],
 })
 
-wata.on('rpc-responses', (responses, meta) => {
-  console.log(responses)
+wata.onEnvelope((envelope, meta) => {
+  if (envelope.type !== 'rpc-responses') return
+  console.log(envelope.payload)
   console.log(meta)
 })
 
@@ -301,7 +302,7 @@ const wata = Wata.create({
   ],
 })
 
-wata.on('request', async (event) => {
+wata.onRequest(async (event) => {
   if (event.method === 'wallet_connect')
     await event.respond(['0x0000000000000000000000000000000000000001'])
 })
@@ -325,7 +326,7 @@ const wata = Wata.create({
 })
 
 // Render the pairing link (e.g. as a QR code) when it's issued.
-wata.on('prompt', ({ uri }) => renderQrCode(uri))
+wata.onPrompt(({ uri }) => renderQrCode(uri))
 
 const { result } = await wata.send({ method: 'ping', params: [] })
 ```
@@ -341,7 +342,7 @@ const wata = Wata.create({
   transports: [relay({ receive: 'poll' })],
 })
 
-wata.on('request', (event) => event.respond('pong'))
+wata.onRequest((event) => event.respond('pong'))
 
 // Start the session with the scanned/pasted pairing uri.
 await wata.relay.start({ pairingUri })

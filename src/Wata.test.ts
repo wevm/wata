@@ -123,7 +123,7 @@ describe('create', () => {
     const wata = HostWata.create({ transports: [host] })
     expect(wata.role).toMatchInlineSnapshot(`"host"`)
     expect(typeof wata.start).toMatchInlineSnapshot(`"function"`)
-    expect(typeof wata.on).toMatchInlineSnapshot(`"function"`)
+    expect(typeof wata.onRequest).toMatchInlineSnapshot(`"function"`)
   })
 
   test('multiple consumer transports expose named child sessions', async () => {
@@ -137,7 +137,7 @@ describe('create', () => {
     })
     const events: string[] = []
 
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       events.push(event.transport)
       if (event.transport === 'deviceCode') return event.respond({ via: 'device' })
       return event.respond({ via: 'webhook' })
@@ -189,8 +189,8 @@ describe('start', () => {
     const { consumer, host } = pair()
     const consumerOpens: void[] = []
     const hostOpens: void[] = []
-    consumer.on('open', () => consumerOpens.push(undefined))
-    host.on('open', () => hostOpens.push(undefined))
+    consumer.onOpen(() => consumerOpens.push(undefined))
+    host.onOpen(() => hostOpens.push(undefined))
 
     await consumer.start()
     await host.start()
@@ -206,7 +206,7 @@ describe('send', () => {
     await consumer.start()
     await host.start()
 
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -224,16 +224,17 @@ describe('send', () => {
   test('emits rpc-responses with transport metadata', async () => {
     const { consumer, host } = pair()
     const events: Array<{ direction: string; results: unknown[]; transport: string }> = []
-    consumer.on('rpc-responses', (responses, meta) => {
+    consumer.onEnvelope((envelope, meta) => {
+      if (envelope.type !== 'rpc-responses') return
       events.push({
         direction: meta.direction,
-        results: responses.map((response) =>
+        results: envelope.payload.map((response) =>
           'error' in response ? response.error.message : response.result,
         ),
         transport: meta.transport,
       })
     })
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -257,14 +258,15 @@ describe('send', () => {
   test('emits consumer rpc-requests with transport metadata', async () => {
     const { consumer, host } = pair()
     const events: Array<{ direction: string; methods: string[]; transport: string }> = []
-    consumer.on('rpc-requests', (requests, meta) => {
+    consumer.onEnvelope((envelope, meta) => {
+      if (envelope.type !== 'rpc-requests') return
       events.push({
         direction: meta.direction,
-        methods: requests.map((request) => request.method),
+        methods: envelope.payload.map((request) => request.method),
         transport: meta.transport,
       })
     })
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -286,14 +288,15 @@ describe('send', () => {
   test('emits host rpc-requests with transport metadata', async () => {
     const { consumer, host } = pair()
     const events: Array<{ direction: string; methods: string[]; transport: string }> = []
-    host.on('rpc-requests', (requests, meta) => {
+    host.onEnvelope((envelope, meta) => {
+      if (envelope.type !== 'rpc-requests') return
       events.push({
         direction: meta.direction,
-        methods: requests.map((request) => request.method),
+        methods: envelope.payload.map((request) => request.method),
         transport: meta.transport,
       })
     })
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -316,10 +319,11 @@ describe('send', () => {
     const { consumer, host } = pair()
     const events: Array<{ context: unknown; context_request: unknown }> = []
     const requests: unknown[] = []
-    host.on('rpc-requests', ([request]) => {
-      requests.push(request)
+    host.onEnvelope((envelope) => {
+      if (envelope.type !== 'rpc-requests') return
+      requests.push(envelope.payload[0])
     })
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       events.push({
         context: event.context,
         context_request: event.request.context,
@@ -365,7 +369,7 @@ describe('send', () => {
 
   test('validates default request context reserved keys', async () => {
     const { consumer, host } = pair()
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -387,7 +391,7 @@ describe('send', () => {
     const consumer = Wata.create({ context, transports: [cTransport], schema })
     const host = HostWata.create({ context, transports: [hTransport], schema })
     const seen: unknown[] = []
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       seen.push(event.context)
       if (event.method === 'ping') event.respond({ ok: true })
     })
@@ -430,16 +434,17 @@ describe('send', () => {
   test('emits host rpc-responses with transport metadata', async () => {
     const { consumer, host } = pair()
     const events: Array<{ direction: string; results: unknown[]; transport: string }> = []
-    host.on('rpc-responses', (responses, meta) => {
+    host.onEnvelope((envelope, meta) => {
+      if (envelope.type !== 'rpc-responses') return
       events.push({
         direction: meta.direction,
-        results: responses.map((response) =>
+        results: envelope.payload.map((response) =>
           'error' in response ? response.error.message : response.result,
         ),
         transport: meta.transport,
       })
     })
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -464,10 +469,10 @@ describe('send', () => {
     const { consumer, host } = pair()
     const events: Array<{ kind: string; meta: HostWata.HostEventMeta }> = []
 
-    host.on('notification', (event) => {
+    host.onNotification((event) => {
       events.push({ kind: 'notification', meta: event.meta })
     })
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       events.push({ kind: 'request', meta: event.meta })
       if (event.method === 'ping') return event.respond({ ok: true })
       return undefined
@@ -499,8 +504,8 @@ describe('send', () => {
     await consumer.start()
     await host.start()
 
-    host.on('request', () => {})
-    host.on('request', 'add', ({ params }) => params[0] + params[1])
+    host.onRequest(() => {})
+    host.onRequest('add', ({ params }) => params[0] + params[1])
 
     const out = await consumer.send({ method: 'add', params: [2, 3] })
     expect(out.result).toMatchInlineSnapshot(`5`)
@@ -511,7 +516,7 @@ describe('send', () => {
     await consumer.start()
     await host.start()
 
-    host.on('request', ({ reject }) => {
+    host.onRequest(({ reject }) => {
       reject({ code: -32000, message: 'denied' })
     })
 
@@ -535,7 +540,7 @@ describe('send', () => {
     await consumer.start()
     await host.start()
 
-    host.on('request', 'wallet_connect', () => ({ accounts: ['0xabc'] }))
+    host.onRequest('wallet_connect', () => ({ accounts: ['0xabc'] }))
 
     const out = await consumer.send({
       method: 'wallet_connect',
@@ -559,7 +564,7 @@ describe('send', () => {
     await consumer.start()
     await host.start()
 
-    host.on('request', 'ping', () => ({ ok: true as const }))
+    host.onRequest('ping', () => ({ ok: true as const }))
 
     await expect(
       consumer.send({ method: 'add', params: [2, 3] }),
@@ -579,8 +584,8 @@ describe('send', () => {
     await consumer.start()
     await host.start()
 
-    host.on('request', (() => ({ ok: false })) as never)
-    host.on('request', 'ping', () => ({ ok: true as const }))
+    host.onRequest((() => ({ ok: false })) as never)
+    host.onRequest('ping', () => ({ ok: true as const }))
 
     expect(await consumer.send({ method: 'ping', params: [] })).toMatchInlineSnapshot(`
       {
@@ -598,7 +603,7 @@ describe('send', () => {
     await host.start()
 
     let captured: { id: number | string } | undefined
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       captured = { id: event.id }
     })
 
@@ -627,7 +632,7 @@ describe('send', () => {
     await host.start()
 
     const ids: (number | string)[] = []
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       ids.push(event.id)
     })
 
@@ -654,7 +659,7 @@ describe('send', () => {
     await host.start()
 
     let captured: { id: number | string } | undefined
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       captured = { id: event.id }
     })
 
@@ -687,7 +692,7 @@ describe('send', () => {
     })
     const events: string[] = []
 
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       events.push(event.transport)
     })
 
@@ -712,7 +717,7 @@ describe('send', () => {
     await host.start()
 
     let captured: { id: number | string } | undefined
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       captured = { id: event.id }
       if (event.method === 'ping') event.respond({ ok: true })
     })
@@ -737,7 +742,7 @@ describe('send', () => {
     const { consumer, host } = pair()
     // No `consumer.start()` and no `host.start()` — both should
     // self-start as soon as they're used.
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -752,7 +757,7 @@ describe('send', () => {
   test('lazy-starts on first notify when start() was never called', async () => {
     const { consumer, host } = pair()
     const seen: string[] = []
-    host.on('notification', ({ method }) => {
+    host.onNotification(({ method }) => {
       seen.push(method)
     })
 
@@ -772,7 +777,7 @@ describe('send', () => {
     // Host never responds to this request — close should reject the pending promise.
     const inflight = consumer.send({ method: 'ping', params: [] })
     // Listener that swallows the request without replying.
-    host.on('request', () => undefined)
+    host.onRequest(() => undefined)
     // But wait: the host emits method-not-found for unhandled requests, so we
     // need a listener that *receives* but doesn't settle.
     await consumer.close()
@@ -818,7 +823,7 @@ describe('send', () => {
     await host.start()
 
     // @ts-expect-error intentionally wrong result
-    host.on('request', 'ping', () => ({ ok: false }))
+    host.onRequest('ping', () => ({ ok: false }))
 
     await expect(
       consumer.send({ method: 'ping', params: [] }),
@@ -831,7 +836,7 @@ describe('send', () => {
     await host.start()
 
     let failure: unknown
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       if (event.method !== 'ping') return
       // @ts-expect-error intentionally wrong result
       return event.respond('not the ping result').catch((cause) => {
@@ -854,7 +859,7 @@ describe('send', () => {
     await host.start()
 
     let captured: { id: number | string } | undefined
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       captured = { id: event.id }
     })
 
@@ -887,7 +892,7 @@ describe('notify', () => {
     await host.start()
 
     const seen: Rpc.Notification[] = []
-    host.on('notification', ({ notification }) => {
+    host.onNotification(({ notification }) => {
       seen.push(notification)
     })
 
@@ -924,7 +929,7 @@ describe('host notify', () => {
     await host.start()
 
     const seen: Rpc.Notification[] = []
-    consumer.on('notification', ({ notification }) => {
+    consumer.onNotification(({ notification }) => {
       seen.push(notification)
     })
 
@@ -959,8 +964,8 @@ describe('close', () => {
 
     let consumerCloses = 0
     let hostCloses = 0
-    consumer.on('close', () => consumerCloses++)
-    host.on('close', () => hostCloses++)
+    consumer.onClose(() => consumerCloses++)
+    host.onClose(() => hostCloses++)
 
     await consumer.close()
     // loopback cascades close to the peer, so the host observes it too.
@@ -991,7 +996,7 @@ describe('on', () => {
     await host.start()
 
     let count = 0
-    const controller = host.on('notification', () => {
+    const controller = host.onNotification(() => {
       count++
     })
     await consumer.notify({ method: 'ping', params: [] })
@@ -1010,9 +1015,9 @@ describe('on', () => {
     const listener = () => {
       count++
     }
-    host.on('notification', listener)
+    host.onNotification(listener)
     await consumer.notify({ method: 'ping', params: [] })
-    host.off('notification', listener)
+    host.offNotification(listener)
     await consumer.notify({ method: 'ping', params: [] })
 
     expect(count).toMatchInlineSnapshot(`1`)
@@ -1023,7 +1028,7 @@ describe('on', () => {
     await consumer.start()
     await host.start()
 
-    const controller = host.on('request', 'ping', () => ({ ok: true as const }))
+    const controller = host.onRequest('ping', () => ({ ok: true as const }))
     expect(await consumer.send({ method: 'ping', params: [] })).toMatchInlineSnapshot(`
       {
         "id": 1,
@@ -1051,9 +1056,9 @@ describe('mode discipline', () => {
     cTransport.on('message', (envelope) => inbound.push(envelope))
 
     const errors: Error[] = []
-    host.on('error', (error) => errors.push(error))
+    host.onError((error) => errors.push(error))
     const closes: unknown[] = []
-    host.on('close', (cause) => closes.push(cause))
+    host.onClose((cause) => closes.push(cause))
 
     await cTransport.send(
       Envelope.encrypted({
@@ -1101,9 +1106,9 @@ describe('mode discipline', () => {
     hTransport.on('message', (envelope) => inbound.push(envelope))
 
     const errors: Error[] = []
-    consumer.on('error', (error) => errors.push(error))
+    consumer.onError((error) => errors.push(error))
     const closes: unknown[] = []
-    consumer.on('close', (cause) => closes.push(cause))
+    consumer.onClose((cause) => closes.push(cause))
 
     await hTransport.send(
       Envelope.encrypted({

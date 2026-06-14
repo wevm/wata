@@ -18,7 +18,7 @@
  *   transports: [postMessage({ targetOrigin: 'https://app.example' })],
  * })
  *
- * wata.on('request', async (event) => {
+ * wata.onRequest(async (event) => {
  *   if (event.method === 'ping') await event.respond({ ok: true })
  * })
  * ```

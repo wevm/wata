@@ -23,11 +23,11 @@ const wata = Wata.create({
   ],
 })
 
-wata.on('open', () => append('open'))
-wata.on('close', (cause) => append(`close${cause ? `: ${cause.message}` : ''}`))
-wata.on('error', (error) => append(`error: ${error.message}`))
+wata.onOpen(() => append('open'))
+wata.onClose((cause) => append(`close${cause ? `: ${cause.message}` : ''}`))
+wata.onError((error) => append(`error: ${error.message}`))
 
-wata.on('request', (event) => {
+wata.onRequest((event) => {
   append(`request: ${event.method} ${JSON.stringify(event.params)}`)
   current = { id: event.id }
   received.textContent = `${event.method} ${JSON.stringify(event.params)}`

@@ -28,7 +28,7 @@
  *
  * const wata = Wata.create({ transports: [relay()] })
  *
- * wata.on('request', async (event) => {
+ * wata.onRequest(async (event) => {
  *   if (event.method === 'wallet_connect') await event.respond({ accounts })
  * })
  *

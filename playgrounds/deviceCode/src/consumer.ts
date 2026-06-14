@@ -45,7 +45,7 @@ const wata = Wata.create({
   ],
 })
 
-wata.on('prompt', ({ userCode, verificationUri, verificationUriFull }) => {
+wata.onPrompt(({ userCode, verificationUri, verificationUriFull }) => {
   Clack.note(
     `${verificationUri}\nuser_code: ${userCode}` +
       (verificationUriFull ? `\nor visit: ${verificationUriFull}` : ''),

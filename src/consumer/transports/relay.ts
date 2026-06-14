@@ -32,7 +32,7 @@
  * })
  *
  * // Render the pairing link out-of-band (QR code, deep link, …).
- * wata.on('prompt', ({ uri }) => renderQrCode(uri))
+ * wata.onPrompt(({ uri }) => renderQrCode(uri))
  *
  * const { result } = await wata.send({ method: 'wallet_connect', params: [] })
  * ```

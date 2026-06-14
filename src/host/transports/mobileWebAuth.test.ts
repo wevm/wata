@@ -374,7 +374,7 @@ Details: state: expected at least 128 bits of base64url entropy]`,
       transports: [consumer],
     })
     const hostWata = HostWata.create({ transports: [host] })
-    hostWata.on('request', (event) => {
+    hostWata.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -525,7 +525,7 @@ Details: state: expected at least 128 bits of base64url entropy]`,
       transports: [consumer],
     })
     const hostWata = HostWata.create({ transports: [host] })
-    hostWata.on('request', (event) => {
+    hostWata.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -582,7 +582,7 @@ Details: state: expected at least 128 bits of base64url entropy]`,
       transports: [consumer],
     })
     const hostWata = HostWata.create({ transports: [host] })
-    hostWata.on('request', (event) => {
+    hostWata.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -605,7 +605,7 @@ Details: state: expected at least 128 bits of base64url entropy]`,
         transports: [consumer],
       })
       const hostWata = HostWata.create({ transports: [host] })
-      hostWata.on('request', (event) => {
+      hostWata.onRequest((event) => {
         if (event.method === 'ping') event.respond({ ok: true })
       })
 

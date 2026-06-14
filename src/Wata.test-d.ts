@@ -130,13 +130,13 @@ describe('create', () => {
     const wata = HostWata.create({ transports: [host], schema })
     expectTypeOf(wata.role).toEqualTypeOf<'host'>()
     expectTypeOf(wata).toMatchTypeOf<{ start: () => Promise<void> }>()
-    expectTypeOf(wata).toMatchTypeOf<{ on: Function }>()
+    expectTypeOf(wata).toMatchTypeOf<{ onRequest: Function }>()
   })
 
   test('accepts Schema imported from the host entrypoint', () => {
     const { host } = loopback()
     const wata = HostWata.create({ transports: [host], schema: hostSchema })
-    wata.on('request', (event) => {
+    wata.onRequest((event) => {
       expectTypeOf(event.method).toEqualTypeOf<'ping'>()
       event.respond({ ok: true })
       // @ts-expect-error wrong shape for ping
@@ -288,7 +288,7 @@ describe('Host events', () => {
   test('`request` is a discriminated union over method (params + respond narrow together)', () => {
     const { host } = loopback()
     const wata = HostWata.create({ transports: [host], schema })
-    wata.on('request', (event) => {
+    wata.onRequest((event) => {
       expectTypeOf(event.meta).toEqualTypeOf<
         HostWata.HostEventMeta<Transport.Transport<'host', 'loopback'>>
       >()
@@ -318,13 +318,13 @@ describe('Host events', () => {
       }
     })
     // @ts-expect-error broad request listeners respond with event.respond, not result returns
-    wata.on('request', () => ({ ok: true }))
+    wata.onRequest(() => ({ ok: true }))
   })
 
   test('`notification` payload is narrowed against the schema', () => {
     const { host } = loopback()
     const wata = HostWata.create({ transports: [host], schema })
-    wata.on('notification', (event) => {
+    wata.onNotification((event) => {
       // @ts-expect-error loopback does not expose origin metadata
       expectTypeOf(event.meta.origin).toEqualTypeOf<never>()
       expectTypeOf(event.meta.transport).toEqualTypeOf<'loopback'>()
@@ -338,32 +338,32 @@ describe('Host events', () => {
     const { host } = loopback()
     const wata = HostWata.create({ schema: open_schema, transports: [host] })
 
-    wata.on('request', 'ping', (event) => {
+    wata.onRequest('ping', (event) => {
       expectTypeOf(event.method).toEqualTypeOf<'ping'>()
       expectTypeOf(event.params).toMatchTypeOf<readonly []>()
       event.respond({ ok: true })
       // @ts-expect-error wrong shape for ping
       event.respond('not the ping result')
     })
-    wata.on('request', 'ping', () => ({ ok: true as const }))
-    wata.on('request', 'ping', async () => ({ ok: true as const }))
+    wata.onRequest('ping', () => ({ ok: true as const }))
+    wata.onRequest('ping', async () => ({ ok: true as const }))
     // @ts-expect-error listener returns must match the method result
-    wata.on('request', 'ping', () => 'not the ping result')
+    wata.onRequest('ping', () => 'not the ping result')
     // @ts-expect-error async listener returns must match the method result
-    wata.on('request', 'ping', async () => 'not the ping result')
-    wata.on('request', 'wallet_connect', (event) => {
+    wata.onRequest('ping', async () => 'not the ping result')
+    wata.onRequest('wallet_connect', (event) => {
       expectTypeOf(event.method).toEqualTypeOf<'wallet_connect'>()
       expectTypeOf(event.params).toMatchTypeOf<Rpc.Params>()
       event.respond({ opaque: true })
     })
-    wata.on('request', 'wallet_connect', () => ({ opaque: true }))
+    wata.onRequest('wallet_connect', () => ({ opaque: true }))
   })
 
   test('method-scoped listeners reject unknown methods on closed schemas', () => {
     const { host } = loopback()
     const wata = HostWata.create({ transports: [host], schema })
     // @ts-expect-error closed schemas only accept known request methods
-    wata.on('request', 'wallet_connect', () => {})
+    wata.onRequest('wallet_connect', () => {})
   })
 
   test('`request` metadata narrows by transport', () => {
@@ -372,7 +372,7 @@ describe('Host events', () => {
       schema,
       transports: [hostPostMessage({ target: () => popupHandle }), host],
     })
-    wata.on('request', (event) => {
+    wata.onRequest((event) => {
       expectTypeOf(event.meta.transport).toEqualTypeOf<'loopback' | 'postMessage'>()
       if (event.meta.transport === 'postMessage')
         expectTypeOf(event.meta.origin).toEqualTypeOf<string>()
@@ -388,7 +388,7 @@ describe('Host events', () => {
       schema,
       transports: [hostPostMessage({ target: () => portHandle })],
     })
-    wata.on('request', (event) => {
+    wata.onRequest((event) => {
       expectTypeOf(event.meta.transport).toEqualTypeOf<'postMessage'>()
       // @ts-expect-error MessagePort-backed postMessage does not expose origin metadata
       expectTypeOf(event.meta.origin).toEqualTypeOf<never>()
@@ -398,7 +398,7 @@ describe('Host events', () => {
   test('`request` context is narrowed against the Wata context schema', () => {
     const { host } = loopback()
     const wata = HostWata.create({ context, transports: [host], schema })
-    wata.on('request', (event) => {
+    wata.onRequest((event) => {
       expectTypeOf(event.context).toEqualTypeOf<z.output<typeof context> | undefined>()
       expectTypeOf(event.request.context).toEqualTypeOf<z.output<typeof context> | undefined>()
       if (event.context) expectTypeOf(event.context.chainId).toEqualTypeOf<number>()
@@ -408,30 +408,29 @@ describe('Host events', () => {
   test('lifecycle event payloads', () => {
     const { host } = loopback()
     const wata = HostWata.create({ transports: [host], schema })
-    wata.on('open', (payload) => {
+    wata.onOpen((payload) => {
       expectTypeOf(payload).toEqualTypeOf<void>()
     })
-    wata.on('close', (payload) => {
+    wata.onClose((payload) => {
       expectTypeOf(payload).toEqualTypeOf<Error | undefined>()
     })
-    wata.on('error', (payload) => {
+    wata.onError((payload) => {
       expectTypeOf(payload).toEqualTypeOf<Error>()
     })
-    wata.on('rpc-requests', (requests, meta) => {
-      expectTypeOf(requests).toEqualTypeOf<Wata.RpcRequestsPayload<typeof schema>>()
-      expectTypeOf(meta).toEqualTypeOf<Wata.RpcEnvelopeMeta<'rpc-requests'>>()
-    })
-    wata.on('rpc-responses', (responses, meta) => {
-      expectTypeOf(responses).toEqualTypeOf<Wata.RpcResponsesPayload<typeof schema>>()
-      expectTypeOf(meta).toEqualTypeOf<Wata.RpcEnvelopeMeta<'rpc-responses'>>()
+    wata.onEnvelope((envelope, meta) => {
+      if (envelope.type === 'rpc-requests')
+        expectTypeOf(envelope.payload).toEqualTypeOf<Wata.RpcRequestsPayload<typeof schema>>()
+      if (envelope.type === 'rpc-responses')
+        expectTypeOf(envelope.payload).toEqualTypeOf<Wata.RpcResponsesPayload<typeof schema>>()
+      expectTypeOf(meta).toEqualTypeOf<Wata.EnvelopeMeta>()
     })
   })
 
   test('rejects unknown event types at compile time', () => {
     const { host } = loopback()
     const wata = HostWata.create({ transports: [host], schema })
-    // @ts-expect-error 'nope' is not a known event
-    wata.on('nope', () => {})
+    // @ts-expect-error 'onNope' is not a known event subscriber
+    wata.onNope(() => {})
   })
 })
 
@@ -439,28 +438,25 @@ describe('Consumer events', () => {
   test('exposes lifecycle, rpc, and notification events (no `request`)', () => {
     const { consumer } = loopback()
     const wata = Wata.create({ transports: [consumer], schema })
-    wata.on('open', () => {})
-    wata.on('close', () => {})
-    wata.on('error', () => {})
-    wata.on('notification', (event) => {
+    wata.onOpen(() => {})
+    wata.onClose(() => {})
+    wata.onError(() => {})
+    wata.onNotification((event) => {
       expectTypeOf(event.method).toEqualTypeOf<'ping' | 'eth_sign'>()
       if (event.method === 'eth_sign')
         expectTypeOf(event.params).toMatchTypeOf<readonly [string, string]>()
     })
-    wata.on('rpc-requests', (requests, meta) => {
-      expectTypeOf(requests).toEqualTypeOf<Wata.RpcRequestsPayload<typeof schema>>()
-      expectTypeOf(meta).toEqualTypeOf<Wata.RpcEnvelopeMeta<'rpc-requests'>>()
-      expectTypeOf(meta.direction).toEqualTypeOf<'incoming' | 'outgoing'>()
-      expectTypeOf(meta.transport).toEqualTypeOf<string>()
-    })
-    wata.on('rpc-responses', (responses, meta) => {
-      expectTypeOf(responses).toEqualTypeOf<Wata.RpcResponsesPayload<typeof schema>>()
-      expectTypeOf(meta).toEqualTypeOf<Wata.RpcEnvelopeMeta<'rpc-responses'>>()
+    wata.onEnvelope((envelope, meta) => {
+      if (envelope.type === 'rpc-requests')
+        expectTypeOf(envelope.payload).toEqualTypeOf<Wata.RpcRequestsPayload<typeof schema>>()
+      if (envelope.type === 'rpc-responses')
+        expectTypeOf(envelope.payload).toEqualTypeOf<Wata.RpcResponsesPayload<typeof schema>>()
+      expectTypeOf(meta).toEqualTypeOf<Wata.EnvelopeMeta>()
       expectTypeOf(meta.direction).toEqualTypeOf<'incoming' | 'outgoing'>()
       expectTypeOf(meta.transport).toEqualTypeOf<string>()
     })
     // @ts-expect-error consumers don't receive `request`
-    wata.on('request', () => {})
+    wata.onRequest(() => {})
   })
 
   test('multiple transports keep webhook registration metadata on its child session', async () => {
@@ -486,7 +482,7 @@ describe('on returns AbortController', () => {
   test('subscription returns an AbortController', () => {
     const { host } = loopback()
     const wata = HostWata.create({ transports: [host], schema })
-    const controller = wata.on('open', () => {})
+    const controller = wata.onOpen(() => {})
     expectTypeOf(controller).toEqualTypeOf<AbortController>()
   })
 })

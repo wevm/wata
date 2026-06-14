@@ -114,7 +114,7 @@ const wata = Wata.create({
   ],
 })
 
-wata.on('request', (event) => {
+wata.onRequest((event) => {
   console.log(`[host] request: ${event.method}`, event.params)
   if (event.method === 'ping') event.respond({ at: new Date().toISOString(), ok: true })
   else if (event.method === 'echo') event.respond(event.params)

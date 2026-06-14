@@ -58,22 +58,22 @@ function App() {
     })
     wataRef.current = wata
 
-    wata.on('open', () => {
+    wata.onOpen(() => {
       setState('open')
       log.push({ intent: 'positive', label: 'open' })
     })
-    wata.on('close', (cause) => {
+    wata.onClose((cause) => {
       setState('closed')
       log.push({ intent: 'neutral', label: 'close', detail: cause })
     })
-    wata.on('error', (error) => {
+    wata.onError((error) => {
       setState('error')
       log.push({ intent: 'negative', label: 'error', detail: error })
     })
-    wata.on('notification', (event) => {
+    wata.onNotification((event) => {
       log.push({ intent: 'accent', label: 'notification', detail: event.params })
     })
-    wata.on('request', (event) => {
+    wata.onRequest((event) => {
       log.push({
         intent: 'accent',
         label: 'request',
