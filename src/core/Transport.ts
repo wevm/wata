@@ -152,6 +152,7 @@ export type Transport<
   sendValue = void,
   meta extends MessageMeta = NoMessageMeta,
   prompt extends object = never,
+  startOptions = never,
 > = {
   /**
    * Apply parent application context to this transport. Lazy-bound by
@@ -209,8 +210,13 @@ export type Transport<
   routes?: readonly string[] | undefined
   /** Send a single envelope frame to the peer. */
   send: (envelope: Envelope.Envelope) => Promise<sendValue>
-  /** Open the transport. Resolves once the wire is ready to send and receive. */
-  start: () => Promise<void>
+  /**
+   * Open the transport. Resolves once the wire is ready to send and
+   * receive. Transports that accept per-start configuration (e.g. the
+   * relay transport's `{ scheme }` / `{ pairingUri }`) widen
+   * {@link startOptions}; the rest take no argument.
+   */
+  start: (options?: startOptions) => Promise<void>
 }
 
 /** Metadata emitted by a concrete transport. */
@@ -223,6 +229,15 @@ export type MessageMetaOf<transport extends Transport<Role, string, unknown, Mes
  */
 export type PromptOf<transport> =
   transport extends Transport<Role, string, unknown, MessageMeta, infer prompt> ? prompt : never
+
+/**
+ * Options accepted by a concrete transport's {@link Transport.start},
+ * or `never` for transports whose `start` takes no argument.
+ */
+export type StartOptionsOf<transport> =
+  transport extends Transport<Role, string, unknown, MessageMeta, any, infer startOptions>
+    ? startOptions
+    : never
 
 /** Value resolved by a transport's {@link Transport.send}. */
 export type SendValue<transport extends Transport<Role, string, unknown>> = Awaited<

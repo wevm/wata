@@ -172,18 +172,21 @@ export function encodeSecret(secret: Hex.Hex | Bytes.Bytes): string {
 /**
  * Build the initial pairing link delivered out-of-band (§2.3.3).
  *
- * With {@link buildUri.Options.host} set, produces a Universal Link /
- * App Link (`https://wallet.example/urpc?version=1&...`) — the
- * RECOMMENDED format when the target host is known. Without it,
- * produces the shared-scheme form (`urpc://?version=1&...`) for
- * any-host flows.
+ * The {@link buildUri.Options.scheme} selects the link's target:
+ * - omitted → the shared `urpc://?version=1&...` scheme for any-host
+ *   flows (the default);
+ * - a bare scheme like `'example-wallet'` → `example-wallet://?version=1&...`, a
+ *   wallet-specific App Link;
+ * - a full universal link like `'https://wallet.example/urpc'` →
+ *   `https://wallet.example/urpc?version=1&...`, the RECOMMENDED format
+ *   when the target host is known.
  *
  * Only public material appears in the link's named parameters besides
  * `pairing_secret`, which is the one out-of-band secret the protocol
  * depends on — the link MUST be treated as confidential and used once.
  */
 export function buildUri(options: buildUri.Options): string {
-  const { allowPrivateNetwork, consumerPublicKey, host, pairingSecret, relay } = options
+  const { allowPrivateNetwork, consumerPublicKey, pairingSecret, relay, scheme } = options
   const search = new URLSearchParams()
   search.set(
     uriParams.consumerPublicKey,
@@ -192,12 +195,22 @@ export function buildUri(options: buildUri.Options): string {
   search.set(uriParams.pairingSecret, encodeSecret(pairingSecret))
   search.set(uriParams.relay, assertRelayUrl(relay, { allowPrivateNetwork }))
   search.set(uriParams.version, String(version))
-  if (!host) return `urpc://?${search.toString()}`
+  // Resolve the link base: the shared `urpc://` scheme by default, a
+  // bare scheme normalized to `<scheme>://`, or a value already
+  // carrying `://` (a custom scheme or full universal-link URL) used
+  // verbatim.
+  const base = (() => {
+    if (!scheme) return 'urpc://'
+    if (scheme.includes('://')) return scheme
+    return `${scheme}://`
+  })()
   const url = (() => {
     try {
-      return new URL(host)
+      return new URL(base)
     } catch (cause) {
-      throw new Errors.ProtocolError('`host` must be a valid URL', { cause: cause as Error })
+      throw new Errors.ProtocolError('`scheme` must be a valid scheme or URL', {
+        cause: cause as Error,
+      })
     }
   })()
   for (const [key, value] of search) url.searchParams.set(key, value)
@@ -215,12 +228,17 @@ export declare namespace buildUri {
     allowPrivateNetwork?: boolean | undefined
     /** Consumer's raw 32-byte X25519 public key. */
     consumerPublicKey: Hex.Hex | Bytes.Bytes
-    /** Universal-link base of the target host. Omit for the shared `urpc://` scheme. */
-    host?: string | undefined
     /** 32-byte out-of-band pairing secret. */
     pairingSecret: Hex.Hex | Bytes.Bytes
     /** Relay server base URL (HTTPS, or HTTP loopback for development). */
     relay: string
+    /**
+     * Target of the pairing link: a bare scheme (`'example-wallet'` →
+     * `example-wallet://`), a full universal link
+     * (`'https://wallet.example/urpc'`), or omitted for the shared
+     * `urpc://` scheme.
+     */
+    scheme?: string | undefined
   }
 }
 

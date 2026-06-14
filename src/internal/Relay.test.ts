@@ -113,25 +113,51 @@ describe('buildUri', () => {
     )
   })
 
-  test('builds a universal link when `host` is set', () => {
+  test('builds a universal link when `scheme` is a full URL', () => {
     expect(
       Relay.buildUri({
         consumerPublicKey,
-        host: 'https://wallet.example/urpc',
         pairingSecret,
         relay: 'https://relay.example',
+        scheme: 'https://wallet.example/urpc',
       }),
     ).toMatchInlineSnapshot(
       `"https://wallet.example/urpc?consumer_pubkey=ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8&pairing_secret=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE&relay=https%3A%2F%2Frelay.example&version=1"`,
     )
   })
 
-  test('preserves existing query parameters on `host`', () => {
+  test('normalizes a bare `scheme` to `<scheme>://`', () => {
+    expect(
+      Relay.buildUri({
+        consumerPublicKey,
+        pairingSecret,
+        relay: 'https://relay.example',
+        scheme: 'example-wallet',
+      }),
+    ).toMatchInlineSnapshot(
+      `"example-wallet://?consumer_pubkey=ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8&pairing_secret=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE&relay=https%3A%2F%2Frelay.example&version=1"`,
+    )
+  })
+
+  test('accepts a `scheme` already carrying `://`', () => {
+    expect(
+      new URL(
+        Relay.buildUri({
+          consumerPublicKey,
+          pairingSecret,
+          relay: 'https://relay.example',
+          scheme: 'example-wallet://',
+        }),
+      ).protocol,
+    ).toBe('example-wallet:')
+  })
+
+  test('preserves existing query parameters on a full-URL `scheme`', () => {
     const uri = Relay.buildUri({
       consumerPublicKey,
-      host: 'https://wallet.example/urpc?theme=dark',
       pairingSecret,
       relay: 'https://relay.example',
+      scheme: 'https://wallet.example/urpc?theme=dark',
     })
     expect(new URL(uri).searchParams.get('theme')).toBe('dark')
   })
@@ -196,15 +222,15 @@ describe('buildUri', () => {
     )
   })
 
-  test('rejects an invalid `host`', () => {
+  test('rejects an invalid `scheme`', () => {
     expect(() =>
       Relay.buildUri({
         consumerPublicKey,
-        host: '::',
         pairingSecret,
         relay: 'https://relay.example',
+        scheme: '::',
       }),
-    ).toThrowErrorMatchingInlineSnapshot('[ProtocolError: `host` must be a valid URL]')
+    ).toThrowErrorMatchingInlineSnapshot('[ProtocolError: `scheme` must be a valid scheme or URL]')
   })
 })
 
@@ -224,9 +250,9 @@ describe('parseUri', () => {
   test('round-trips a universal link', () => {
     const uri = Relay.buildUri({
       consumerPublicKey,
-      host: 'https://wallet.example/urpc',
       pairingSecret,
       relay: 'https://relay.example',
+      scheme: 'https://wallet.example/urpc',
     })
     expect(Relay.parseUri(uri)).toEqual(
       Relay.parseUri(

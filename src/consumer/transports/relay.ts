@@ -17,6 +17,12 @@
  * flushed after `ready`, so `wata.send(...)` can be called immediately —
  * it resolves once the host answers.
  *
+ * The pairing link's target scheme can be chosen at construction
+ * (`relay({ scheme })`) or per call (`wata.relay.start({ scheme })`),
+ * defaulting to the shared `urpc://` scheme — direct a freshly built
+ * link at a wallet selected out of band (a wallet modal or deep link)
+ * without rendering a QR code at all.
+ *
  * @example
  * ```ts
  * import { Wata, relay } from 'wata'
@@ -29,6 +35,12 @@
  * wata.on('prompt', ({ uri }) => renderQrCode(uri))
  *
  * const { result } = await wata.send({ method: 'wallet_connect', params: [] })
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Target a specific wallet's scheme chosen out of band.
+ * await wata.relay.start({ scheme: 'example-wallet' }) // example-wallet://?version=1&...
  * ```
  */
 
@@ -72,13 +84,6 @@ export type Options = {
    */
   fetch?: typeof globalThis.fetch | undefined
   /**
-   * Universal-link base of the target host (e.g.
-   * `https://wallet.example/urpc`). When set, the pairing link opens
-   * the host app directly; when omitted, the shared `urpc://` scheme
-   * is used for any-host flows.
-   */
-  host?: string | undefined
-  /**
    * Gap, in milliseconds, between successive `receive: 'poll'` requests
    * after an empty response. Defaults to `2000`. Ignored when `receive`
    * is `'sse'`.
@@ -93,12 +98,36 @@ export type Options = {
    * a relay that enables buffering (spec §5.4).
    */
   receive?: 'poll' | 'sse' | undefined
+  /**
+   * Default target of the pairing link: a bare scheme (`'example-wallet'` →
+   * `example-wallet://`), a full universal link
+   * (`'https://wallet.example/urpc'`) that opens the host app directly,
+   * or omitted for the shared `urpc://` scheme used for any-host flows.
+   * Overridable per call via `start({ scheme })`.
+   */
+  scheme?: string | undefined
   /** Relay server base URL (HTTPS, or HTTP loopback for development). */
   url: string
 }
 
+/** Options for the relay transport's {@link Transport.Transport.start | start}. */
+export type StartOptions = {
+  /**
+   * Target of this pairing link, overriding the construction-time
+   * {@link Options.scheme}: a bare scheme (`'example-wallet'` → `example-wallet://`),
+   * a full universal link (`'https://wallet.example/urpc'`), or omitted
+   * for the construction-time default (falling back to the shared
+   * `urpc://` scheme). Reach for it to direct a freshly built pairing
+   * link at a wallet chosen out of band:
+   * `await wata.relay.start({ scheme: 'example-wallet' })`.
+   */
+  scheme?: string | undefined
+}
+
 /**
- * Create a consumer-side `relay` transport.
+ * Create a consumer-side `relay` transport. Its `start` additionally
+ * accepts a {@link StartOptions} so the pairing link's target scheme
+ * can be supplied at start time.
  *
  * @example
  * ```ts
@@ -109,14 +138,14 @@ export type Options = {
  */
 export function relay(
   options: Options,
-): Transport.Transport<'consumer', 'relay', void, Transport.NoMessageMeta, Prompt> {
+): Transport.Transport<'consumer', 'relay', void, Transport.NoMessageMeta, Prompt, StartOptions> {
   const {
     allowPrivateNetwork,
     expiresIn = 300_000,
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
-    host,
     pollInterval,
     receive = 'sse',
+    scheme,
     url,
   } = options
 
@@ -297,7 +326,7 @@ export function relay(
     emitter.emit('message', inner)
   }
 
-  async function start(): Promise<void> {
+  async function start(options: StartOptions = {}): Promise<void> {
     if (state.started) return
     if (startPromise) return startPromise
     startPromise = (async () => {
@@ -340,9 +369,9 @@ export function relay(
         const uri = Relay.buildUri({
           allowPrivateNetwork,
           consumerPublicKey: keypair_local.x25519.publicKey,
-          host,
           pairingSecret: pairingSecret_local,
           relay: url,
+          scheme: options.scheme ?? scheme,
         })
         emitter.emit('prompt', { expiresAt: Date.now() + expiresIn, uri })
       } finally {
