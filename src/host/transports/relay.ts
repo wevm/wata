@@ -495,7 +495,12 @@ export declare namespace relay {
    * whose `start` additionally accepts a {@link StartOptions} so the
    * pairing uri can be supplied at start time.
    */
-  type ReturnType = Transport.Transport<'host', 'relay'> & {
-    start: (options?: StartOptions) => Promise<void>
-  }
+  type ReturnType = Transport.Transport<
+    'host',
+    'relay',
+    void,
+    Transport.NoMessageMeta,
+    never,
+    StartOptions
+  >
 }

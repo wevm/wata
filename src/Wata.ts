@@ -236,8 +236,11 @@ export type ConsumerSession<
    * `start` internally on first use, so most callers can skip it.
    * Reach for it when the open wata should overlap other work, or
    * when a UI wants to surface the connecting state before any traffic.
+   *
+   * Forwards any start options the wrapped transport accepts (e.g. the
+   * relay transport's `{ scheme }`).
    */
-  start: () => Promise<void>
+  start: (options?: Transport.StartOptionsOf<transport>) => Promise<void>
   /** The wrapped transport. */
   transport: transport
 }
@@ -721,12 +724,14 @@ function createConsumerSession<
     emitPrompt('prompt', { ...(prompt as object), transport: transport.name })
   })
 
-  async function start(): Promise<void> {
+  async function start(options?: Transport.StartOptionsOf<transport>): Promise<void> {
     if (state.started) return
     if (startPromise) return startPromise
     startPromise = (async () => {
       try {
-        await transport.start()
+        await (transport.start as (options?: Transport.StartOptionsOf<transport>) => Promise<void>)(
+          options,
+        )
         state.started = true
         emitter.emit('open', undefined)
       } finally {
