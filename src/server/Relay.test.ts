@@ -236,7 +236,7 @@ describe('create', () => {
     await reader.cancel()
   })
 
-  test('returns 204 when the target peer has no active receiver', async () => {
+  test('buffers a POST when the target peer has no active receiver (202)', async () => {
     const relay = Relay.create()
     const response = await relay.fetch(
       signedRequest({
@@ -246,7 +246,7 @@ describe('create', () => {
         url: relayUrl(channel, 'consumer'),
       }),
     )
-    expect(response.status).toBe(204)
+    expect(response.status).toBe(202)
   })
 
   test('delivers a POST body to the active receiver and returns 202', async () => {
@@ -281,7 +281,7 @@ describe('create', () => {
         url: relayUrl(channel, 'consumer'),
       }),
     )
-    expect(first.status).toBe(204)
+    expect(first.status).toBe(202)
     const second = await relay.fetch(
       signedRequest({
         body: '{}',
@@ -312,7 +312,7 @@ describe('create', () => {
         }),
       )
     const statuses = (await Promise.all([send(), send()])).map((r) => r.status).sort()
-    expect(statuses).toEqual([204, 401])
+    expect(statuses).toEqual([202, 401])
   })
 
   test('serializes concurrent first registrations so one key wins', async () => {
@@ -324,9 +324,9 @@ describe('create', () => {
         signedRequest({ body: '{}', keypair, method: 'POST', url: relayUrl(channel, 'host') }),
       )
     const statuses = (await Promise.all([send(a), send(b)])).map((r) => r.status).sort()
-    // One registers (204, no receiver), the other diverges from the now
-    // registered key and is rejected (401).
-    expect(statuses).toEqual([204, 401])
+    // One registers and buffers (202, no receiver), the other diverges
+    // from the now registered key and is rejected (401).
+    expect(statuses).toEqual([202, 401])
   })
 
   test('enforces first-write-wins on the peer-slot key', async () => {
@@ -432,7 +432,7 @@ describe('create', () => {
   })
 
   test('buffers a POST for an absent receiver and drains it FIFO on subscribe', async () => {
-    const relay = Relay.create({ buffer: {}, keepaliveInterval: 50 })
+    const relay = Relay.create({ keepaliveInterval: 50 })
     const host = Crypto.randomKeypair()
     const consumer = Crypto.randomKeypair()
     const first = await relay.fetch(
@@ -474,7 +474,7 @@ describe('create', () => {
     const store = Store.memory()
     const host = Crypto.randomKeypair()
     const consumer = Crypto.randomKeypair()
-    const buffered = await Relay.create({ buffer: {}, store }).fetch(
+    const buffered = await Relay.create({ store }).fetch(
       signedRequest({
         body: 'A',
         keypair: host,
@@ -483,7 +483,7 @@ describe('create', () => {
       }),
     )
     expect(buffered.status).toBe(202)
-    const subscription = await Relay.create({ buffer: {}, keepaliveInterval: 50, store }).fetch(
+    const subscription = await Relay.create({ keepaliveInterval: 50, store }).fetch(
       signedRequest({ keypair: consumer, method: 'GET', url: relayUrl(channel, 'consumer') }),
     )
     const reader = sseReader(subscription)
@@ -493,16 +493,16 @@ describe('create', () => {
   })
 
   test('tail-drops a buffered POST when the buffer is full (204)', async () => {
-    const relay = Relay.create({ buffer: { maxMessages: 2 } })
+    const relay = Relay.create()
     const host = Crypto.randomKeypair()
     const post = (body: string) =>
       relay.fetch(
         signedRequest({ body, keypair: host, method: 'POST', url: relayUrl(channel, 'consumer') }),
       )
-    expect((await post('A')).status).toBe(202)
-    expect((await post('B')).status).toBe(202)
+    // The default per-slot bound is 16 messages; the first 16 are held.
+    for (let index = 0; index < 16; index += 1) expect((await post(`m${index}`)).status).toBe(202)
     // Buffer is full — the newest body is dropped, not an older one.
-    expect((await post('C')).status).toBe(204)
+    expect((await post('overflow')).status).toBe(204)
   })
 
   test('long-polls and delivers an arriving POST as a 200 body', async () => {
@@ -571,7 +571,7 @@ describe('create', () => {
   })
 
   test('long-poll drains the single oldest buffered body, leaving the rest', async () => {
-    const relay = Relay.create({ buffer: {} })
+    const relay = Relay.create()
     const consumer = Crypto.randomKeypair()
     const host = Crypto.randomKeypair()
     await relay.fetch(
@@ -635,6 +635,6 @@ describe('create', () => {
         url: `https://relay.test/relay/${channel}/consumer`,
       }),
     )
-    expect(response.status).toBe(204)
+    expect(response.status).toBe(202)
   })
 })

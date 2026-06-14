@@ -7,13 +7,12 @@
  * it authenticates which peer may push to a channel (RFC 9421 message
  * signatures, first-write-wins key registration, replay-nonce sets) and
  * forwards opaque bodies between the two peer slots — but never parses
- * message contents. By default it does not queue: a POST to a slot with
- * no active receiver is dropped. It MAY optionally retain such bodies in
- * a bounded, time-limited, per-slot buffer ({@link create.Options.buffer},
- * spec §5.4) to bridge brief receiver absence. All confidentiality and
- * integrity guarantees live in the peers' end-to-end handshake and AEAD
- * envelope; a compromised relay can only drop traffic and observe
- * metadata.
+ * message contents. A POST to a slot with no active receiver is retained
+ * in a bounded, time-limited, per-slot buffer (spec §5.4) and drained
+ * when the peer next subscribes, bridging brief receiver absence. All
+ * confidentiality and integrity guarantees live in the peers'
+ * end-to-end handshake and AEAD envelope; a compromised relay can only
+ * drop traffic and observe metadata.
  *
  * Routes (mounted under {@link create.Options.path}, default `/`):
  *
@@ -39,7 +38,7 @@
  * import { createServer } from 'node:http'
  * import { Relay, Server, Store } from 'wata/server'
  *
- * const relay = Relay.create({ buffer: {}, store: Store.memory() })
+ * const relay = Relay.create({ store: Store.memory() })
  * createServer(Server.node(relay).listener).listen(8787)
  * ```
  *
@@ -53,7 +52,7 @@
  * export class Channel {
  *   relay: ReturnType<typeof Relay.create>
  *   constructor(_ctx: DurableObjectState, env: Env) {
- *     this.relay = Relay.create({ buffer: {}, store: Store.durableObject(env.STORAGE_DO) })
+ *     this.relay = Relay.create({ store: Store.durableObject(env.STORAGE_DO) })
  *   }
  *   fetch(request: Request) {
  *     return this.relay.fetch(request)
@@ -151,7 +150,6 @@ const bufferDefaultTtl = 30_000
  */
 export function create(options: create.Options = {}): create.ReturnType {
   const {
-    buffer,
     channelTtl = 3_600,
     keepaliveInterval = 25_000,
     maxBodySize = 1_048_576,
@@ -159,19 +157,17 @@ export function create(options: create.Options = {}): create.ReturnType {
     store = Store.memory(),
   } = options
 
-  // Bounded receiver-absence buffering (spec §5.4) is opt-in: when
-  // `buffer` is supplied the relay retains bodies for an absent receiver
-  // in the same `store`, otherwise it stays a pure forwarder (a POST with
-  // no receiver is dropped with `204`, spec §6.3). The buffer's
-  // durability follows the store: a `Store.memory` store keeps it in
-  // process; a `Store.durableObject` store survives eviction.
-  const bufferConfig = buffer
-    ? {
-        maxBytes: buffer.maxBytes ?? maxBodySize,
-        maxMessages: buffer.maxMessages ?? bufferDefaultMaxMessages,
-        ttl: buffer.ttl ?? bufferDefaultTtl,
-      }
-    : undefined
+  // Bounded receiver-absence buffering (spec §5.4) is always on: a POST
+  // to a slot with no active receiver is retained in a small, per-slot
+  // FIFO queue (in the same `store`) and drained when the peer next
+  // subscribes, rather than dropped. The buffer's durability follows the
+  // store: a `Store.memory` store keeps it in process; a
+  // `Store.durableObject` store survives eviction.
+  const bufferConfig = {
+    maxBytes: maxBodySize,
+    maxMessages: bufferDefaultMaxMessages,
+    ttl: bufferDefaultTtl,
+  }
 
   const receivers = new Map<string, Receiver>()
   const supersededAt = new Map<string, number>()
@@ -220,16 +216,15 @@ export function create(options: create.Options = {}): create.ReturnType {
   }
   async function persistBuffer(slot: string, list: Buffered[]): Promise<void> {
     if (list.length === 0) await store.delete(bufferKey(slot))
-    else await store.set(bufferKey(slot), list, { ttl: Math.ceil((bufferConfig?.ttl ?? 0) / 1000) })
+    else await store.set(bufferKey(slot), list, { ttl: Math.ceil(bufferConfig.ttl / 1000) })
   }
 
   /**
    * Remove and return the oldest non-expired buffered body for a slot, or
-   * `undefined` when buffering is disabled or the slot is empty (spec
-   * §5.4.5, at-most-once). MUST hold the slot lock.
+   * `undefined` when the slot is empty (spec §5.4.5, at-most-once). MUST
+   * hold the slot lock.
    */
   async function bufferShift(slot: string): Promise<string | undefined> {
-    if (!bufferConfig) return undefined
     const stored = (await store.get<Buffered[]>(bufferKey(slot))) ?? []
     const list = prune(stored)
     const head = list.shift()
@@ -239,12 +234,11 @@ export function create(options: create.Options = {}): create.ReturnType {
 
   /**
    * Retain a body for an absent receiver (spec §5.4). Returns `true` if
-   * buffered, `false` if dropped — either because buffering is disabled
-   * or the slot's buffer is at its count/byte bound (tail-drop the
-   * incoming body, §5.4.4). MUST hold the slot lock.
+   * buffered, `false` if dropped because the slot's buffer is at its
+   * count/byte bound (tail-drop the incoming body, §5.4.4). MUST hold the
+   * slot lock.
    */
   async function bufferPush(slot: string, body: string, bytes: number): Promise<boolean> {
-    if (!bufferConfig) return false
     const stored = (await store.get<Buffered[]>(bufferKey(slot))) ?? []
     const list = prune(stored)
     const used = list.reduce((total, entry) => total + entry.bytes, 0)
@@ -674,8 +668,8 @@ export function create(options: create.Options = {}): create.ReturnType {
 
     // Deliver verbatim to the destination slot's active receiver under
     // the slot lock so delivery, supersession, and draining never race.
-    // With no receiver the relay either buffers the body (opt-in, spec
-    // §5.4 — `202`) or drops it (default, spec §6.3 — `204`).
+    // With no receiver the relay buffers the body (spec §5.4 — `202`),
+    // tail-dropping only when the slot's buffer is full (`204`).
     const slot = `${channelId}/${peer}`
     const status = await withSlot(slot, async () => {
       const receiver = receivers.get(slot)
@@ -699,46 +693,8 @@ export function create(options: create.Options = {}): create.ReturnType {
 }
 
 export declare namespace create {
-  /** Bounds for receiver-absence buffering (spec §5.4). Opt-in. */
-  type BufferOptions = {
-    /**
-     * Aggregate buffered bytes per `(channelId, peer)` slot before
-     * tail-drop. Defaults to {@link Options.maxBodySize} (spec §5.4.1).
-     */
-    maxBytes?: number | undefined
-    /**
-     * Maximum buffered messages per `(channelId, peer)` slot before
-     * tail-drop. Defaults to 16 (spec §5.4.1 RECOMMENDED ≤ 16).
-     */
-    maxMessages?: number | undefined
-    /**
-     * Per-body TTL in milliseconds; expired bodies are evicted and never
-     * delivered. Defaults to 30_000 (spec §5.4.2 RECOMMENDED 30s).
-     */
-    ttl?: number | undefined
-  }
-
   /** Options for {@link create}. */
   type Options = {
-    /**
-     * Enable bounded receiver-absence buffering (spec §5.4): a POST whose
-     * target slot has no active receiver is retained in a small,
-     * time-limited, per-slot FIFO and delivered when a receiver next
-     * subscribes, instead of being dropped. Pass `{}` for the
-     * spec-recommended bounds, or override them. Omit to keep the relay a
-     * pure forwarder (a POST with no receiver is dropped with `204`).
-     *
-     * The buffer is persisted in the same {@link Options.store}, so its
-     * durability follows the store: a {@link Store.memory} store keeps the
-     * backlog in process, while a {@link Store.durableObject} store survives
-     * eviction. Buffering is best-effort — bounded, time-limited, and
-     * at-most-once — so peers MUST NOT rely on it; reliable delivery
-     * remains the application's responsibility via JSON-RPC `id` retry.
-     * Because the live receiver map is in-memory, both peers of a channel
-     * must still reach the same instance (e.g. one Durable Object per
-     * channel).
-     */
-    buffer?: BufferOptions | undefined
     /**
      * Channel-state TTL in seconds: key registrations (and with them the
      * channel) are GC'd this long after the last authenticated request.

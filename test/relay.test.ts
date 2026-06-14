@@ -74,9 +74,9 @@ describe('relay', () => {
   })
 
   test('establishes a session over the short-poll receive transport', async () => {
-    // Short polling relies on the relay's buffering to bridge the brief
-    // gaps between polls, so enable it on the server.
-    const server = Relay.create({ buffer: {}, keepaliveInterval: 50 })
+    // Short polling relies on the relay's built-in buffering to bridge
+    // the brief gaps between polls.
+    const server = Relay.create({ keepaliveInterval: 50 })
     const prompt = deferred<string>()
 
     const consumer = Wata.create({
@@ -172,20 +172,6 @@ describe('relay', () => {
     await expect(pending).rejects.toMatchObject({ name: 'Relay.PairingFailedError' })
   })
 
-  test('host start() rejects when the consumer has no active receiver', async () => {
-    const server = Relay.create({ keepaliveInterval: 50 })
-    // A syntactically valid pairing uri whose consumer never subscribed.
-    const uri = RelayProtocol.buildUri({
-      consumerPublicKey: Crypto.randomKeypair().x25519.publicKey,
-      pairingSecret: Bytes.random(32),
-      relay: 'https://relay.test',
-    })
-    const host = HostWata.create({ transports: [hostRelay({ fetch: serverFetch(server), uri })] })
-    await expect(host.start()).rejects.toThrow(
-      'consumer has no active relay receiver (message dropped)',
-    )
-  })
-
   test('host factory rejects a malformed pairing uri at construction', () => {
     expect(() => hostRelay({ uri: 'https://wallet.example/urpc' })).toThrow(
       'value is not a valid relay pairing uri',
@@ -249,7 +235,7 @@ describe('relay receive modes', () => {
   ] as const
 
   async function session(receive: { consumer: 'poll' | 'sse'; host: 'poll' | 'sse' }) {
-    const server = Relay.create({ buffer: {}, keepaliveInterval: 50 })
+    const server = Relay.create({ keepaliveInterval: 50 })
     const prompt = deferred<string>()
     const consumer = Wata.create({
       transports: [
