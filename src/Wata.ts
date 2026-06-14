@@ -150,10 +150,33 @@ export type LifecycleEventMap<
 export type ConsumerEventMap<
   schema extends Schema.Schema | undefined = undefined,
   context extends Rpc.RequestContext = Rpc.RequestContext,
+  prompt extends object = never,
 > = LifecycleEventMap<schema, context> & {
   /** Inbound JSON-RPC notification from the host. */
   notification: SchemaNotificationEvent<schema>
+  /**
+   * User-facing pairing/verification prompt produced by an out-of-band
+   * transport (e.g. `relay`, `deviceCode`) during startup. Discriminated
+   * by {@link ConsumerPromptEvent transport}, so listeners narrow to the
+   * exact payload of the transport that produced it.
+   */
+  prompt: prompt
 }
+
+/**
+ * Consumer `'prompt'` payload derived from a transport: the transport's
+ * own {@link "./core/Transport".PromptOf prompt} shape tagged with its
+ * SDK-facing `transport` name. Transports that never pair out-of-band
+ * contribute `never`, so they drop out of the union.
+ */
+export type ConsumerPromptEvent<transport extends { name: string }> = transport extends unknown
+  ? [Transport.PromptOf<transport>] extends [never]
+    ? never
+    : Transport.PromptOf<transport> & {
+        /** SDK-facing name of the transport that produced the prompt. */
+        transport: transport['name']
+      }
+  : never
 
 /** Non-empty tuple of consumer transports accepted by {@link create}. */
 export type ConsumerTransports = readonly [
@@ -180,17 +203,17 @@ export type ConsumerSession<
     options: Consumer.NotifyOptions<schema, method>,
   ) => Promise<void>
   /** Remove a previously subscribed listener. */
-  off: <type extends keyof ConsumerEventMap<schema, context>>(
+  off: <type extends keyof ConsumerEventMap<schema, context, ConsumerPromptEvent<transport>>>(
     type: type,
-    listener: Listener<ConsumerEventMap<schema, context>[type]>,
+    listener: Listener<ConsumerEventMap<schema, context, ConsumerPromptEvent<transport>>[type]>,
   ) => void
   /**
    * Subscribe to a consumer event. Returns an `AbortController` so the
    * subscription can be cancelled (or composed with an external signal).
    */
-  on: <type extends keyof ConsumerEventMap<schema, context>>(
+  on: <type extends keyof ConsumerEventMap<schema, context, ConsumerPromptEvent<transport>>>(
     type: type,
-    listener: Listener<ConsumerEventMap<schema, context>[type]>,
+    listener: Listener<ConsumerEventMap<schema, context, ConsumerPromptEvent<transport>>[type]>,
   ) => AbortController
   /** Side of the protocol this wata speaks for. */
   role: 'consumer'
@@ -233,14 +256,22 @@ export type ConsumerBase<
    */
   fetch: Http.HandlersForTransports<transports>['fetch']
   /** Remove a previously subscribed consumer listener. */
-  off: <type extends keyof ConsumerEventMap<schema, context>>(
+  off: <
+    type extends keyof ConsumerEventMap<schema, context, ConsumerPromptEvent<transports[number]>>,
+  >(
     type: type,
-    listener: Listener<ConsumerEventMap<schema, context>[type]>,
+    listener: Listener<
+      ConsumerEventMap<schema, context, ConsumerPromptEvent<transports[number]>>[type]
+    >,
   ) => void
   /** Subscribe to aggregate consumer events. */
-  on: <type extends keyof ConsumerEventMap<schema, context>>(
+  on: <
+    type extends keyof ConsumerEventMap<schema, context, ConsumerPromptEvent<transports[number]>>,
+  >(
     type: type,
-    listener: Listener<ConsumerEventMap<schema, context>[type]>,
+    listener: Listener<
+      ConsumerEventMap<schema, context, ConsumerPromptEvent<transports[number]>>[type]
+    >,
   ) => AbortController
   /** Side of the protocol this wata speaks for. */
   role: 'consumer'
@@ -419,10 +450,17 @@ export function create<
     } as unknown as Consumer<schema, transports, RequestContextOf<context>>
   }
 
-  const emitter = Events.create<ConsumerEventMap<schema, RequestContextOf<context>>>()
+  const emitter =
+    Events.create<
+      ConsumerEventMap<schema, RequestContextOf<context>, ConsumerPromptEvent<transports[number]>>
+    >()
+  // The aggregate prompt payload is generic over `transports`, so loosen
+  // the local emit to forward each session's already-tagged payload.
+  const emitPrompt = emitter.emit as (type: 'prompt', payload: object) => boolean
   for (const session of sessions) {
     session.on('error', (error) => emitter.emit('error', error))
     session.on('notification', (...payload) => emitter.emit('notification', ...payload))
+    session.on('prompt', (prompt) => emitPrompt('prompt', prompt as object))
     session.on('rpc-requests', (payload, meta) => emitter.emit('rpc-requests', payload, meta))
     session.on('rpc-responses', (payload, meta) => emitter.emit('rpc-responses', payload, meta))
   }
@@ -460,7 +498,10 @@ function createConsumerSession<
 }): ConsumerSession<schema, transport, RequestContextOf<context>> {
   const { context, schema, transport } = parameters
 
-  const emitter = Events.create<ConsumerEventMap<schema, RequestContextOf<context>>>()
+  const emitter =
+    Events.create<
+      ConsumerEventMap<schema, RequestContextOf<context>, ConsumerPromptEvent<transport>>
+    >()
   const pending = new Map<Rpc.Id, Pending>()
   const methodById = new Map<Rpc.Id, string>()
   // `started` = currently in an active session. After close, drops back
@@ -671,6 +712,13 @@ function createConsumerSession<
 
   transport.on('error', (error) => {
     emitter.emit('error', error)
+  })
+
+  // `transport`'s prompt payload is generic here (the bound collapses it
+  // to `never`), so loosen the local emit to forward the tagged payload.
+  const emitPrompt = emitter.emit as (type: 'prompt', payload: object) => boolean
+  transport.on('prompt', (prompt) => {
+    emitPrompt('prompt', { ...(prompt as object), transport: transport.name })
   })
 
   async function start(): Promise<void> {

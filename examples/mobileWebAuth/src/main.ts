@@ -1,7 +1,7 @@
 import { Wata } from 'wata/consumer'
+import { mobileWebAuth } from 'wata/consumer/transports/mobileWebAuth'
 import { Wata as HostWata, mobileWebAuth as hostMobileWebAuth } from 'wata/host'
 import * as Identity from 'wata/identity'
-import { mobileWebAuth } from 'wata/consumer/transports/mobileWebAuth'
 
 const callback = 'com.example.app://callback'
 const consumerOrigin = 'https://app.example'

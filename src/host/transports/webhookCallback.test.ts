@@ -12,7 +12,7 @@
 
 import { Base64, Bytes, Ed25519, Hex } from 'ox'
 import { describe, expect, test, vi } from 'vp/test'
-import { Discovery, Envelope, Identity, Kv, MessageSig, Rpc, Wata, webhookCallback } from 'wata'
+import { Discovery, Envelope, Identity, MessageSig, Rpc, Store, Wata, webhookCallback } from 'wata'
 import {
   Wata as HostWata,
   WebhookCallback as HostWebhookCallback,
@@ -53,7 +53,7 @@ const expectedApprovalSurfaceCsp = [
  * pending intent's opaque code without going through the
  * browser-facing /verify UI.
  */
-function memoryWithScan(): Kv.AtomicKv & { scanKeys: (prefix: string) => string[] } {
+function memoryWithScan(): Store.AtomicStore & { scanKeys: (prefix: string) => string[] } {
   const inner = new Map<string, { expiresAt?: number; value: unknown }>()
   const isExpired = (entry: { expiresAt?: number }) =>
     entry.expiresAt !== undefined && Date.now() >= entry.expiresAt
@@ -119,7 +119,7 @@ function pair(options: PairOptions = {}) {
       ? undefined
       : (options.consumerDiscoveryPublicKey ?? ed25519Pubkey(consumerKeypair.publicKey))
   const hostStore = memoryWithScan()
-  const consumerStore = Kv.memory()
+  const consumerStore = Store.memory()
 
   const consumerWk = consumerWellknown({
     document: {
@@ -1233,7 +1233,7 @@ describe('webhookCallback end-to-end', () => {
           return new Response('rendered')
         },
       },
-      store: Kv.memory(),
+      store: Store.memory(),
     })
 
     const invalid = await transport.fetch(new Request('https://wallet.example/verify?code=unknown'))
@@ -1263,7 +1263,7 @@ describe('webhookCallback end-to-end', () => {
             },
           }),
       },
-      store: Kv.memory(),
+      store: Store.memory(),
     })
 
     const response = await transport.fetch(new Request('https://wallet.example/verify'))
@@ -1283,7 +1283,7 @@ describe('webhookCallback end-to-end', () => {
         return undefined
       },
       async set() {},
-    } satisfies Kv.Kv
+    } satisfies Store.Store
 
     expect(() =>
       hostWebhookCallback({
@@ -1400,7 +1400,7 @@ describe('webhookCallback end-to-end', () => {
           })) as typeof fetch,
         host: hostDocument,
         path: '/cb',
-        store: Kv.memory(),
+        store: Store.memory(),
       })
       Wata.create({
         baseUrl: 'https://acme.dev',
@@ -1456,7 +1456,7 @@ describe('webhookCallback end-to-end', () => {
           version: '1.0',
         },
         path: '/cb',
-        store: Kv.memory(),
+        store: Store.memory(),
       })
       Wata.create({
         baseUrl: 'https://acme.dev',
@@ -1521,7 +1521,7 @@ describe('webhookCallback end-to-end', () => {
       }) as typeof fetch,
       host: 'https://wallet.example',
       path: '/cb',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
 
     expect(fetches).toEqual([])
@@ -1582,7 +1582,7 @@ describe('webhookCallback end-to-end', () => {
       }) as typeof fetch,
       host: 'https://wallet.example',
       path: '/cb',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     Wata.create({
       baseUrl: 'https://acme.dev',
@@ -1633,7 +1633,7 @@ describe('webhookCallback end-to-end', () => {
         fetch: (async () => Response.json(responseBody)) as typeof fetch,
         host: hostDocument,
         path: '/cb',
-        store: Kv.memory(),
+        store: Store.memory(),
       })
       Wata.create({
         baseUrl: 'https://acme.dev',
@@ -2299,7 +2299,7 @@ describe('webhookCallback end-to-end', () => {
       }) as typeof fetch,
       html: { render: () => new Response('ok') },
       path: hostPath,
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     const message = Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }])
     const body = JSON.stringify({ message, webhook_url: webhookUrl })

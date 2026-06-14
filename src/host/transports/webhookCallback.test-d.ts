@@ -1,6 +1,6 @@
 import type { Hex } from 'ox'
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Kv, MessageSig, Transport, WebhookCallback, Wata, webhookCallback } from 'wata/host'
+import { MessageSig, Store, Transport, WebhookCallback, Wata, webhookCallback } from 'wata/host'
 import * as Identity from 'wata/identity'
 
 function fromPrivateKey(privateKey: Hex.Hex) {
@@ -16,7 +16,7 @@ describe('webhookCallback (host)', () => {
         render: () => new Response('ok'),
       },
       path: '/auth/webhook',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     expectTypeOf(transport.role).toEqualTypeOf<'host'>()
     expectTypeOf(transport.exchange).toEqualTypeOf<Transport.Exchange>()
@@ -30,7 +30,7 @@ describe('webhookCallback (host)', () => {
         authenticate: () => new Response('ok'),
         render: () => new Response('ok'),
       },
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     const wata = Wata.create({
       identity: fromPrivateKey('0x' as Hex.Hex),
@@ -53,7 +53,7 @@ describe('webhookCallback (host)', () => {
           return new Response('ok')
         },
       },
-      store: Kv.memory(),
+      store: Store.memory(),
     })
   })
 
@@ -85,7 +85,7 @@ describe('webhookCallback (host)', () => {
         },
         render: () => new Response('ok'),
       },
-      store: Kv.memory(),
+      store: Store.memory(),
     })
   })
 
@@ -94,12 +94,12 @@ describe('webhookCallback (host)', () => {
       html: {
         render: () => new Response('ok'),
       },
-      store: Kv.memory(),
+      store: Store.memory(),
     })
   })
 
-  test('store requires an atomic Kv backend', () => {
-    expectTypeOf<WebhookCallback.Options['store']>().toEqualTypeOf<Kv.AtomicKv>()
+  test('store requires an atomic Store backend', () => {
+    expectTypeOf<WebhookCallback.Options['store']>().toEqualTypeOf<Store.AtomicStore>()
   })
 
   test('approval records omit consumer-facing correlation handles', () => {
@@ -123,7 +123,7 @@ describe('webhookCallback (host)', () => {
         render: () => new Response('ok'),
       },
       path: '/auth/webhook',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     expectTypeOf(transport.discovery).toEqualTypeOf<Transport.DiscoveryBinding | undefined>()
   })

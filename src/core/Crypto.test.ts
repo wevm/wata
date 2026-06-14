@@ -4,9 +4,9 @@ import { Crypto } from 'wata'
 
 describe('decodePublicKey', () => {
   test('decodes a 32-byte unpadded base64url public key', () => {
-    expect(Crypto.decodePublicKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')).toMatchInlineSnapshot(
-      `"0x0000000000000000000000000000000000000000000000000000000000000000"`,
-    )
+    expect(
+      Crypto.decodePublicKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
+    ).toMatchInlineSnapshot(`"0x0000000000000000000000000000000000000000000000000000000000000000"`)
   })
 
   test('rejects malformed public keys', () => {

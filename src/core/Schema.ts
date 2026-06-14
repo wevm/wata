@@ -49,8 +49,10 @@ type Merge<base extends Record<string, Method>, extension extends Record<string,
  * Method definition a schema uses for `name`, including fallback resolution
  * for open schemas.
  */
-export type DefinitionOf<schema extends Schema, name extends MethodName<schema>> =
-  name extends keyof schema['methods'] ? schema['methods'][name] : FallbackOf<schema>
+export type DefinitionOf<
+  schema extends Schema,
+  name extends MethodName<schema>,
+> = name extends keyof schema['methods'] ? schema['methods'][name] : FallbackOf<schema>
 
 /** Zod schema accepted for a Wata-wide request context metadata bag. */
 export type Context = z.ZodMiniType<Rpc.RequestContext>

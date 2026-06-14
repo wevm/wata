@@ -1,4 +1,4 @@
-import { Identity, Kv, PostMessage, Wata, deviceCode, postMessage, webhookCallback } from 'wata'
+import { Identity, PostMessage, Store, Wata, deviceCode, postMessage, webhookCallback } from 'wata'
 
 export const baseUrl = 'http://localhost:5173'
 
@@ -10,10 +10,6 @@ export const consumer = Wata.create({
   meta: { name: 'Kitchen Sink Consumer' },
   transports: [
     deviceCode({
-      onPrompt({ userCode, verificationUriFull }) {
-        console.log(`open ${verificationUriFull}`)
-        console.log(`user_code: ${userCode}`)
-      },
       pollingInterval: 1_000,
       url: `${baseUrl}/auth/device`,
     }),
@@ -32,7 +28,13 @@ export const consumer = Wata.create({
     webhookCallback({
       host: `${baseUrl}/.well-known/urpc/host.json`,
       path: '/consumer/callback',
-      store: Kv.memory(),
+      store: Store.memory(),
     }),
   ],
+})
+
+consumer.on('prompt', (prompt) => {
+  if (prompt.transport !== 'deviceCode') return
+  console.log(`open ${prompt.verificationUriFull}`)
+  console.log(`user_code: ${prompt.userCode}`)
 })

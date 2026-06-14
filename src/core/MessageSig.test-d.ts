@@ -33,14 +33,14 @@ describe('MessageSig', () => {
   })
 
   test('contentDigest accepts string or Uint8Array, returns string', () => {
-    expectTypeOf(MessageSig.contentDigest)
-      .parameter(0)
-      .toEqualTypeOf<string | Uint8Array>()
+    expectTypeOf(MessageSig.contentDigest).parameter(0).toEqualTypeOf<string | Uint8Array>()
     expectTypeOf(MessageSig.contentDigest).returns.toBeString()
   })
 
   test('parseSignatureInput(): -> { label, components, parameters }', () => {
-    expectTypeOf(MessageSig.parseSignatureInput).returns.toEqualTypeOf<MessageSig.ParsedSignatureInput>()
+    expectTypeOf(
+      MessageSig.parseSignatureInput,
+    ).returns.toEqualTypeOf<MessageSig.ParsedSignatureInput>()
   })
 
   test('Parameters shape', () => {

@@ -1,0 +1,20 @@
+{
+  "name": "relay-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:types": "tsc",
+    "dev:consumer": "node --import tsx src/consumer.ts",
+    "dev:host": "node --import tsx src/host.ts",
+    "dev:relay": "node --import tsx src/relay.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "catalog:",
+    "wata": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "^4.19.2",
+    "typescript": "catalog:"
+  }
+}

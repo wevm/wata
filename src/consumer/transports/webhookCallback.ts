@@ -26,7 +26,7 @@
  *
  * @example
  * ```ts
- * import { Wata, Kv, webhookCallback } from 'wata'
+ * import { Store, Wata, webhookCallback } from 'wata'
  *
  * const wata = Wata.create({
  *   baseUrl: 'https://acme.dev',
@@ -36,7 +36,7 @@
  *     webhookCallback({
  *       host: 'https://wallet.example',
  *       path: '/cb',
- *       store: Kv.memory(),
+ *       store: Store.memory(),
  *     }),
  *   ],
  * })
@@ -59,8 +59,8 @@ import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
 import * as Fetch from '../../core/Fetch.js'
 import * as Http from '../../core/Http.js'
-import * as Kv from '../../core/Kv.js'
 import * as MessageSig from '../../core/MessageSig.js'
+import * as Store from '../../core/Store.js'
 import * as Transport from '../../core/Transport.js'
 import * as Uri from '../../internal/Uri.js'
 
@@ -108,11 +108,11 @@ export type Options = {
   registerUrl?: string | undefined
   /**
    * Pluggable storage for per-`auth_req_id` replay-nonce and delivery
-   * dedupe tracking. Use {@link Kv.memory} for local examples; use a
+   * dedupe tracking. Use {@link Store.memory} for local examples; use a
    * shared durable backend when multiple consumer instances can receive
    * callbacks.
    */
-  store: Kv.Kv
+  store: Store.Store
 }
 
 /**
@@ -135,12 +135,12 @@ export type WebhookCallback = Transport.Transport<'consumer', 'webhookCallback',
  *
  * @example
  * ```ts
- * import { webhookCallback, Kv } from 'wata'
+ * import { Store, webhookCallback } from 'wata'
  *
  * const transport = webhookCallback({
  *   host: 'https://wallet.example',
  *   path: '/cb',
- *   store: Kv.memory(),
+ *   store: Store.memory(),
  * })
  * ```
  */

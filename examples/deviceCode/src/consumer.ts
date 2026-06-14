@@ -13,14 +13,15 @@ const baseUrl = 'http://localhost:4747'
 const wata = Wata.create({
   transports: [
     deviceCode({
-      onPrompt({ userCode, verificationUriFull }) {
-        console.log(`open ${verificationUriFull}`)
-        console.log(`user_code: ${userCode}`)
-      },
       pollingInterval: 1_000,
       url: `${baseUrl}/auth/device`,
     }),
   ],
+})
+
+wata.on('prompt', ({ userCode, verificationUriFull }) => {
+  console.log(`open ${verificationUriFull}`)
+  console.log(`user_code: ${userCode}`)
 })
 
 const { result } = await wata.send({

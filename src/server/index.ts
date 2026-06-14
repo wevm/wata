@@ -1,3 +1,5 @@
 export * as Discovery from './Discovery.js'
+export * as Store from '../core/Store.js'
+export * as Relay from './Relay.js'
 export * as Server from './Server.js'
 export { consumerWellknown, hostWellknown } from './Discovery.js'

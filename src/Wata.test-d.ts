@@ -3,7 +3,7 @@ import { describe, expectTypeOf, test } from 'vp/test'
 import {
   Discovery,
   Identity,
-  Kv,
+  Store,
   Rpc,
   Schema,
   Transport,
@@ -468,7 +468,7 @@ describe('Consumer events', () => {
     const transport = webhookCallback({
       host: 'https://wallet.example',
       path: '/cb',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',

@@ -4,7 +4,7 @@ import {
   Envelope,
   Errors,
   Identity,
-  Kv,
+  Store,
   Rpc,
   Schema,
   Transport,
@@ -1151,7 +1151,7 @@ describe('baseUrl + meta auto-publishing', () => {
             render: () => new Response('ok'),
           },
           path: '/auth/device',
-          store: Kv.memory(),
+          store: Store.memory(),
         }),
       ],
     })
@@ -1198,14 +1198,14 @@ describe('baseUrl + meta auto-publishing', () => {
             render: () => new Response('device route'),
           },
           path: '/auth/device',
-          store: Kv.memory(),
+          store: Store.memory(),
         }),
         hostWebhookCallback({
           html: {
             render: () => new Response('webhook route'),
           },
           path: '/auth/webhook',
-          store: Kv.memory(),
+          store: Store.memory(),
         }),
       ],
     })
@@ -1262,14 +1262,14 @@ describe('baseUrl + meta auto-publishing', () => {
               render: () => new Response('ok'),
             },
             path: '/auth',
-            store: Kv.memory(),
+            store: Store.memory(),
           }),
           hostWebhookCallback({
             html: {
               render: () => new Response('ok'),
             },
             path: '/auth/webhook',
-            store: Kv.memory(),
+            store: Store.memory(),
           }),
         ],
       }),
@@ -1315,7 +1315,7 @@ describe('baseUrl + meta auto-publishing', () => {
               }),
           },
           path: '/auth/device',
-          store: Kv.memory(),
+          store: Store.memory(),
         }),
       ],
     })
@@ -1346,7 +1346,7 @@ describe('baseUrl + meta auto-publishing', () => {
               authenticate: async () => new Response('ok'),
               render: () => new Response('ok'),
             },
-            store: Kv.memory(),
+            store: Store.memory(),
           }),
         ],
       }),
@@ -1369,7 +1369,7 @@ describe('baseUrl + meta auto-publishing', () => {
               authenticate: async () => new Response('ok'),
               render: () => new Response('ok'),
             },
-            store: Kv.memory(),
+            store: Store.memory(),
           }),
         ],
       }),
@@ -1391,7 +1391,7 @@ describe('baseUrl + meta auto-publishing', () => {
             render: () => new Response('ok'),
           },
           path: '/auth/device',
-          store: Kv.memory(),
+          store: Store.memory(),
         }),
       ],
     })
@@ -1480,7 +1480,7 @@ describe('baseUrl + meta auto-publishing', () => {
         version: '1.0',
       },
       path: '/cb',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',

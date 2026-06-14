@@ -30,7 +30,7 @@
  * @example minimal Node host
  * ```ts
  * import { createServer } from 'node:http'
- * import { Wata, Kv, webhookCallback } from 'wata/host'
+ * import { Store, Wata, webhookCallback } from 'wata/host'
  * import { Server } from 'wata/server'
  *
  * const wata = Wata.create({
@@ -51,7 +51,7 @@
  *           ),
  *       },
  *       path: '/auth/webhook',
- *       store: Kv.memory(),
+ *       store: Store.memory(),
  *     }),
  *   ],
  * })
@@ -62,6 +62,7 @@
 
 import { Hono } from 'hono'
 import { Base64, Bytes } from 'ox'
+import * as Outbound from 'wata/internal/Outbound'
 
 import * as Crypto from '../../core/Crypto.js'
 import * as Discovery from '../../core/Discovery.js'
@@ -69,9 +70,9 @@ import * as Envelope from '../../core/Envelope.js'
 import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
 import * as Http from '../../core/Http.js'
-import * as Kv from '../../core/Kv.js'
 import * as MessageSig from '../../core/MessageSig.js'
 import * as Rpc from '../../core/Rpc.js'
+import * as Store from '../../core/Store.js'
 import * as Transport from '../../core/Transport.js'
 import * as Uri from '../../internal/Uri.js'
 
@@ -121,7 +122,7 @@ export type PendingRecord = {
 }
 
 type CachedConsumerIcon = {
-  /** Base64-encoded bytes for JSON-compatible {@link Kv.Kv} storage. */
+  /** Base64-encoded bytes for JSON-compatible {@link Store.Store} storage. */
   body: string
   /** Sanitized image content type served by the host-origin proxy. */
   contentType: string
@@ -193,10 +194,10 @@ export type Options = {
   validateOutboundRequest?: ((request: Options.OutboundRequest) => void | Promise<void>) | undefined
   /**
    * Pluggable persistence for {@link PendingRecord}s. Use
-   * {@link Kv.memory} for tests. Must support atomic {@link Kv.Kv.take}
+   * {@link Store.memory} for tests. Must support atomic {@link Store.Store.take}
    * so approval codes can be consumed exactly once.
    */
-  store: Kv.AtomicKv
+  store: Store.AtomicStore
 }
 
 export declare namespace Options {
@@ -352,7 +353,7 @@ type RegistrationRateLimit = { max: number; windowSeconds: number }
  *
  * @example
  * ```ts
- * import { Wata, Kv, webhookCallback } from 'wata/host'
+ * import { Store, Wata, webhookCallback } from 'wata/host'
  *
  * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
@@ -361,7 +362,7 @@ type RegistrationRateLimit = { max: number; windowSeconds: number }
  *     webhookCallback({
  *       html: { render, authenticate },
  *       path: '/auth/webhook',
- *       store: Kv.memory(),
+ *       store: Store.memory(),
  *     }),
  *   ],
  * })
@@ -1247,7 +1248,11 @@ export function webhookCallback(options: Options): WebhookCallback {
     request: Options.OutboundRequest,
   ): Promise<Response> {
     const resolved = await validateOutbound(request)
-    if (resolved && !fetch_option) return fetchWithResolvedAddress(url, init, resolved)
+    if (resolved && !fetch_option)
+      return Outbound.fetchWithResolvedAddress(url, init, {
+        address: resolved.address,
+        servername: canonicalHostname(url.hostname),
+      })
     return fetchImpl(url, init)
   }
 
@@ -1586,22 +1591,13 @@ export function webhookCallback(options: Options): WebhookCallback {
   }
 }
 
-let nodeDnsLookup: Promise<typeof import('node:dns/promises').lookup> | undefined
-
-type ResolvedAddress = {
-  address: string
-  family: 4 | 6
-}
+type ResolvedAddress = Outbound.ResolvedAddress
 
 async function validateDefaultOutboundRequest(
   request: Options.OutboundRequest,
 ): Promise<'unsupported' | { address: ResolvedAddress }> {
-  const lookup = await loadNodeDnsLookup()
-  if (!lookup) return 'unsupported'
-  const addresses = await lookup(canonicalHostname(request.url.hostname), {
-    all: true,
-    verbatim: true,
-  })
+  const addresses = await Outbound.lookup(canonicalHostname(request.url.hostname))
+  if (!addresses) return 'unsupported'
   if (addresses.length === 0)
     throw new Transport.TransportError(
       `outbound ${request.kind} host \`${request.url.hostname}\` did not resolve`,
@@ -1614,12 +1610,6 @@ async function validateDefaultOutboundRequest(
     )
   }
   return { address: addresses[0] as ResolvedAddress }
-}
-
-async function loadNodeDnsLookup(): Promise<typeof import('node:dns/promises').lookup | undefined> {
-  if (!isNodeRuntime()) return undefined
-  if (!nodeDnsLookup) nodeDnsLookup = import('node:dns/promises').then(({ lookup }) => lookup)
-  return await nodeDnsLookup
 }
 
 function fetchInputUrl(input: RequestInfo | URL): URL {
@@ -1636,110 +1626,6 @@ function fetchInputInit(input: RequestInfo | URL, init: RequestInit | undefined)
     method: input.method,
     signal: input.signal,
   }
-}
-
-async function fetchWithResolvedAddress(
-  url: URL,
-  init: RequestInit | undefined,
-  resolved: ResolvedAddress,
-): Promise<Response> {
-  if (url.protocol !== 'https:' && url.protocol !== 'http:')
-    throw new Transport.TransportError(`unsupported outbound URL protocol \`${url.protocol}\``)
-  const { request } =
-    url.protocol === 'https:' ? await import('node:https') : await import('node:http')
-  const body = await requestBodyBytes(init?.body)
-  return await new Promise<Response>((resolve, reject) => {
-    const headers = new Headers(init?.headers)
-    if (!headers.has('host')) headers.set('host', url.host)
-    const req = request(
-      {
-        headers: nodeHeaders(headers),
-        hostname: resolved.address,
-        method: init?.method ?? 'GET',
-        path: `${url.pathname}${url.search}`,
-        port: url.port ? Number(url.port) : undefined,
-        protocol: url.protocol,
-        servername: canonicalHostname(url.hostname),
-      },
-      (res) => {
-        const chunks: Uint8Array[] = []
-        res.on('data', (chunk: string | Uint8Array) => {
-          chunks.push(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : chunk)
-        })
-        res.on('error', reject)
-        res.on('end', () => {
-          const status = res.statusCode
-          if (!status) {
-            reject(new Transport.TransportError('outbound response missing HTTP status'))
-            return
-          }
-          const bytes = concatBytes(chunks)
-          const init: ResponseInit = {
-            headers: responseHeaders(res.rawHeaders),
-            status,
-            ...(res.statusMessage ? { statusText: res.statusMessage } : {}),
-          }
-          resolve(new Response(bytes.buffer, init))
-        })
-      },
-    )
-    req.on('error', reject)
-    const signal = init?.signal
-    const abort = () => req.destroy(new Error('outbound request aborted'))
-    if (signal?.aborted) {
-      abort()
-      return
-    }
-    signal?.addEventListener('abort', abort, { once: true })
-    req.on('close', () => signal?.removeEventListener('abort', abort))
-    if (body) req.write(body)
-    req.end()
-  })
-}
-
-async function requestBodyBytes(
-  body: BodyInit | null | undefined,
-): Promise<Uint8Array | undefined> {
-  if (body === undefined || body === null) return undefined
-  if (typeof body === 'string') return new TextEncoder().encode(body)
-  if (body instanceof URLSearchParams) return new TextEncoder().encode(body.toString())
-  if (body instanceof Blob) return new Uint8Array(await body.arrayBuffer())
-  if (body instanceof ArrayBuffer) return new Uint8Array(body)
-  if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength)
-  throw new Transport.TransportError('unsupported outbound request body type')
-}
-
-function nodeHeaders(headers: Headers): Record<string, string> {
-  const out: Record<string, string> = {}
-  headers.forEach((value, key) => {
-    out[key] = value
-  })
-  return out
-}
-
-function responseHeaders(rawHeaders: string[]): Headers {
-  const headers = new Headers()
-  for (let i = 0; i < rawHeaders.length; i += 2) {
-    const name = rawHeaders[i]
-    const value = rawHeaders[i + 1]
-    if (name && value !== undefined) headers.append(name, value)
-  }
-  return headers
-}
-
-function concatBytes(chunks: Uint8Array[]): Uint8Array<ArrayBuffer> {
-  const length = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
-  const out = new Uint8Array(length)
-  let offset = 0
-  for (const chunk of chunks) {
-    out.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return out
-}
-
-function isNodeRuntime(): boolean {
-  return typeof process !== 'undefined' && !!process.versions?.node
 }
 
 function identityKeyid(url: string): string {

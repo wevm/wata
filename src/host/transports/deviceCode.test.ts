@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, test } from 'vp/test'
-import { Envelope, Kv, Wata, deviceCode } from 'wata'
+import { DeviceCode, Envelope, Store, Wata, deviceCode } from 'wata'
 import {
   DeviceCode as HostDeviceCode,
   Wata as HostWata,
@@ -64,7 +64,7 @@ async function pollToken(
 function pair() {
   const baseUrl = 'https://wallet.example/auth/device'
 
-  const store = Kv.memory()
+  const store = Store.memory()
   let lastUserCode: string | undefined
 
   const html: HostDeviceCode.html.Hooks = {
@@ -369,7 +369,7 @@ describe('wata-device-code', () => {
         render: () => new Response(''),
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     const { body: registered } = await registerOnce(host, baseUrl)
     const response = await pollToken(host, baseUrl, {
@@ -750,7 +750,7 @@ describe('wata-device-code', () => {
         },
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     const { body } = await registerOnce(host, baseUrl)
     await host.fetch(new Request(`${baseUrl}/verify?user_code=${body.user_code}`))
@@ -791,7 +791,7 @@ describe('wata-device-code', () => {
         },
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     await host.fetch(new Request(`${baseUrl}/verify?user_code=NOPE-NOPE`))
     expect(renderArgs?.userCode).toBe('NOPE-NOPE')
@@ -815,7 +815,7 @@ describe('wata-device-code', () => {
         render: () => new Response('ok'),
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     const { body } = await registerOnce(host, baseUrl)
     const form = new FormData()
@@ -840,7 +840,7 @@ describe('wata-device-code', () => {
         render: () => new Response('ok'),
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     // Trigger `authenticate` once to capture `actions`.
     await host.fetch(new Request(`${baseUrl}/verify`, { body: new FormData(), method: 'POST' }))
@@ -874,7 +874,7 @@ describe('wata-device-code', () => {
         render: () => new Response('ok'),
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     const { body } = await registerOnce(host, baseUrl)
     await host.fetch(new Request(`${baseUrl}/verify`, { body: new FormData(), method: 'POST' }))
@@ -1099,10 +1099,8 @@ describe('wata-device-code', () => {
     )
   })
 
-  test('`onPrompt` receives the host-derived prompt fields', async () => {
-    let prompt:
-      | Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]>
-      | undefined
+  test('the `prompt` event receives the host-derived prompt fields', async () => {
+    let prompt: (DeviceCode.Prompt & { transport: 'deviceCode' }) | undefined
     const consumer = deviceCode({
       fetch: async (input) => {
         const url = input instanceof Request ? input.url : String(input)
@@ -1124,18 +1122,18 @@ describe('wata-device-code', () => {
           status: 400,
         })
       },
-      onPrompt: (received) => {
-        prompt = received
-      },
       pollingInterval: 5,
       url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transports: [consumer] })
+    wata.on('prompt', (received) => {
+      prompt = received
+    })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
 
     const start = Date.now()
     while (!prompt) {
-      if (Date.now() - start > 2000) throw new Error('timed out waiting for onPrompt')
+      if (Date.now() - start > 2000) throw new Error('timed out waiting for prompt')
       await new Promise((r) => setTimeout(r, 5))
     }
     // Consumer-supplied `pollingInterval` (5ms) overrides the host's
@@ -1145,6 +1143,7 @@ describe('wata-device-code', () => {
         "deviceCode": "dc",
         "expiresIn": 1234,
         "pollingInterval": 5,
+        "transport": "deviceCode",
         "userCode": "AAAA-BBBB",
         "verificationUri": "https://example/verify",
         "verificationUriFull": "https://example/verify?user_code=AAAA-BBBB",
@@ -1156,9 +1155,7 @@ describe('wata-device-code', () => {
   })
 
   test('consumer falls back to host-supplied `interval` when `pollingInterval` is omitted', async () => {
-    let prompt:
-      | Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]>
-      | undefined
+    let prompt: (DeviceCode.Prompt & { transport: 'deviceCode' }) | undefined
     const consumer = deviceCode({
       fetch: async (input) => {
         const url = input instanceof Request ? input.url : String(input)
@@ -1178,16 +1175,16 @@ describe('wata-device-code', () => {
           status: 400,
         })
       },
-      onPrompt: (received) => {
-        prompt = received
-      },
       url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transports: [consumer] })
+    wata.on('prompt', (received) => {
+      prompt = received
+    })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
     const start = Date.now()
     while (!prompt) {
-      if (Date.now() - start > 2000) throw new Error('timed out waiting for onPrompt')
+      if (Date.now() - start > 2000) throw new Error('timed out waiting for prompt')
       await new Promise((r) => setTimeout(r, 5))
     }
     // 7 s on the wire → 7000 ms in the prompt.
@@ -1198,9 +1195,7 @@ describe('wata-device-code', () => {
   })
 
   test('consumer defaults to 5000ms polling when host omits `interval` (RFC 8628 §3.5)', async () => {
-    let prompt:
-      | Awaited<Parameters<NonNullable<Parameters<typeof deviceCode>[0]['onPrompt']>>[0]>
-      | undefined
+    let prompt: (DeviceCode.Prompt & { transport: 'deviceCode' }) | undefined
     const consumer = deviceCode({
       fetch: async (input) => {
         const url = input instanceof Request ? input.url : String(input)
@@ -1220,16 +1215,16 @@ describe('wata-device-code', () => {
           status: 400,
         })
       },
-      onPrompt: (received) => {
-        prompt = received
-      },
       url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transports: [consumer] })
+    wata.on('prompt', (received) => {
+      prompt = received
+    })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
     const start = Date.now()
     while (!prompt) {
-      if (Date.now() - start > 2000) throw new Error('timed out waiting for onPrompt')
+      if (Date.now() - start > 2000) throw new Error('timed out waiting for prompt')
       await new Promise((r) => setTimeout(r, 5))
     }
     expect(prompt!.pollingInterval).toBe(5000)
@@ -1373,7 +1368,7 @@ describe('wata-device-code', () => {
         render: () => new Response('ok'),
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     const { body } = await registerOnce(host, baseUrl)
     await host.fetch(new Request(`${baseUrl}/verify`, { body: new FormData(), method: 'POST' }))
@@ -1405,7 +1400,7 @@ describe('meta resolution', () => {
       baseUrl: 'https://wallet.example',
       html,
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
       ...(options.fetch ? { fetch: options.fetch } : {}),
     })
     return {
@@ -1518,7 +1513,7 @@ describe('baseUrl optional', () => {
         render: () => new Response('ok'),
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
 
     const response = await host.fetch(
@@ -1549,7 +1544,7 @@ describe('baseUrl optional', () => {
         render: () => new Response('ok'),
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     expect(host.discovery).toBeDefined()
     expect({

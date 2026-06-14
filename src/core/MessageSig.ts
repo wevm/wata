@@ -14,8 +14,10 @@
  *   uses on the wire). Other RFC 9421 algorithms are intentionally
  *   unsupported.
  * - Supports the derived components used by uRPC: `@method`,
- *   `@target-uri`, `@authority`, `@path`, `@query`. Other derived
- *   components are not parsed.
+ *   `@target-uri`, `@authority`, `@path`, `@query`, and
+ *   `@query-param;name="..."` (RFC 9421 §2.2.8 — the named query
+ *   parameter's value, form-decoded then canonically re-encoded).
+ *   Other derived components are not parsed.
  * - Supports verbatim header components (lowercased name, value
  *   pulled from the supplied `headers` map after leading/trailing
  *   whitespace trim per [RFC 9421 §2.1](https://www.rfc-editor.org/rfc/rfc9421#name-http-fields)).
@@ -24,7 +26,7 @@
  * - {@link contentDigest} produces the RFC 9530 `sha-256=:<base64>:`
  *   field value (standard base64 with padding).
  *
- * Higher-level concerns (replay protection via a `Kv` nonce store,
+ * Higher-level concerns (replay protection via a `Store` nonce store,
  * SSRF address checks, Discovery `callback_urls` enforcement) live
  * in the transports that call into this module.
  */
@@ -133,7 +135,7 @@ export function signatureBase(options: signatureBase.Options): string {
   const { components, message, parameters } = options
   const lines: string[] = []
   for (const component of components) {
-    lines.push(`"${component.toLowerCase()}": ${componentValue(component, message)}`)
+    lines.push(`${serializeComponent(component)}: ${componentValue(component, message)}`)
   }
   lines.push(`"@signature-params": ${innerListAndParams(components, parameters)}`)
   return lines.join('\n')
@@ -215,16 +217,14 @@ export function verify(options: verify.Options): boolean {
   const { label = defaultLabel, message, publicKey, requiredComponents } = options
   const signatureInputRaw = getHeader(message.headers, 'signature-input')
   const signatureRaw = getHeader(message.headers, 'signature')
-  if (!signatureInputRaw)
-    throw new InvalidSignatureError('missing `Signature-Input` header')
+  if (!signatureInputRaw) throw new InvalidSignatureError('missing `Signature-Input` header')
   if (!signatureRaw) throw new InvalidSignatureError('missing `Signature` header')
   const parsedInput = parseSignatureInput(signatureInputRaw, label)
   const signatureBytes = parseSignatureValue(signatureRaw, label)
   if (requiredComponents) {
-    const have = new Set(parsedInput.components.map((c) => c.toLowerCase()))
+    const have = new Set(parsedInput.components.map(canonicalComponent))
     for (const required of requiredComponents) {
-      if (!have.has(required.toLowerCase()))
-        throw new MissingComponentError(required)
+      if (!have.has(canonicalComponent(required))) throw new MissingComponentError(required)
     }
   }
   const base = signatureBase({
@@ -357,8 +357,29 @@ function parseInnerList(raw: string): string[] {
       throw new InvalidSignatureError(`expected quoted component in inner-list at position ${i}`)
     const end = raw.indexOf('"', i + 1)
     if (end < 0) throw new InvalidSignatureError('unterminated quoted component in inner-list')
-    out.push(raw.slice(i + 1, end))
-    i = end + 1
+    const componentName = raw.slice(i + 1, end)
+    // Consume any trailing parameters (e.g. `;name="wait"`) verbatim,
+    // respecting quoted parameter values that may contain spaces, up to
+    // the next top-level whitespace that separates inner-list members.
+    let j = end + 1
+    let inString = false
+    while (j < raw.length) {
+      const c = raw[j]
+      if (inString) {
+        if (c === '\\') {
+          j += 2
+          continue
+        }
+        if (c === '"') inString = false
+        j += 1
+        continue
+      }
+      if (c === ' ' || c === '\t') break
+      if (c === '"') inString = true
+      j += 1
+    }
+    out.push(componentName + raw.slice(end + 1, j))
+    i = j
   }
   return out
 }
@@ -437,21 +458,86 @@ function assignParameter(target: Parameters, name: string, value: string | numbe
   }
 }
 
+/**
+ * Split a component identifier into its lowercased name and its
+ * verbatim parameter suffix (e.g. `@query-param;name="wait"` →
+ * `{ name: '@query-param', params: ';name="wait"' }`). The parameter
+ * suffix is preserved case-sensitively so a quoted `name` value is not
+ * mangled (RFC 9421 §2.1.1).
+ */
+function splitComponent(component: string): { name: string; params: string } {
+  const semi = component.indexOf(';')
+  if (semi < 0) return { name: component.toLowerCase(), params: '' }
+  return { name: component.slice(0, semi).toLowerCase(), params: component.slice(semi) }
+}
+
+/**
+ * Canonical component identifier used for `requiredComponents`
+ * matching and dedup: the name is lowercased, the parameter suffix is
+ * preserved verbatim (RFC 9421 §2.1.1 — names are case-insensitive,
+ * parameter values are not).
+ */
+function canonicalComponent(component: string): string {
+  const { name, params } = splitComponent(component)
+  return `${name}${params}`
+}
+
+/** Serialize a component identifier for the signature base / inner list. */
+function serializeComponent(component: string): string {
+  const { name, params } = splitComponent(component)
+  return `"${name}"${params}`
+}
+
+/** Extract the `name` parameter value from a `@query-param` suffix. */
+function queryParamName(params: string): string {
+  const match = /;\s*name="((?:[^"\\]|\\.)*)"/.exec(params)
+  if (!match) throw new InvalidSignatureError('`@query-param` requires a `name` parameter')
+  return formDecode(match[1] ?? '')
+}
+
+/** RFC 9421 §2.2.8 value of a named query parameter. */
+function queryParamValue(url: string, name: string): string {
+  const search = new URL(url).search
+  const query = search.startsWith('?') ? search.slice(1) : search
+  let found: string | undefined
+  for (const pair of query.split('&')) {
+    if (!pair) continue
+    const eq = pair.indexOf('=')
+    const rawKey = eq < 0 ? pair : pair.slice(0, eq)
+    const rawValue = eq < 0 ? '' : pair.slice(eq + 1)
+    if (formDecode(rawKey) !== name) continue
+    if (found !== undefined)
+      throw new InvalidSignatureError(`duplicate query parameter \`${name}\` for \`@query-param\``)
+    found = rawValue
+  }
+  if (found === undefined)
+    throw new InvalidSignatureError(`query parameter \`${name}\` not found for \`@query-param\``)
+  // Form-decode the raw value, then canonically percent-re-encode it so
+  // both peers reproduce identical bytes regardless of how the value was
+  // originally escaped (RFC 9421 §2.2.8).
+  return encodeURIComponent(formDecode(found))
+}
+
+/** `application/x-www-form-urlencoded` decode: `+` → space, then percent-decode. */
+function formDecode(value: string): string {
+  return decodeURIComponent(value.replace(/\+/g, ' '))
+}
+
 function componentValue(component: string, message: HttpMessage): string {
-  const lower = component.toLowerCase()
-  if (lower === '@method') return message.method.toUpperCase()
-  if (lower === '@target-uri') return message.url
-  if (lower === '@authority') return authorityOf(message.url)
-  if (lower === '@path') return new URL(message.url).pathname
-  if (lower === '@query') {
+  const { name, params } = splitComponent(component)
+  if (name === '@method') return message.method.toUpperCase()
+  if (name === '@target-uri') return message.url
+  if (name === '@authority') return authorityOf(message.url)
+  if (name === '@path') return new URL(message.url).pathname
+  if (name === '@query') {
     const url = new URL(message.url)
     return url.search.length > 0 ? url.search : '?'
   }
-  if (lower.startsWith('@'))
+  if (name === '@query-param') return queryParamValue(message.url, queryParamName(params))
+  if (name.startsWith('@'))
     throw new InvalidSignatureError(`unsupported derived component \`${component}\``)
-  const value = getHeader(message.headers, lower)
-  if (value === undefined)
-    throw new MissingHeaderError(component)
+  const value = getHeader(message.headers, name)
+  if (value === undefined) throw new MissingHeaderError(component)
   // RFC 9421 §2.1 — trim leading/trailing whitespace from the
   // field-value before insertion in the signature base. We do not
   // collapse multi-line obs-fold (deprecated in HTTP/1.1) or join
@@ -472,7 +558,7 @@ function authorityOf(url: string): string {
 }
 
 function innerListAndParams(components: readonly string[], parameters: Parameters): string {
-  const inner = components.map((c) => `"${c.toLowerCase()}"`).join(' ')
+  const inner = components.map(serializeComponent).join(' ')
   const params: string[] = []
   if (parameters.created !== undefined) params.push(`created=${parameters.created}`)
   if (parameters.keyid !== undefined) params.push(`keyid="${parameters.keyid}"`)

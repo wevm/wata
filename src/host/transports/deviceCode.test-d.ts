@@ -1,9 +1,9 @@
 import { describe, expectTypeOf, test } from 'vp/test'
-import { DeviceCode, Discovery, Kv, Transport, Wata, deviceCode } from 'wata/host'
+import { DeviceCode, Discovery, Store, Transport, Wata, deviceCode } from 'wata/host'
 
 describe('deviceCode (host)', () => {
   test('returns a single-exchange host-role transport with `.fetch`', () => {
-    const store = Kv.memory()
+    const store = Store.memory()
     const transport = deviceCode({
       baseUrl: 'https://wallet.example',
       html: {
@@ -20,7 +20,7 @@ describe('deviceCode (host)', () => {
   })
 
   test('feeds Wata.create as a host transport', () => {
-    const store = Kv.memory()
+    const store = Store.memory()
     const transport = deviceCode({
       baseUrl: 'https://wallet.example',
       html: {
@@ -48,7 +48,7 @@ describe('deviceCode (host)', () => {
         },
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
   })
 
@@ -58,7 +58,7 @@ describe('deviceCode (host)', () => {
         authenticate: () => new Response('ok'),
         render: () => new Response('ok'),
       },
-      store: Kv.memory(),
+      store: Store.memory(),
     })
   })
 
@@ -69,7 +69,7 @@ describe('deviceCode (host)', () => {
         render: () => new Response('ok'),
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     expectTypeOf(transport.discovery).toEqualTypeOf<Transport.DiscoveryBinding | undefined>()
   })
@@ -90,15 +90,15 @@ describe('deviceCode (host)', () => {
         render: () => new Response('ok'),
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
   })
 
-  test('Kv shape — `get` is generic per-call, `set` accepts unknown', () => {
-    expectTypeOf<Kv.Kv>().toMatchTypeOf<{
+  test('Store shape — `get` is generic per-call, `set` accepts unknown', () => {
+    expectTypeOf<Store.Store>().toMatchTypeOf<{
       delete: (key: string) => Promise<void>
       get: <value = unknown>(key: string) => Promise<value | undefined>
-      set: (key: string, value: unknown, options?: Kv.set.Options | undefined) => Promise<void>
+      set: (key: string, value: unknown, options?: Store.set.Options | undefined) => Promise<void>
     }>()
   })
 })

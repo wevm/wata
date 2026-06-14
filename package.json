@@ -37,7 +37,6 @@
     "@noble/hashes": "catalog:",
     "hono": "catalog:",
     "ox": "catalog:",
-    "rettime": "catalog:",
     "zod": "catalog:"
   },
   "sideEffects": false,
@@ -74,6 +73,12 @@
       "react-native": "./dist/consumer/transports/postMessage.js",
       "default": "./dist/consumer/transports/postMessage.js"
     },
+    "./consumer/transports/relay": {
+      "types": "./dist/consumer/transports/relay.d.ts",
+      "src": "./src/consumer/transports/relay.ts",
+      "react-native": "./dist/consumer/transports/relay.js",
+      "default": "./dist/consumer/transports/relay.js"
+    },
     "./consumer/transports/webhookCallback": {
       "types": "./dist/consumer/transports/webhookCallback.d.ts",
       "src": "./src/consumer/transports/webhookCallback.ts",
@@ -104,6 +109,12 @@
       "react-native": "./dist/host/transports/postMessage.js",
       "default": "./dist/host/transports/postMessage.js"
     },
+    "./host/transports/relay": {
+      "types": "./dist/host/transports/relay.d.ts",
+      "src": "./src/host/transports/relay.ts",
+      "react-native": "./dist/host/transports/relay.js",
+      "default": "./dist/host/transports/relay.js"
+    },
     "./host/transports/webhookCallback": {
       "types": "./dist/host/transports/webhookCallback.d.ts",
       "src": "./src/host/transports/webhookCallback.ts",
@@ -115,6 +126,19 @@
       "src": "./src/identity.ts",
       "react-native": "./dist/identity.js",
       "default": "./dist/identity.js"
+    },
+    "./internal/Outbound": {
+      "types": "./dist/internal/Outbound.d.ts",
+      "src": "./src/internal/Outbound.ts",
+      "browser": "./dist/internal/Outbound.native.js",
+      "react-native": "./dist/internal/Outbound.native.js",
+      "node": "./dist/internal/Outbound.js",
+      "default": "./dist/internal/Outbound.js"
+    },
+    "./internal/Outbound.native": {
+      "types": "./dist/internal/Outbound.native.d.ts",
+      "src": "./src/internal/Outbound.native.ts",
+      "default": "./dist/internal/Outbound.native.js"
     },
     "./server": {
       "types": "./dist/server/index.d.ts",
