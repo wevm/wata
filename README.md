@@ -22,6 +22,7 @@ bun i wata
 | `deviceCode`      | OAuth 2.0 Device Authorization Grant (RFC 8628) over HTTP, with PKCE and a bring-your-own approval UI. | CLI ⇄ Browser     |
 | `mobileWebAuth`   | Same-device mobile app to web host flow using browser auth and encrypted app-link callbacks.           | Mobile ⇄ Browser  |
 | `webhookCallback` | Signed HTTP registration + callback flow for consumers that can receive webhooks.                      | Server ⇄ Server   |
+| `relay`           | Remote session over an untrusted HTTPS relay; the web consumer shows a QR/link, the mobile host scans it, exchanging end-to-end-encrypted bodies (SSE or long-poll). | Web ⇄ Mobile      |
 
 ## Usage
 
@@ -304,6 +305,58 @@ wata.on('request', async (event) => {
   if (event.method === 'wallet_connect')
     await event.respond(['0x0000000000000000000000000000000000000001'])
 })
+```
+
+### `relay`
+
+Remote session between a web consumer and a mobile host, brokered by an untrusted HTTPS relay. The consumer issues a pairing link (typically shown as a QR code); the mobile host scans it and connects. All bodies are end-to-end encrypted, so the relay only forwards opaque ciphertext. Receivers default to SSE and can fall back to long-poll with `receive: 'poll'`.
+
+[See example →](./examples/relay)
+
+#### Consumer
+
+Lazily starts the session on the first request and emits a `'prompt'` event carrying the pairing `uri` to display.
+
+```ts
+import { Wata, relay } from 'wata'
+
+const wata = Wata.create({
+  transports: [relay({ url: 'https://relay.example' })],
+})
+
+// Render the pairing link (e.g. as a QR code) when it's issued.
+wata.on('prompt', ({ uri }) => renderQrCode(uri))
+
+const { result } = await wata.send({ method: 'ping', params: [] })
+```
+
+#### Host
+
+Built once with listeners registered up front, then connect with the scanned/pasted pairing uri.
+
+```ts
+import { Wata, relay } from 'wata/host'
+
+const wata = Wata.create({
+  transports: [relay({ receive: 'poll' })],
+})
+
+wata.on('request', (event) => event.respond('pong'))
+
+// Start the session with the scanned/pasted pairing uri.
+await wata.relay.start({ pairingUri })
+```
+
+#### Relay server
+
+Run a relay anywhere that speaks web-standard `fetch` — a single long-lived Node/Bun/Deno process, or one Cloudflare Durable Object per channel.
+
+```ts
+import { createServer } from 'node:http'
+import { Relay, Server, Store } from 'wata/server'
+
+const relay = Relay.create({ store: Store.memory() })
+createServer(Server.node(relay).listener).listen(8787)
 ```
 
 ## License
