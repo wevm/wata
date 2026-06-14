@@ -3,10 +3,7 @@
  *
  * Authenticates which peer may push to a channel and forwards opaque
  * end-to-end-encrypted bodies between the two peer slots, never seeing
- * plaintext. Bounded receiver-absence buffering (spec §5.4) is built in
- * so a message sent while the other peer is between short polls (or
- * briefly reconnecting) is held in a small per-slot queue and drained
- * when that peer next subscribes, instead of being dropped.
+ * plaintext.
  */
 
 import { serve } from '@hono/node-server'
