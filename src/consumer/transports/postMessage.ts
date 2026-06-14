@@ -147,7 +147,7 @@ export type WindowLike = {
  */
 export function postMessage<const target extends Target>(
   options: Options<target>,
-): Transport.Transport<'consumer', 'postMessage', void, MessageMeta<target>> {
+): Transport.Transport<'consumer', 'postMessage', { meta: MessageMeta<target> }> {
   const { close, host, source, target: acquire } = options
   const targetOrigin = host ? originFrom(host) : undefined
   return createSide<'consumer', target>({
@@ -185,7 +185,7 @@ function originFrom(host: string): string {
  */
 export function createSide<role extends 'consumer' | 'host', target extends Target>(
   parameters: createSide.Options<role, target>,
-): Transport.Transport<role, 'postMessage', void, MessageMeta<target>> {
+): Transport.Transport<role, 'postMessage', { meta: MessageMeta<target> }> {
   const { handshake, options, role } = parameters
   const source = options.source ?? (globalThis as { window?: WindowLike }).window
 

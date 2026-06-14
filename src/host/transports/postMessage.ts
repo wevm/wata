@@ -100,7 +100,7 @@ export type OriginMessageMeta = ConsumerPostMessage.OriginMessageMeta
  */
 export function postMessage<const target extends ConsumerPostMessage.Target = Window>(
   options: Options<target> = {} as Options<target>,
-): Transport.Transport<'host', 'postMessage', void, ConsumerPostMessage.MessageMeta<target>> {
+): Transport.Transport<'host', 'postMessage', { meta: ConsumerPostMessage.MessageMeta<target> }> {
   const target_resolved =
     options.target ??
     ((() => {

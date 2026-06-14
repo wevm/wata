@@ -11,7 +11,7 @@ describe('postMessage (host)', () => {
       targetOrigin: 'https://app.example',
     })
     expectTypeOf(transport).toEqualTypeOf<
-      Transport.Transport<'host', 'postMessage', void, PostMessage.OriginMessageMeta>
+      Transport.Transport<'host', 'postMessage', { meta: PostMessage.OriginMessageMeta }>
     >()
     expectTypeOf(transport.role).toEqualTypeOf<'host'>()
   })
@@ -27,6 +27,8 @@ describe('postMessage (host)', () => {
 
   test('MessagePort targets allow targetOrigin to be omitted', () => {
     const transport = postMessage({ target: () => portHandle })
-    expectTypeOf(transport).toEqualTypeOf<Transport.Transport<'host', 'postMessage'>>()
+    expectTypeOf(transport).toEqualTypeOf<
+      Transport.Transport<'host', 'postMessage', { meta: Transport.NoMessageMeta }>
+    >()
   })
 })

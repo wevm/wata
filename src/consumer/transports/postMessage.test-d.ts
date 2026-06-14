@@ -11,17 +11,17 @@ describe('postMessage (consumer)', () => {
       target: () => popupHandle,
     })
     expectTypeOf(transport).toEqualTypeOf<
-      Transport.Transport<'consumer', 'postMessage', void, PostMessage.OriginMessageMeta>
+      Transport.Transport<'consumer', 'postMessage', { meta: PostMessage.OriginMessageMeta }>
     >()
     expectTypeOf(transport.role).toEqualTypeOf<'consumer'>()
   })
 
   test('host may be omitted or undefined', () => {
     expectTypeOf(postMessage({ target: () => portHandle })).toEqualTypeOf<
-      Transport.Transport<'consumer', 'postMessage'>
+      Transport.Transport<'consumer', 'postMessage', { meta: Transport.NoMessageMeta }>
     >()
     expectTypeOf(postMessage({ host: undefined, target: () => portHandle })).toEqualTypeOf<
-      Transport.Transport<'consumer', 'postMessage'>
+      Transport.Transport<'consumer', 'postMessage', { meta: Transport.NoMessageMeta }>
     >()
   })
 
