@@ -7,7 +7,7 @@
  * 1. generate a fresh PKCE `code_verifier` + `code_challenge`,
  * 2. `POST <registerUrl>` with the JSON-RPC requests as `message`,
  * 3. surface `device_code` / `user_code` / `verification_uri` to the
- *    user via {@link Options.onPrompt} (defer to a CLI prompt, in-app
+ *    user via the `'prompt'` event (defer to a CLI prompt, in-app
  *    UI, etc.),
  * 4. poll `POST <tokenUrl>` until the host returns the `rpc-responses`
  *    envelope (or denies / times out),
@@ -24,14 +24,11 @@
  * import { Wata, deviceCode } from 'wata'
  *
  * const wata = Wata.create({
- *   transports: [
- *     deviceCode({
- *       url: 'https://wallet.example/auth/device',
- *       onPrompt: ({ userCode, verificationUri }) => {
- *         console.log(`Visit ${verificationUri} and enter ${userCode}`)
- *       },
- *     }),
- *   ],
+ *   transports: [deviceCode({ url: 'https://wallet.example/auth/device' })],
+ * })
+ *
+ * wata.on('prompt', ({ userCode, verificationUri }) => {
+ *   console.log(`Visit ${verificationUri} and enter ${userCode}`)
  * })
  *
  * const { result } = await wata.send({ method: 'ping', params: [] })
@@ -47,7 +44,7 @@ import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
 import * as Transport from '../../core/Transport.js'
 
-/** Information surfaced to {@link Options.onPrompt} once `/register` succeeds. */
+/** Information carried by the consumer `'prompt'` event once `/register` succeeds. */
 export type Prompt = {
   /** Opaque identifier the consumer holds and presents on `/token`. */
   deviceCode: string
@@ -92,12 +89,6 @@ export type Options = {
    */
   meta?: Discovery.Meta | undefined
   /**
-   * Called once the host accepts `/register` and returns user-facing
-   * codes. Surface them to the user — CLI print, modal, deep-link, etc.
-   * The transport then polls `${url}/token` until terminal.
-   */
-  onPrompt?: ((prompt: Prompt) => void | Promise<void>) | undefined
-  /**
    * Override the polling cadence (milliseconds). Defaults to the
    * `interval` returned by the host on `/register` (converted from
    * seconds). Subject to a 1ms minimum to keep tests / playgrounds
@@ -125,18 +116,14 @@ export type Options = {
  * ```ts
  * import { deviceCode } from 'wata'
  *
- * const transport = deviceCode({
- *   url: 'https://wallet.example/auth/device',
- *   onPrompt({ userCode, verificationUri }) {
- *     console.log(`Visit ${verificationUri} and enter ${userCode}`)
- *   },
- * })
+ * const transport = deviceCode({ url: 'https://wallet.example/auth/device' })
  * ```
  */
-export function deviceCode(options: Options): Transport.Transport<'consumer', 'deviceCode'> {
+export function deviceCode(
+  options: Options,
+): Transport.Transport<'consumer', 'deviceCode', void, Transport.NoMessageMeta, Prompt> {
   const {
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
-    onPrompt,
     pollingInterval,
     pollingTimeout = 30_000,
     url,
@@ -160,7 +147,7 @@ export function deviceCode(options: Options): Transport.Transport<'consumer', 'd
     return consumerUrl_ctor ?? consumerUrl_bound
   }
 
-  const emitter = Events.create<Transport.EventMap>()
+  const emitter = Events.create<Transport.EventMap<Transport.NoMessageMeta, Prompt>>()
 
   // Single-exchange transport state. `inFlight` guards concurrent
   // `send()` calls; `closed` flips once the terminal response (or any
@@ -363,7 +350,7 @@ export function deviceCode(options: Options): Transport.Transport<'consumer', 'd
           ? fields.verification_uri_complete
           : undefined,
     }
-    if (onPrompt) await onPrompt(prompt)
+    emitter.emit('prompt', prompt)
 
     return await pollForResponse(prompt.deviceCode, codeVerifier, interval)
   }

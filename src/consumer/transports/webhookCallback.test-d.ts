@@ -1,6 +1,6 @@
 import type { Hex } from 'ox'
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Identity, Kv, Transport, WebhookCallback, Wata, webhookCallback } from 'wata'
+import { Identity, Store, Transport, WebhookCallback, Wata, webhookCallback } from 'wata'
 
 function fromPrivateKey(privateKey: Hex.Hex) {
   return Identity.fromPrivateKey(privateKey)
@@ -11,7 +11,7 @@ describe('webhookCallback (consumer)', () => {
     const transport = webhookCallback({
       host: 'https://wallet.example',
       path: '/cb',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     expectTypeOf(transport.role).toEqualTypeOf<'consumer'>()
     expectTypeOf(transport.exchange).toEqualTypeOf<Transport.Exchange>()
@@ -27,7 +27,7 @@ describe('webhookCallback (consumer)', () => {
     const transport = webhookCallback({
       host: 'https://wallet.example',
       path: '/cb',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',
@@ -42,7 +42,7 @@ describe('webhookCallback (consumer)', () => {
     const transport = webhookCallback({
       host: 'https://wallet.example',
       path: '/cb',
-      store: Kv.memory(),
+      store: Store.memory(),
     })
     const wata = Wata.create({
       baseUrl: 'https://acme.dev',
@@ -66,8 +66,8 @@ describe('webhookCallback (consumer)', () => {
     expectTypeOf<WebhookCallback.Options>().not.toHaveProperty('webhookUrl')
   })
 
-  test('store accepts a Kv.Kv', () => {
-    expectTypeOf<WebhookCallback.Options['store']>().toEqualTypeOf<Kv.Kv>()
+  test('store accepts a Store.Store', () => {
+    expectTypeOf<WebhookCallback.Options['store']>().toEqualTypeOf<Store.Store>()
   })
 
   test('host accepts string OR pre-parsed HostDocument', () => {

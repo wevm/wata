@@ -262,12 +262,21 @@ type HostOn<
 /** Non-empty tuple of host transports accepted by {@link create}. */
 export type HostTransports = readonly [HostTransport, ...HostTransport[]]
 
+/**
+ * Per-transport handles keyed by each transport's `name`, so callers
+ * can reach a specific transport directly (e.g. `wata.relay.start({
+ * pairingUri })`). Surfaced on the returned {@link Host}.
+ */
+export type TransportsByName<transports extends HostTransports> = {
+  [transport in transports[number] as transport['name']]: transport
+}
+
 /** Host-side `Wata`. Returned by {@link create}. */
 export type Host<
   schema extends Schema.Schema | undefined = undefined,
   transports extends HostTransports = HostTransports,
   context extends Rpc.RequestContext = Rpc.RequestContext,
-> = {
+> = TransportsByName<transports> & {
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
   /**
@@ -941,7 +950,15 @@ export function create<
     httpFetch = wrapped.fetch
   }
 
+  // Surface each transport by its `name` (e.g. `wata.relay`) so callers
+  // can reach a single transport's controls directly. Spread first so
+  // the explicit `Host` members below always win on any name clash.
+  const byName = Object.fromEntries(
+    transports.map((transport) => [transport.name, transport]),
+  ) as TransportsByName<transports>
+
   return {
+    ...byName,
     async close(cause) {
       pending.clear()
       for (const runtime of runtimes) runtime.started = false

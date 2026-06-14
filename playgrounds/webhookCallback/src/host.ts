@@ -23,7 +23,7 @@
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { Base64, Bytes, Ed25519 } from 'ox'
-import { Kv, Wata, webhookCallback } from 'wata/host'
+import { Store, Wata, webhookCallback } from 'wata/host'
 import * as Identity from 'wata/identity'
 
 const port = Number(process.env.PORT ?? 4747)
@@ -109,7 +109,7 @@ const wata = Wata.create({
         },
       },
       path: '/auth/webhook',
-      store: Kv.memory(),
+      store: Store.memory(),
     }),
   ],
 })

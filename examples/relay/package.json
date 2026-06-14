@@ -1,0 +1,15 @@
+{
+  "name": "example-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n relay,consumer -c blue,green \"pnpm --filter example-relay-server dev\" \"wait-on tcp:4860 && pnpm --filter example-relay-consumer dev\"",
+    "dev:consumer": "pnpm --filter example-relay-consumer dev",
+    "dev:host": "pnpm --filter example-relay-host dev",
+    "dev:relay": "pnpm --filter example-relay-server dev"
+  },
+  "devDependencies": {
+    "concurrently": "latest",
+    "wait-on": "latest"
+  }
+}

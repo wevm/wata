@@ -5,26 +5,26 @@
  *
  * Values are JSON-serialized when persisted by adapters that need it.
  * TTLs are optional; consumers that need expiry pass `{ ttl }` (in
- * seconds) to {@link Kv.set}, and the implementation lazily evicts
+ * seconds) to {@link Store.set}, and the implementation lazily evicts
  * (memory) or relies on the backing store's native expiry (Cloudflare
  * KV).
  *
  * @example in-memory (tests, single-process playgrounds)
  * ```ts
- * import { Kv } from 'wata'
+ * import { Store } from 'wata'
  *
- * const store = Kv.memory()
+ * const store = Store.memory()
  * await store.set('abc', { status: 'pending' }, { ttl: 60 })
  * const record = await store.get<{ status: string }>('abc')
  * ```
  *
  * @example Cloudflare Workers KV (multi-region, eventually consistent)
  * ```ts
- * import { Kv } from 'wata'
+ * import { Store } from 'wata'
  *
  * export default {
  *   fetch(request: Request, env: Env) {
- *     const store = Kv.cloudflare(env.MY_KV)
+ *     const store = Store.cloudflare(env.MY_KV)
  *     // ...
  *   },
  * }
@@ -32,13 +32,13 @@
  *
  * @example Cloudflare Durable Object (linearizable, supports `take`)
  * ```ts
- * import { Kv } from 'wata'
+ * import { Store } from 'wata'
  *
- * export class Storage extends Kv.Storage {}
+ * export class Storage extends Store.Storage {}
  *
  * export default {
  *   fetch(request: Request, env: Env) {
- *     const store = Kv.durableObject(env.STORAGE_DO)
+ *     const store = Store.durableObject(env.STORAGE_DO)
  *     // ...
  *   },
  * }
@@ -48,7 +48,7 @@
 import { Json } from 'ox'
 
 /** Minimal key-value store contract. */
-export type Kv = {
+export type Store = {
   /** Delete a value by key. */
   delete: (key: string) => Promise<void>
   /** Read a value by key. Returns `undefined` when missing or expired. */
@@ -70,25 +70,25 @@ export type Kv = {
   take?: <value = unknown>(key: string) => Promise<value | undefined>
 }
 
-/** {@link Kv} backend with linearizable atomic read-and-delete support. */
-export type AtomicKv = Kv & { take: NonNullable<Kv['take']> }
+/** {@link Store} backend with linearizable atomic read-and-delete support. */
+export type AtomicStore = Store & { take: NonNullable<Store['take']> }
 
 export declare namespace set {
-  /** Options for {@link Kv.set}. */
+  /** Options for {@link Store.set}. */
   type Options = {
     /** Time-to-live in seconds. After this duration, `get` returns `undefined`. */
     ttl?: number | undefined
   }
 }
 
-/** Wrap an existing `Kv`-shaped object so the SDK accepts it as a {@link Kv}. */
-export function from<kv extends Kv>(kv: kv): kv {
-  return kv
+/** Wrap an existing `Store`-shaped object so the SDK accepts it as a {@link Store}. */
+export function from<store extends Store>(store: store): store {
+  return store
 }
 
 /**
  * Adapt a Cloudflare Workers KV namespace (or compatible binding) into a
- * {@link Kv}. Uses the underlying store's native `expirationTtl` for TTL.
+ * {@link Store}. Uses the underlying store's native `expirationTtl` for TTL.
  *
  * Cloudflare KV's minimum TTL is 60 seconds; the platform enforces its
  * own minimum independent of what's passed here.
@@ -101,12 +101,12 @@ export function from<kv extends Kv>(kv: kv): kv {
  *
  * @example
  * ```ts
- * import { Kv } from 'wata'
+ * import { Store } from 'wata'
  *
- * const store = Kv.cloudflare(env.MY_KV)
+ * const store = Store.cloudflare(env.MY_KV)
  * ```
  */
-export function cloudflare(kv: cloudflare.Parameters): Kv {
+export function cloudflare(kv: cloudflare.Parameters): Store {
   return from({
     delete: kv.delete.bind(kv),
     async get(key) {
@@ -136,7 +136,7 @@ export declare namespace cloudflare {
 }
 
 /**
- * Adapt a Cloudflare Durable Object namespace into a {@link Kv} with
+ * Adapt a Cloudflare Durable Object namespace into a {@link Store} with
  * atomic `take`. Unlike {@link cloudflare}, a Durable Object's storage
  * is single-actor and linearizable — `take` (read+delete) is guaranteed
  * atomic across concurrent callers, which makes this the recommended
@@ -156,13 +156,13 @@ export declare namespace cloudflare {
  * // }
  *
  * // worker.ts
- * import { Kv } from 'wata'
+ * import { Store } from 'wata'
  *
- * export class Storage extends Kv.Storage {}
+ * export class Storage extends Store.Storage {}
  *
  * export default {
  *   fetch(request: Request, env: Env) {
- *     const store = Kv.durableObject(env.STORAGE_DO)
+ *     const store = Store.durableObject(env.STORAGE_DO)
  *     // ...
  *   },
  * }
@@ -171,7 +171,7 @@ export declare namespace cloudflare {
 export function durableObject(
   namespace: durableObject.Namespace,
   options: durableObject.Options = {},
-): AtomicKv {
+): AtomicStore {
   const instanceName = options.name ?? 'default'
   const stub = () => namespace.get(namespace.idFromName(instanceName))
 
@@ -186,7 +186,7 @@ export function durableObject(
           }
         : { method: 'POST' }
     const response = await stub().fetch(url, init as never)
-    if (!response.ok) throw new Error(`Kv.durableObject ${op} failed: ${response.status}`)
+    if (!response.ok) throw new Error(`Store.durableObject ${op} failed: ${response.status}`)
     return await response.json()
   }
 
@@ -297,19 +297,19 @@ export declare namespace Storage {
 }
 
 /**
- * In-memory {@link Kv} for tests and single-process deployments. Lazily
+ * In-memory {@link Store} for tests and single-process deployments. Lazily
  * evicts expired entries on read/write.
  *
  * Pass `now` to control the clock in tests.
  *
  * @example
  * ```ts
- * import { Kv } from 'wata'
+ * import { Store } from 'wata'
  *
- * const store = Kv.memory()
+ * const store = Store.memory()
  * ```
  */
-export function memory(options: memory.Options = {}): AtomicKv {
+export function memory(options: memory.Options = {}): AtomicStore {
   const now = options.now ?? Date.now
   const store = new Map<string, { expiresAt?: number; value: unknown }>()
 

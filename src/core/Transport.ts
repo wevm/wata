@@ -38,15 +38,19 @@ export type Exchange = 'ongoing' | 'single_exchange'
 /**
  * Events delivered on every transport. `message` carries the parsed
  * inbound envelope, `close` carries the optional close cause, `error`
- * carries the transport-level failure.
+ * carries the transport-level failure, `prompt` carries the optional
+ * user-facing pairing/verification payload (only transports that pair
+ * out-of-band ever emit it; the rest pin it to `never`).
  */
-export type EventMap<meta extends MessageMeta = NoMessageMeta> = {
+export type EventMap<meta extends MessageMeta = NoMessageMeta, prompt extends object = never> = {
   /** Transport closed (cleanly or with cause). */
   close: Error | undefined
   /** Transport-level failure. */
   error: Error
   /** Inbound envelope frame. */
   message: MessageArgs<meta>
+  /** User-facing pairing/verification prompt produced during startup. */
+  prompt: prompt
 }
 
 /** Metadata observed by a transport while receiving an inbound frame. */
@@ -147,6 +151,7 @@ export type Transport<
   name extends string = string,
   sendValue = void,
   meta extends MessageMeta = NoMessageMeta,
+  prompt extends object = never,
 > = {
   /**
    * Apply parent application context to this transport. Lazy-bound by
@@ -183,7 +188,7 @@ export type Transport<
    * directly. Pass `{ signal }` to scope the subscription to an
    * `AbortController`.
    */
-  on: Events.Emitter<EventMap<meta>>['on']
+  on: Events.Emitter<EventMap<meta, prompt>>['on']
   /**
    * Consumer-side identity public key surfaced to the wrapping
    * `Wata.create({ baseUrl, meta })` so that the auto-published
@@ -211,6 +216,13 @@ export type Transport<
 /** Metadata emitted by a concrete transport. */
 export type MessageMetaOf<transport extends Transport<Role, string, unknown, MessageMeta>> =
   transport extends Transport<Role, string, unknown, infer meta> ? meta : MessageMeta
+
+/**
+ * User-facing prompt payload produced by a concrete transport, or
+ * `never` for transports that never pair out-of-band.
+ */
+export type PromptOf<transport> =
+  transport extends Transport<Role, string, unknown, MessageMeta, infer prompt> ? prompt : never
 
 /** Value resolved by a transport's {@link Transport.send}. */
 export type SendValue<transport extends Transport<Role, string, unknown>> = Awaited<

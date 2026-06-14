@@ -71,6 +71,58 @@ describe('isLoopbackHttp', () => {
   })
 })
 
+describe('isPrivateHttp', () => {
+  test('validates private-network http URLs', () => {
+    expect(
+      [
+        'http://10.0.2.2:4860',
+        'http://172.20.10.2:4860',
+        'http://192.168.1.20:4860',
+        'http://169.254.10.10:4860',
+        'http://my-laptop.local:4860',
+        'http://relay.example',
+        'http://8.8.8.8',
+        'https://192.168.1.20',
+      ].map((value) => [value, Uri.isPrivateHttp(new URL(value))]),
+    ).toMatchInlineSnapshot(`
+      [
+        [
+          "http://10.0.2.2:4860",
+          true,
+        ],
+        [
+          "http://172.20.10.2:4860",
+          true,
+        ],
+        [
+          "http://192.168.1.20:4860",
+          true,
+        ],
+        [
+          "http://169.254.10.10:4860",
+          true,
+        ],
+        [
+          "http://my-laptop.local:4860",
+          true,
+        ],
+        [
+          "http://relay.example",
+          false,
+        ],
+        [
+          "http://8.8.8.8",
+          false,
+        ],
+        [
+          "https://192.168.1.20",
+          false,
+        ],
+      ]
+    `)
+  })
+})
+
 describe('matchesCallback', () => {
   test('accepts callbacks with matching base URI and registered query params', () => {
     expect(
@@ -92,7 +144,10 @@ describe('matchesCallback', () => {
 
   test('rejects callbacks missing registered query params', () => {
     expect(
-      Uri.matchesCallback(new URL('com.example.app:/callback'), 'com.example.app:/callback?nonce=1'),
+      Uri.matchesCallback(
+        new URL('com.example.app:/callback'),
+        'com.example.app:/callback?nonce=1',
+      ),
     ).toMatchInlineSnapshot(`false`)
   })
 })

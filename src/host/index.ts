@@ -5,7 +5,7 @@
 
 export * as Wata from './Wata.js'
 export * as Discovery from '../core/Discovery.js'
-export * as Kv from '../core/Kv.js'
+export * as Store from '../core/Store.js'
 export * as Schema from '../core/Schema.js'
 export * as Transport from '../core/Transport.js'
 
@@ -15,6 +15,8 @@ export { deviceCode } from './transports/deviceCode.js'
 export * as DeviceCode from './transports/deviceCode.js'
 export { mobileWebAuth } from './transports/mobileWebAuth.js'
 export * as MobileWebAuth from './transports/mobileWebAuth.js'
+export { relay } from './transports/relay.js'
+export * as Relay from './transports/relay.js'
 export { webhookCallback } from './transports/webhookCallback.js'
 export * as WebhookCallback from './transports/webhookCallback.js'
 export * as MessageSig from '../core/MessageSig.js'

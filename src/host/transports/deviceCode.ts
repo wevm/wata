@@ -25,14 +25,14 @@
  * @example minimal Node host
  * ```ts
  * import { createServer } from 'node:http'
- * import { Wata, Kv, deviceCode } from 'wata/host'
+ * import { Store, Wata, deviceCode } from 'wata/host'
  * import { Server } from 'wata/server'
  *
  * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
  *   transports: [
  *     deviceCode({
- *       store: Kv.memory(),
+ *       store: Store.memory(),
  *       path: '/auth/device',
  *       html: {
  *         render: ({ userCode }) =>
@@ -66,7 +66,7 @@ import * as Envelope from '../../core/Envelope.js'
 import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
 import * as Http from '../../core/Http.js'
-import * as Kv from '../../core/Kv.js'
+import * as Store from '../../core/Store.js'
 import * as Transport from '../../core/Transport.js'
 import * as Uri from '../../internal/Uri.js'
 
@@ -157,8 +157,8 @@ export type Options = {
    * consumers apply when the host omits `interval`.
    */
   pollingInterval?: number | undefined
-  /** Pluggable persistence for {@link PendingRecord}s. Use {@link Kv.memory} for tests. */
-  store: Kv.Kv
+  /** Pluggable persistence for {@link PendingRecord}s. Use {@link Store.memory} for tests. */
+  store: Store.Store
 }
 
 export declare namespace html {
@@ -242,13 +242,13 @@ export type DeviceCode = Transport.Transport<'host', 'deviceCode'> & Http.Server
  *
  * @example
  * ```ts
- * import { Wata, Kv, deviceCode } from 'wata/host'
+ * import { Store, Wata, deviceCode } from 'wata/host'
  *
  * const wata = Wata.create({
  *   baseUrl: 'https://wallet.example',
  *   transports: [
  *     deviceCode({
- *       store: Kv.memory(),
+ *       store: Store.memory(),
  *       path: '/auth/device',
  *       html: { render, authenticate },
  *     }),

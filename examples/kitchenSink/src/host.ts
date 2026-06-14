@@ -1,4 +1,4 @@
-import { Kv, Wata, deviceCode, postMessage, webhookCallback } from 'wata/host'
+import { Store, Wata, deviceCode, postMessage, webhookCallback } from 'wata/host'
 import * as Identity from 'wata/identity'
 
 export const baseUrl = 'http://localhost:5173'
@@ -53,7 +53,7 @@ export const host = Wata.create({
       },
       path: '/auth/device',
       pollingInterval: 1_000,
-      store: Kv.memory(),
+      store: Store.memory(),
     }),
     postMessage({ targetOrigin: new URL(location.href).searchParams.get('origin') ?? undefined }),
     webhookCallback({
@@ -92,7 +92,7 @@ export const host = Wata.create({
         },
       },
       path: '/auth/webhook',
-      store: Kv.memory(),
+      store: Store.memory(),
       validateOutboundRequest() {},
     }),
   ],

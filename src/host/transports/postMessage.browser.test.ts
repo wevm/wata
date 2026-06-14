@@ -259,7 +259,9 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
       removeEventListener: source.removeEventListener.bind(source),
     } as unknown as Window
     const host = HostWata.create({
-      transports: [postMessage({ source, target: () => handle, targetOrigin: 'https://app.example' })],
+      transports: [
+        postMessage({ source, target: () => handle, targetOrigin: 'https://app.example' }),
+      ],
     })
     const events: Array<{ kind: string; origin: string | undefined; transport: string }> = []
 

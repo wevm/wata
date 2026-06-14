@@ -20,6 +20,24 @@ export function isLoopbackHttp(url: URL): boolean {
   )
 }
 
+/**
+ * Returns true for HTTP URLs targeting private-use or link-local
+ * networks (RFC 1918 ranges, `169.254/16`, mDNS `.local` hostnames).
+ * Accepted alongside {@link isLoopbackHttp} for development flows where
+ * a physical device reaches the dev machine over a LAN address.
+ */
+export function isPrivateHttp(url: URL): boolean {
+  if (url.protocol !== 'http:') return false
+  const { hostname } = url
+  if (hostname.endsWith('.local')) return true
+  return (
+    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+    /^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+    /^169\.254\.\d{1,3}\.\d{1,3}$/.test(hostname)
+  )
+}
+
 /** Returns true when an actual callback targets the registered callback URI. */
 export function matchesCallback(url: URL, callback: string): boolean {
   const expected = new URL(callback)

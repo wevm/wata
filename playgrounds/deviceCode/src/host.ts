@@ -19,7 +19,7 @@
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { Ed25519 } from 'ox'
-import { Kv, Wata, deviceCode } from 'wata/host'
+import { Store, Wata, deviceCode } from 'wata/host'
 import * as Identity from 'wata/identity'
 
 const port = Number(process.env.PORT ?? 4747)
@@ -94,7 +94,7 @@ const wata = Wata.create({
       },
       path: '/auth/device',
       pollingInterval: 1000,
-      store: Kv.memory(),
+      store: Store.memory(),
     }),
   ],
 })

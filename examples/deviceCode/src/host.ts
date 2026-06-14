@@ -8,7 +8,7 @@
 
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { Kv, Wata, deviceCode } from 'wata/host'
+import { Store, Wata, deviceCode } from 'wata/host'
 
 const port = 4747
 const baseUrl = `http://localhost:${port}`
@@ -52,7 +52,7 @@ const wata = Wata.create({
       },
       path: '/auth/device',
       pollingInterval: 1000,
-      store: Kv.memory(),
+      store: Store.memory(),
     }),
   ],
 })

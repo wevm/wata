@@ -1,0 +1,24 @@
+{
+  "name": "example-relay-consumer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check:types": "tsc",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "qrcode": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "wata": "latest"
+  },
+  "devDependencies": {
+    "@types/qrcode": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}

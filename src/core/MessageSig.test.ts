@@ -37,7 +37,14 @@ describe('signatureBase', () => {
       Host: 'example.com',
     }
     const base = MessageSig.signatureBase({
-      components: ['@method', '@authority', '@path', 'content-digest', 'content-length', 'content-type'],
+      components: [
+        '@method',
+        '@authority',
+        '@path',
+        'content-digest',
+        'content-length',
+        'content-type',
+      ],
       message: {
         headers,
         method: 'POST',
@@ -96,7 +103,56 @@ describe('signatureBase', () => {
         message: { headers: {}, method: 'POST', url: 'https://example.com/foo' },
         parameters: { created: 1, keyid: 'k' },
       }),
-    ).toThrowErrorMatchingInlineSnapshot(`[MessageSig.MissingHeaderError: missing header \`content-digest\` for signature base]`)
+    ).toThrowErrorMatchingInlineSnapshot(
+      `[MessageSig.MissingHeaderError: missing header \`content-digest\` for signature base]`,
+    )
+  })
+
+  test('serializes @query-param;name=".." with the named query value', () => {
+    const base = MessageSig.signatureBase({
+      components: ['@method', '@query-param;name="wait"'],
+      message: { headers: {}, method: 'GET', url: 'https://relay.example/sub?wait=25&peer=abc' },
+      parameters: { created: 1 },
+    })
+    expect(base).toMatchInlineSnapshot(`
+      ""@method": GET
+      "@query-param";name="wait": 25
+      "@signature-params": ("@method" "@query-param";name="wait");created=1"
+    `)
+  })
+
+  test('@query-param form-decodes then canonically re-encodes the value', () => {
+    expect(
+      MessageSig.signatureBase({
+        components: ['@query-param;name="q"'],
+        message: { headers: {}, method: 'GET', url: 'https://x.example/p?q=with+plus%20space' },
+        parameters: {},
+      }),
+    ).toContain('"@query-param";name="q": with%20plus%20space\n')
+  })
+
+  test('throws when a referenced @query-param is absent', () => {
+    expect(() =>
+      MessageSig.signatureBase({
+        components: ['@query-param;name="wait"'],
+        message: { headers: {}, method: 'GET', url: 'https://relay.example/sub' },
+        parameters: {},
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `[MessageSig.InvalidSignatureError: query parameter \`wait\` not found for \`@query-param\`]`,
+    )
+  })
+
+  test('throws when a @query-param is duplicated', () => {
+    expect(() =>
+      MessageSig.signatureBase({
+        components: ['@query-param;name="wait"'],
+        message: { headers: {}, method: 'GET', url: 'https://relay.example/sub?wait=1&wait=2' },
+        parameters: {},
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `[MessageSig.InvalidSignatureError: duplicate query parameter \`wait\` for \`@query-param\`]`,
+    )
   })
 })
 
@@ -240,7 +296,9 @@ describe('parseSignatureInput', () => {
   })
 
   test('throws InvalidSignatureError when the requested label is missing', () => {
-    expect(() => MessageSig.parseSignatureInput('other=()', 'sig')).toThrowErrorMatchingInlineSnapshot(
+    expect(() =>
+      MessageSig.parseSignatureInput('other=()', 'sig'),
+    ).toThrowErrorMatchingInlineSnapshot(
       `[MessageSig.InvalidSignatureError: Signature-Input missing label \`sig\`]`,
     )
   })

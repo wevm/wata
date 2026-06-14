@@ -86,14 +86,11 @@ Requests a device code from the host, prints the verification URL and `user_code
 import { Wata, deviceCode } from 'wata'
 
 const wata = Wata.create({
-  transports: [
-    deviceCode({
-      url: 'https://wallet.example/auth/device',
-      onPrompt(c) {
-        console.log(`Visit ${c.verificationUri} and enter ${c.userCode}`)
-      },
-    }),
-  ],
+  transports: [deviceCode({ url: 'https://wallet.example/auth/device' })],
+})
+
+wata.on('prompt', (prompt) => {
+  console.log(`Visit ${prompt.verificationUri} and enter ${prompt.userCode}`)
 })
 
 const { result } = await wata.send({
@@ -108,7 +105,7 @@ Mounts the device-code endpoints under `/auth/device`, renders a minimal approva
 
 ```ts
 import { createServer } from 'node:http'
-import { Wata, Kv, deviceCode } from 'wata/host'
+import { Store, Wata, deviceCode } from 'wata/host'
 import * as Identity from 'wata/identity'
 import { Server } from 'wata/server'
 
@@ -132,7 +129,7 @@ const wata = Wata.create({
         },
       },
       path: '/auth/device',
-      store: Kv.memory(),
+      store: Store.memory(),
     }),
   ],
 })
@@ -237,7 +234,7 @@ Server-to-server session where the consumer registers a signed intent with the h
 Publishes `consumer.json`, serves a web page that starts the request, opens the host's verification URL for the user, then receives the callback response at its webhook endpoint.
 
 ```ts
-import { Identity, Kv, Wata, webhookCallback } from 'wata'
+import { Identity, Store, Wata, webhookCallback } from 'wata'
 
 const wata = Wata.create({
   baseUrl: 'https://app.example',
@@ -247,7 +244,7 @@ const wata = Wata.create({
     webhookCallback({
       host: 'https://wallet.example',
       path: '/callback',
-      store: Kv.memory(),
+      store: Store.memory(),
     }),
   ],
 })
@@ -270,7 +267,7 @@ console.log(`Visit ${registration.verificationUri}`)
 Publishes `host.json`, accepts signed registrations, renders an approval form, and responds to approved requests.
 
 ```ts
-import { Wata, Kv, webhookCallback } from 'wata/host'
+import { Store, Wata, webhookCallback } from 'wata/host'
 import * as Identity from 'wata/identity'
 
 const wata = Wata.create({
@@ -298,7 +295,7 @@ const wata = Wata.create({
         },
       },
       path: '/auth/webhook',
-      store: Kv.memory(),
+      store: Store.memory(),
     }),
   ],
 })

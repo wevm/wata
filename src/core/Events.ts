@@ -1,24 +1,26 @@
 /**
- * Thin namespace wrapper around the [`rettime`](https://github.com/kettanaito/rettime)
- * library so the rest of the codebase imports event primitives via
- * `import * as Events from '../core/Events.js'` and never reaches into
- * `rettime` directly.
+ * Self-contained, payload-style event emitter used everywhere in
+ * `wata`. The rest of the codebase imports event primitives via
+ * `import * as Events from '../core/Events.js'`; this module owns the
+ * single implementation so no other file ever touches an event
+ * library directly.
  *
- * Every public/internal event emitter in `wata` is a rettime
- * `Emitter` under the hood, but exposed through a payload-style
- * surface: `.on(eventName, listener)` (listener receives the payload
- * directly) and `.emit(eventName, payload)` (no `TypedEvent`
- * boilerplate at the call site). Event values that are non-empty
- * tuples are spread into listener arguments, so maps can model
- * multi-argument events without bespoke adapters.
+ * The surface is payload-style: `.on(eventName, listener)` (listener
+ * receives the payload directly) and `.emit(eventName, payload)` (no
+ * event-object boilerplate at the call site). Event values that are
+ * non-empty tuples are spread into listener arguments, so maps can
+ * model multi-argument events without bespoke adapters.
  *
  * Event maps are written as `{ eventName: payload }` for normal
  * single-payload events, or `{ eventName: [a, b] }` for multi-argument
- * events. `create` lifts them into the rettime-shaped `TypedEvent`
- * map internally.
+ * events.
+ *
+ * The emitter is intentionally a plain `Map<string, Set<listener>>`
+ * with no dependency on DOM event classes (`Event`, `MessageEvent`,
+ * …). React Native (Hermes) ships without those globals, so any
+ * emitter that subclassed them would crash at module-load before the
+ * app could render.
  */
-
-import { Emitter as RettimeEmitter, TypedEvent as RettimeTypedEvent } from 'rettime'
 
 /**
  * Arguments delivered for an event map payload. Non-empty tuples are
@@ -29,7 +31,7 @@ export type EventArgs<payload> = [payload] extends [[unknown, ...unknown[]]] ? p
 
 /**
  * Listener for an {@link Emitter} event. Receives the typed payload
- * directly (the rettime `TypedEvent` is unwrapped at the boundary).
+ * directly.
  */
 export type Listener<payload> = (...payload: EventArgs<payload>) => unknown
 
@@ -42,7 +44,7 @@ export type Options = {
 /**
  * Payload-style event emitter. Parameterised by an event map of the
  * form `{ eventName: payload }`. Listeners receive the payload
- * directly; `emit` takes the event name and payload (no `TypedEvent`
+ * directly; `emit` takes the event name and payload (no event-object
  * construction at the call site). Non-empty tuple values are treated
  * as multi-argument events.
  */
@@ -72,9 +74,9 @@ export type Emitter<map extends Record<string, unknown>> = {
 }
 
 /**
- * Create a payload-style {@link Emitter} backed by a rettime
- * `Emitter`. Listener errors are caught and swallowed so a buggy
- * subscriber can't disrupt the dispatch path.
+ * Create a payload-style {@link Emitter}. Listener errors are caught
+ * and swallowed so a buggy subscriber can't disrupt the dispatch
+ * path.
  *
  * @example
  * ```ts
@@ -91,35 +93,39 @@ export type Emitter<map extends Record<string, unknown>> = {
  * ```
  */
 export function create<map extends Record<string, unknown>>(): Emitter<map> {
-  const inner = new RettimeEmitter<{
-    [K in keyof map & string]: RettimeTypedEvent<EventArgs<map[K]>>
-  }>()
-  const wrappers = new WeakMap<object, (event: RettimeTypedEvent<unknown[]>) => unknown>()
+  type AnyListener = (...payload: readonly unknown[]) => unknown
+  const listeners = new Map<string, Set<AnyListener>>()
   return {
     emit(type, ...payload) {
-      return inner.emit(new RettimeTypedEvent<unknown[]>(type, { data: payload }) as never)
+      const set = listeners.get(type)
+      if (!set || set.size === 0) return false
+      for (const listener of [...set])
+        try {
+          listener(...payload)
+        } catch {
+          // Swallow listener errors so a buggy subscriber can't break
+          // the dispatch path.
+        }
+      return true
     },
     listenerCount(type) {
-      return inner.listenerCount(type as never)
+      if (type === undefined) {
+        let total = 0
+        for (const set of listeners.values()) total += set.size
+        return total
+      }
+      return listeners.get(type)?.size ?? 0
     },
     off(type, listener) {
-      const wrapped = wrappers.get(listener)
-      if (!wrapped) return
-      inner.removeListener(type as never, wrapped as never)
-      wrappers.delete(listener)
+      listeners.get(type)?.delete(listener as AnyListener)
     },
     on(type, listener, options) {
-      const wrapped = (event: RettimeTypedEvent<unknown[]>) => {
-        try {
-          return (listener as (...payload: unknown[]) => unknown)(...event.data)
-        } catch {
-          // Swallow listener errors so a buggy subscriber can't break the
-          // dispatch path. Match the legacy `createBus` semantics.
-          return undefined
-        }
-      }
-      wrappers.set(listener, wrapped)
-      inner.on(type as never, wrapped as never, options as never)
+      const signal = options?.signal
+      if (signal?.aborted) return
+      const set = listeners.get(type) ?? new Set<AnyListener>()
+      listeners.set(type, set)
+      set.add(listener as AnyListener)
+      signal?.addEventListener('abort', () => set.delete(listener as AnyListener), { once: true })
     },
   }
 }

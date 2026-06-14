@@ -70,8 +70,7 @@ export function decodePublicKey(value: string): Hex.Hex {
 
 /** Encode a 32-byte hex public key as unpadded base64url. */
 export function encodePublicKey(publicKey: Hex.Hex): string {
-  if (Hex.size(publicKey) !== 32)
-    throw new Errors.ProtocolError('public key must be 32 bytes')
+  if (Hex.size(publicKey) !== 32) throw new Errors.ProtocolError('public key must be 32 bytes')
   return Base64.fromBytes(Bytes.from(publicKey), { pad: false, url: true })
 }
 

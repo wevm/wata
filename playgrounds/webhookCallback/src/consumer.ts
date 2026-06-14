@@ -24,7 +24,7 @@ import * as Clack from '@clack/prompts'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { Ed25519 } from 'ox'
-import { Identity, Kv, Wata, webhookCallback } from 'wata'
+import { Identity, Store, Wata, webhookCallback } from 'wata'
 
 const port = Number(process.env.PORT ?? 4646)
 const baseUrl = process.env.BASE_URL ?? `http://localhost:${port}`
@@ -56,7 +56,7 @@ const wata = Wata.create({
     webhookCallback({
       host: hostUrl,
       path: webhookPath,
-      store: Kv.memory(),
+      store: Store.memory(),
     }),
   ],
 })
