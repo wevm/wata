@@ -33,7 +33,8 @@ export const consumer = Wata.create({
   ],
 })
 
-consumer.on('prompt', ({ userCode, verificationUriFull }) => {
-  console.log(`open ${verificationUriFull}`)
-  console.log(`user_code: ${userCode}`)
+consumer.on('prompt', (prompt) => {
+  if (prompt.transport !== 'deviceCode') return
+  console.log(`open ${prompt.verificationUriFull}`)
+  console.log(`user_code: ${prompt.userCode}`)
 })

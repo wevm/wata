@@ -268,7 +268,9 @@ export type HostTransports = readonly [HostTransport, ...HostTransport[]]
  * pairingUri })`). Surfaced on the returned {@link Host}.
  */
 export type TransportsByName<transports extends HostTransports> = {
-  [transport in transports[number] as transport['name']]: transport
+  [transport in transports[number] as string extends transport['name']
+    ? never
+    : transport['name']]: transport
 }
 
 /** Host-side `Wata`. Returned by {@link create}. */
