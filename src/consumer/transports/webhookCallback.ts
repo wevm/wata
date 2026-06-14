@@ -121,7 +121,11 @@ export type Options = {
  * plus the `.fetch` handler the consumer needs to serve
  * incoming webhook deliveries, plus an explicit {@link cancel} hook.
  */
-export type WebhookCallback = Transport.Transport<'consumer', 'webhookCallback', Registration> &
+export type WebhookCallback = Transport.Transport<
+  'consumer',
+  'webhookCallback',
+  { sendValue: Registration }
+> &
   Http.Server & {
     /**
      * RFC 9421-signed cancellation of the in-flight `auth_req_id`

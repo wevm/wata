@@ -16,7 +16,11 @@ describe('webhookCallback (consumer)', () => {
     expectTypeOf(transport.role).toEqualTypeOf<'consumer'>()
     expectTypeOf(transport.exchange).toEqualTypeOf<Transport.Exchange>()
     expectTypeOf(transport).toMatchTypeOf<
-      Transport.Transport<'consumer', 'webhookCallback', WebhookCallback.Registration>
+      Transport.Transport<
+        'consumer',
+        'webhookCallback',
+        { sendValue: WebhookCallback.Registration }
+      >
     >()
     expectTypeOf(transport.fetch).toEqualTypeOf<(request: Request) => Promise<Response>>()
     expectTypeOf(transport.cancel).toEqualTypeOf<() => Promise<void>>()

@@ -187,7 +187,7 @@ export type ConsumerEventMap<
  * SDK-facing `transport` name. Transports that never pair out-of-band
  * contribute `never`, so they drop out of the union.
  */
-export type ConsumerPromptEvent<transport extends { name: string }> = transport extends unknown
+export type ConsumerPromptEvent<transport extends Transport.Any> = transport extends unknown
   ? [Transport.PromptOf<transport>] extends [never]
     ? never
     : Transport.PromptOf<transport> & {
@@ -268,8 +268,8 @@ export type ConsumerListeners<map extends Record<string, unknown>> = {
 
 /** Non-empty tuple of consumer transports accepted by {@link create}. */
 export type ConsumerTransports = readonly [
-  Transport.Transport<'consumer', string, unknown>,
-  ...Transport.Transport<'consumer', string, unknown>[],
+  Transport.Any<'consumer'>,
+  ...Transport.Any<'consumer'>[],
 ]
 
 /** Default single-transport tuple used by the broad {@link Consumer} type. */
@@ -278,7 +278,7 @@ export type SingleConsumerTransports = readonly [Transport.Transport<'consumer',
 /** Transport-specific consumer session exposed on `wata.<transportName>`. */
 export type ConsumerSession<
   schema extends Schema.Schema | undefined,
-  transport extends Transport.Transport<'consumer', string, unknown>,
+  transport extends Transport.Any<'consumer'>,
   context extends Rpc.RequestContext = Rpc.RequestContext,
 > = ConsumerListeners<ConsumerEventMap<schema, context, ConsumerPromptEvent<transport>>> & {
   /** Close the session. Idempotent. Emits `'close'`. */
@@ -366,9 +366,7 @@ export type Consumer<
   transports extends ConsumerTransports = SingleConsumerTransports,
   context extends Rpc.RequestContext = Rpc.RequestContext,
 > = ConsumerBase<schema, transports, context> &
-  (transports extends readonly [
-    infer transport extends Transport.Transport<'consumer', string, unknown>,
-  ]
+  (transports extends readonly [infer transport extends Transport.Any<'consumer'>]
     ? ConsumerSession<schema, transport, context>
     : ConsumerChildMap<schema, transports, context>)
 
@@ -405,14 +403,11 @@ export declare namespace Consumer {
   /** Return type of `send`, preserving transport-specific registration metadata. */
   type SendReturn<
     schema extends Schema.Schema | undefined,
-    transport extends Transport.Transport<'consumer', string, unknown>,
+    transport extends Transport.Any<'consumer'>,
     method extends string,
-  > =
-    transport extends Transport.Transport<'consumer', string, infer value>
-      ? [value] extends [void]
-        ? SendResult<ResultOf<schema, method>>
-        : value
-      : never
+  > = [Transport.SendValue<transport>] extends [void]
+    ? SendResult<ResultOf<schema, method>>
+    : Transport.SendValue<transport>
 
   /** Options for {@link Consumer.send}. */
   type SendOptions<
@@ -542,7 +537,7 @@ export function create<
 
 function createConsumerSession<
   const schema extends Schema.Schema | undefined,
-  const transport extends Transport.Transport<'consumer', string, unknown>,
+  const transport extends Transport.Any<'consumer'>,
   const context extends Schema.Context | undefined,
 >(parameters: {
   context: context
@@ -892,9 +887,7 @@ export declare namespace create {
   }
 }
 
-function assertUniqueTransportNames(
-  transports: readonly Transport.Transport<Transport.Role, string, unknown>[],
-): void {
+function assertUniqueTransportNames(transports: readonly Transport.Any[]): void {
   const seen = new Set<string>()
   for (const transport of transports) {
     if (seen.has(transport.name))
@@ -903,17 +896,13 @@ function assertUniqueTransportNames(
   }
 }
 
-function collectCallbackUrls(
-  transports: readonly Transport.Transport<Transport.Role, string, unknown>[],
-): readonly string[] {
+function collectCallbackUrls(transports: readonly Transport.Any[]): readonly string[] {
   const urls = new Set<string>()
   for (const transport of transports) for (const url of transport.callbackUrls ?? []) urls.add(url)
   return Array.from(urls)
 }
 
-function collectPublicKey(
-  transports: readonly Transport.Transport<Transport.Role, string, unknown>[],
-): string | undefined {
+function collectPublicKey(transports: readonly Transport.Any[]): string | undefined {
   let publicKey: string | undefined
   for (const transport of transports) {
     if (!transport.publicKey) continue
@@ -924,7 +913,7 @@ function collectPublicKey(
   return publicKey
 }
 
-function isHttpServer<transport extends Transport.Transport<Transport.Role, string, unknown>>(
+function isHttpServer<transport extends Transport.Any>(
   transport: transport,
 ): transport is transport & Http.RoutedServer {
   const candidate = transport as Partial<Http.RoutedServer>

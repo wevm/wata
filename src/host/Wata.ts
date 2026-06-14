@@ -25,7 +25,11 @@ import * as Wellknown from '../core/Wellknown.js'
 import * as Wata from '../Wata.js'
 
 /** Host transport accepted by {@link create}. */
-export type HostTransport = Transport.Transport<'host', string, unknown, Transport.MessageMeta>
+export type HostTransport = Transport.Transport<
+  'host',
+  string,
+  { meta: Transport.MessageMeta; sendValue: unknown }
+>
 
 /**
  * Host lifecycle/notification event names, used to derive the `onX` /

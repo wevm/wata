@@ -138,7 +138,7 @@ export type StartOptions = {
  */
 export function relay(
   options: Options,
-): Transport.Transport<'consumer', 'relay', void, Transport.NoMessageMeta, Prompt, StartOptions> {
+): Transport.Transport<'consumer', 'relay', { prompt: Prompt; startOptions: StartOptions }> {
   const {
     allowPrivateNetwork,
     expiresIn = 300_000,

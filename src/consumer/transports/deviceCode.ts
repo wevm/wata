@@ -121,7 +121,7 @@ export type Options = {
  */
 export function deviceCode(
   options: Options,
-): Transport.Transport<'consumer', 'deviceCode', void, Transport.NoMessageMeta, Prompt> {
+): Transport.Transport<'consumer', 'deviceCode', { prompt: Prompt }> {
   const {
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
     pollingInterval,
