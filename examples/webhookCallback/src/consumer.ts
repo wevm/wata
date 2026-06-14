@@ -21,8 +21,9 @@ const wata = Wata.create({
   ],
 })
 
-wata.on('rpc-responses', (responses) => {
-  const response = responses[0]
+wata.onEnvelope((envelope) => {
+  if (envelope.type !== 'rpc-responses') return
+  const response = envelope.payload[0]
   if (!response) return
   if ('error' in response) console.error(response.error)
   else console.log(response.result)

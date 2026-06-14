@@ -74,6 +74,84 @@ export type Emitter<map extends Record<string, unknown>> = {
 }
 
 /**
+ * PascalCase an event name, splitting on `-` so kebab-cased events map
+ * to camelCased method suffixes (e.g. `rpc-requests` → `RpcRequests`).
+ * Drives the `on`/`off` method names derived from an event map.
+ */
+export type PascalEvent<type extends string> = type extends `${infer head}-${infer tail}`
+  ? `${Capitalize<head>}${PascalEvent<tail>}`
+  : Capitalize<type>
+
+/**
+ * `onX` subscriber methods derived from an event map. Each method takes
+ * a typed {@link Listener} and returns an `AbortController` so the
+ * subscription can be cancelled (or composed with an external signal).
+ */
+export type On<map extends Record<string, unknown>> = {
+  [type in keyof map & string as `on${PascalEvent<type>}`]: (
+    listener: Listener<map[type]>,
+  ) => AbortController
+}
+
+/** `offX` unsubscribe methods derived from an event map. */
+export type Off<map extends Record<string, unknown>> = {
+  [type in keyof map & string as `off${PascalEvent<type>}`]: (listener: Listener<map[type]>) => void
+}
+
+/** Combined `onX` + `offX` subscriber surface derived from an event map. */
+export type Subscribers<map extends Record<string, unknown>> = Off<map> & On<map>
+
+/**
+ * Build the `onX` / `offX` subscriber methods for a set of event names
+ * on an {@link Emitter}. `onX` wraps each subscription in its own
+ * `AbortController` (returned to the caller) and invokes
+ * {@link subscribers.Options.onSubscribe} after subscribing — used by
+ * lazy-connecting sides to bring the transport up on first listener.
+ *
+ * @example
+ * ```ts
+ * import * as Events from '../core/Events.js'
+ *
+ * const emitter = Events.create<{ close: void; error: Error }>()
+ * const surface = Events.subscribers(emitter, ['close', 'error'])
+ * surface.onError((error) => console.log(error))
+ * ```
+ */
+export function subscribers<
+  map extends Record<string, unknown>,
+  const names extends readonly (keyof map & string)[],
+>(
+  emitter: Emitter<map>,
+  names: names,
+  options: subscribers.Options = {},
+): Subscribers<Pick<map, names[number]>> {
+  const { onSubscribe } = options
+  const out: Record<string, unknown> = {}
+  for (const name of names) {
+    const suffix = name
+      .split('-')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('')
+    out[`on${suffix}`] = (listener: Listener<map[typeof name]>) => {
+      const controller = new AbortController()
+      emitter.on(name, listener, { signal: controller.signal })
+      onSubscribe?.()
+      return controller
+    }
+    out[`off${suffix}`] = (listener: Listener<map[typeof name]>) => emitter.off(name, listener)
+  }
+  return out as Subscribers<Pick<map, names[number]>>
+}
+
+export declare namespace subscribers {
+  /** Options for {@link subscribers}. */
+  type Options = {
+    /** Invoked after each successful subscription (e.g. to lazy-connect). */
+    onSubscribe?: (() => void) | undefined
+  }
+}
+
+/**
  * Create a payload-style {@link Emitter}. Listener errors are caught
  * and swallowed so a buggy subscriber can't disrupt the dispatch
  * path.

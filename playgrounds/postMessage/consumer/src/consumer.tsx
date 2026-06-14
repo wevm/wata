@@ -88,16 +88,16 @@ function App() {
         }),
       ],
     })
-    wata.on('open', () => {
+    wata.onOpen(() => {
       setState('open')
       log.push({ intent: 'positive', label: 'open' })
     })
-    wata.on('close', (cause) => {
+    wata.onClose((cause) => {
       setState('closed')
       wataRef.current = undefined
       log.push({ intent: 'neutral', label: 'close', detail: cause })
     })
-    wata.on('error', (error) => {
+    wata.onError((error) => {
       setState('error')
       log.push({ intent: 'negative', label: 'error', detail: error })
     })

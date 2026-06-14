@@ -41,20 +41,18 @@ export type SendResult<result> = {
   result: result
 }
 
-/** Listener supplied to `Wata.on`. */
+/** Listener supplied to a consumer `onX` subscriber method. */
 export type Listener<payload> = Events.Listener<payload>
 
-/** Raw RPC envelope types surfaced through lifecycle events. */
-export type RpcEnvelopeType = 'rpc-requests' | 'rpc-responses'
+/** Consumer event names, used to derive the `onX` / `offX` surface. */
+const consumerEventNames = ['close', 'envelope', 'error', 'notification', 'open', 'prompt'] as const
 
-/** Metadata passed as the second argument to raw RPC envelope listeners. */
-export type RpcEnvelopeMeta<type extends RpcEnvelopeType = RpcEnvelopeType> = {
+/** Direction + transport metadata for an observed {@link ObservedEnvelope}. */
+export type EnvelopeMeta = {
   /** Direction relative to the local `Wata` instance. */
   direction: 'incoming' | 'outgoing'
   /** SDK-facing transport name that carried this envelope. */
   transport: string
-  /** Raw uRPC envelope type. */
-  type: type
 }
 
 type RpcRequestMessageOf<
@@ -78,15 +76,38 @@ type RpcResponseResultOf<schema extends Schema.Schema | undefined> = schema exte
     }[Schema.MethodName<schema>]
   : unknown
 
-/** Payload passed to `'rpc-requests'` listeners. */
+/** Decoded payload of an observed `rpc-requests` envelope. */
 export type RpcRequestsPayload<
   schema extends Schema.Schema | undefined = undefined,
   context extends Rpc.RequestContext = Rpc.RequestContext,
 > = readonly RpcRequestMessageOf<schema, context>[]
 
-/** Payload passed to `'rpc-responses'` listeners. */
+/** Decoded payload of an observed `rpc-responses` envelope. */
 export type RpcResponsesPayload<schema extends Schema.Schema | undefined = undefined> =
   readonly RpcResponseMessageOf<schema>[]
+
+/**
+ * A uRPC envelope surfaced through the `'envelope'` observability tap:
+ * either an `rpc-requests` or `rpc-responses` envelope, with its decoded
+ * payload. Discriminate on `type` to narrow `payload`. Handshake /
+ * transport frames (`hello`, `ready`, `encrypted`) are never surfaced.
+ */
+export type ObservedEnvelope<
+  schema extends Schema.Schema | undefined = undefined,
+  context extends Rpc.RequestContext = Rpc.RequestContext,
+> =
+  | {
+      /** JSON-RPC request / notification payloads carried by the envelope. */
+      payload: RpcRequestsPayload<schema, context>
+      /** Envelope type discriminator. */
+      type: 'rpc-requests'
+    }
+  | {
+      /** JSON-RPC response payloads carried by the envelope. */
+      payload: RpcResponsesPayload<schema>
+      /** Envelope type discriminator. */
+      type: 'rpc-responses'
+    }
 
 /** Event payload delivered to consumer `'notification'` listeners. */
 export type NotificationEvent<
@@ -126,24 +147,21 @@ export type LifecycleEventMap<
 > = {
   /** Emitted exactly once when the session closes, cleanly or with cause. */
   close: Error | undefined
+  /**
+   * Observed uRPC envelope crossing the wire (read-only tap), in either
+   * direction. Fires for `rpc-requests` and `rpc-responses` envelopes
+   * only; discriminate on `envelope.type` to narrow the payload.
+   */
+  envelope: [
+    /** The observed envelope with its decoded payload. */
+    envelope: ObservedEnvelope<schema, context>,
+    /** Direction and transport metadata for the envelope. */
+    meta: EnvelopeMeta,
+  ]
   /** Emitted when the transport surfaces an error (network, parse, AEAD). */
   error: Error
   /** Emitted after `start()` completes (both consumer and host). */
   open: void
-  /** Observed `rpc-requests` envelope. */
-  'rpc-requests': [
-    /** JSON-RPC request/notification payloads carried by the envelope. */
-    requests: RpcRequestsPayload<schema, context>,
-    /** Direction and transport metadata for the envelope. */
-    meta: RpcEnvelopeMeta<'rpc-requests'>,
-  ]
-  /** Observed `rpc-responses` envelope. */
-  'rpc-responses': [
-    /** JSON-RPC response payloads carried by the envelope. */
-    responses: RpcResponsesPayload<schema>,
-    /** Direction and transport metadata for the envelope. */
-    meta: RpcEnvelopeMeta<'rpc-responses'>,
-  ]
 }
 
 /** Consumer-side event map. */
@@ -178,6 +196,76 @@ export type ConsumerPromptEvent<transport extends { name: string }> = transport 
       }
   : never
 
+/**
+ * Consumer `onX` / `offX` listener surface — one method per
+ * {@link ConsumerEventMap} event. Shared by {@link ConsumerSession} and
+ * {@link ConsumerBase}. Payloads are sourced from `map`, so the per-event
+ * payload docs live on the event map; the docs here describe each
+ * subscription. Every `onX` returns an `AbortController` so the
+ * subscription can be cancelled (or composed with an external signal).
+ */
+export type ConsumerListeners<map extends Record<string, unknown>> = {
+  /**
+   * Remove a previously subscribed `'close'` listener (matched by
+   * reference).
+   */
+  offClose: (listener: Listener<map['close']>) => void
+  /**
+   * Remove a previously subscribed `'envelope'` listener (matched by
+   * reference).
+   */
+  offEnvelope: (listener: Listener<map['envelope']>) => void
+  /**
+   * Remove a previously subscribed `'error'` listener (matched by
+   * reference).
+   */
+  offError: (listener: Listener<map['error']>) => void
+  /**
+   * Remove a previously subscribed `'notification'` listener (matched by
+   * reference).
+   */
+  offNotification: (listener: Listener<map['notification']>) => void
+  /**
+   * Remove a previously subscribed `'open'` listener (matched by
+   * reference).
+   */
+  offOpen: (listener: Listener<map['open']>) => void
+  /**
+   * Remove a previously subscribed `'prompt'` listener (matched by
+   * reference).
+   */
+  offPrompt: (listener: Listener<map['prompt']>) => void
+  /**
+   * Subscribe to the session closing, cleanly or with a cause. Fires
+   * exactly once per session.
+   */
+  onClose: (listener: Listener<map['close']>) => AbortController
+  /**
+   * Observe raw uRPC envelopes (`rpc-requests` / `rpc-responses`)
+   * crossing the wire in either direction — a read-only tap for
+   * logging/tracing. Discriminate on `envelope.type`; use `send` /
+   * `notify` to issue traffic.
+   */
+  onEnvelope: (listener: Listener<map['envelope']>) => AbortController
+  /**
+   * Subscribe to transport errors (network, parse, AEAD).
+   */
+  onError: (listener: Listener<map['error']>) => AbortController
+  /**
+   * Subscribe to inbound JSON-RPC notifications from the host.
+   */
+  onNotification: (listener: Listener<map['notification']>) => AbortController
+  /**
+   * Subscribe to the session opening — fired once `start()` completes.
+   */
+  onOpen: (listener: Listener<map['open']>) => AbortController
+  /**
+   * Subscribe to user-facing pairing/verification prompts produced by an
+   * out-of-band transport (e.g. `relay`, `deviceCode`) during startup.
+   */
+  onPrompt: (listener: Listener<map['prompt']>) => AbortController
+}
+
 /** Non-empty tuple of consumer transports accepted by {@link create}. */
 export type ConsumerTransports = readonly [
   Transport.Transport<'consumer', string, unknown>,
@@ -192,7 +280,7 @@ export type ConsumerSession<
   schema extends Schema.Schema | undefined,
   transport extends Transport.Transport<'consumer', string, unknown>,
   context extends Rpc.RequestContext = Rpc.RequestContext,
-> = {
+> = ConsumerListeners<ConsumerEventMap<schema, context, ConsumerPromptEvent<transport>>> & {
   /** Close the session. Idempotent. Emits `'close'`. */
   close: (cause?: Error) => Promise<void>
   /**
@@ -202,19 +290,6 @@ export type ConsumerSession<
   notify: <const method extends Consumer.MethodName<schema>>(
     options: Consumer.NotifyOptions<schema, method>,
   ) => Promise<void>
-  /** Remove a previously subscribed listener. */
-  off: <type extends keyof ConsumerEventMap<schema, context, ConsumerPromptEvent<transport>>>(
-    type: type,
-    listener: Listener<ConsumerEventMap<schema, context, ConsumerPromptEvent<transport>>[type]>,
-  ) => void
-  /**
-   * Subscribe to a consumer event. Returns an `AbortController` so the
-   * subscription can be cancelled (or composed with an external signal).
-   */
-  on: <type extends keyof ConsumerEventMap<schema, context, ConsumerPromptEvent<transport>>>(
-    type: type,
-    listener: Listener<ConsumerEventMap<schema, context, ConsumerPromptEvent<transport>>[type]>,
-  ) => AbortController
   /** Side of the protocol this wata speaks for. */
   role: 'consumer'
   /** Optional method-registry schema flowed through `send` / `notify`. */
@@ -250,7 +325,9 @@ export type ConsumerBase<
   schema extends Schema.Schema | undefined,
   transports extends ConsumerTransports,
   context extends Rpc.RequestContext = Rpc.RequestContext,
-> = {
+> = ConsumerListeners<
+  ConsumerEventMap<schema, context, ConsumerPromptEvent<transports[number]>>
+> & {
   /** Close all configured transports. Idempotent. */
   close: (cause?: Error) => Promise<void>
   /**
@@ -258,24 +335,6 @@ export type ConsumerBase<
    * transport exposes HTTP routes or when discovery is auto-published.
    */
   fetch: Http.HandlersForTransports<transports>['fetch']
-  /** Remove a previously subscribed consumer listener. */
-  off: <
-    type extends keyof ConsumerEventMap<schema, context, ConsumerPromptEvent<transports[number]>>,
-  >(
-    type: type,
-    listener: Listener<
-      ConsumerEventMap<schema, context, ConsumerPromptEvent<transports[number]>>[type]
-    >,
-  ) => void
-  /** Subscribe to aggregate consumer events. */
-  on: <
-    type extends keyof ConsumerEventMap<schema, context, ConsumerPromptEvent<transports[number]>>,
-  >(
-    type: type,
-    listener: Listener<
-      ConsumerEventMap<schema, context, ConsumerPromptEvent<transports[number]>>[type]
-    >,
-  ) => AbortController
   /** Side of the protocol this wata speaks for. */
   role: 'consumer'
   /** Optional method-registry schema. */
@@ -391,7 +450,7 @@ export declare namespace Consumer {
  * const { consumer, host } = loopback()
  *
  * const hostWata = HostWata.create({ transports: [host] })
- * hostWata.on('request', async (event) => {
+ * hostWata.onRequest(async (event) => {
  *   if (event.method === 'ping') await event.respond({ ok: true })
  * })
  *
@@ -461,11 +520,10 @@ export function create<
   // the local emit to forward each session's already-tagged payload.
   const emitPrompt = emitter.emit as (type: 'prompt', payload: object) => boolean
   for (const session of sessions) {
-    session.on('error', (error) => emitter.emit('error', error))
-    session.on('notification', (...payload) => emitter.emit('notification', ...payload))
-    session.on('prompt', (prompt) => emitPrompt('prompt', prompt as object))
-    session.on('rpc-requests', (payload, meta) => emitter.emit('rpc-requests', payload, meta))
-    session.on('rpc-responses', (payload, meta) => emitter.emit('rpc-responses', payload, meta))
+    session.onError((error) => emitter.emit('error', error))
+    session.onNotification((...payload) => emitter.emit('notification', ...payload))
+    session.onPrompt((prompt) => emitPrompt('prompt', prompt as object))
+    session.onEnvelope((envelope, meta) => emitter.emit('envelope', envelope, meta))
   }
   const consumer = {
     async close(cause?: Error) {
@@ -473,15 +531,7 @@ export function create<
       emitter.emit('close', cause)
     },
     fetch: httpFetch as Consumer<schema, transports, RequestContextOf<context>>['fetch'],
-    off: emitter.off,
-    on(
-      type: keyof ConsumerEventMap<schema, RequestContextOf<context>>,
-      listener: Listener<ConsumerEventMap<schema, RequestContextOf<context>>[typeof type]>,
-    ) {
-      const controller = new AbortController()
-      emitter.on(type, listener as never, { signal: controller.signal })
-      return controller
-    },
+    ...Events.subscribers(emitter, consumerEventNames),
     role: 'consumer' as const,
     schema,
     transports,
@@ -614,29 +664,14 @@ function createConsumerSession<
     )
   }
 
-  function emitRpcResponses(
-    envelope: Extract<Envelope.Envelope, { type: 'rpc-responses' }>,
-    direction: RpcEnvelopeMeta['direction'],
-  ): void {
-    emitter.emit('rpc-responses', envelope.payload as RpcResponsesPayload<schema>, {
-      direction,
-      transport: transport.name,
-      type: 'rpc-responses',
-    })
-  }
-
-  function emitRpcRequests(
-    envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>,
-    direction: RpcEnvelopeMeta['direction'],
+  function emitEnvelope(
+    envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' | 'rpc-responses' }>,
+    direction: EnvelopeMeta['direction'],
   ): void {
     emitter.emit(
-      'rpc-requests',
-      envelope.payload as unknown as RpcRequestsPayload<schema, RequestContextOf<context>>,
-      {
-        direction,
-        transport: transport.name,
-        type: 'rpc-requests',
-      },
+      'envelope',
+      envelope as unknown as ObservedEnvelope<schema, RequestContextOf<context>>,
+      { direction, transport: transport.name },
     )
   }
 
@@ -653,7 +688,7 @@ function createConsumerSession<
         const envelope = Envelope.rpcResponses([
           Rpc.error({ code: -32600, data: reason, id: null, message: 'invalid request' }),
         ])
-        emitRpcResponses(envelope, 'outgoing')
+        emitEnvelope(envelope, 'outgoing')
         await transport.send(envelope)
       } catch {
         // Peer may already be unreachable; the teardown below is what matters.
@@ -694,12 +729,12 @@ function createConsumerSession<
       }
       if (payload.length === 0) return
       const envelope_validated = Envelope.rpcResponses(payload)
-      emitRpcResponses(envelope_validated, 'incoming')
+      emitEnvelope(envelope_validated, 'incoming')
       for (const message of envelope_validated.payload) handleResponse(message, { validated: true })
       return
     }
     if (envelope.type === 'rpc-requests') {
-      emitRpcRequests(envelope, 'incoming')
+      emitEnvelope(envelope, 'incoming')
       for (const message of envelope.payload) if (!('id' in message)) dispatchNotification(message)
       return
     }
@@ -759,15 +794,10 @@ function createConsumerSession<
       const envelope = Envelope.rpcRequests([
         Rpc.notification({ method: opts.method, params: opts.params }),
       ])
-      emitRpcRequests(envelope, 'outgoing')
+      emitEnvelope(envelope, 'outgoing')
       await transport.send(envelope)
     },
-    off: emitter.off,
-    on(type, listener) {
-      const controller = new AbortController()
-      emitter.on(type, listener, { signal: controller.signal })
-      return controller
-    },
+    ...Events.subscribers(emitter, consumerEventNames),
     role: 'consumer',
     schema,
     async send(opts) {
@@ -796,7 +826,7 @@ function createConsumerSession<
             params: opts.params,
           }),
         ])
-        emitRpcRequests(envelope, 'outgoing')
+        emitEnvelope(envelope, 'outgoing')
         const metadata = await transport.send(envelope)
         if (metadata !== undefined) {
           void deferred.catch(() => undefined)

@@ -491,7 +491,7 @@ describe('wata + postMessage (MessageChannel) integration', () => {
       schema: integrationSchema,
     })
 
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
       if (event.method === 'add') {
         const [a, b] = event.params
@@ -531,7 +531,7 @@ describe('wata + postMessage (MessageChannel) integration', () => {
       schema: integrationSchema,
     })
 
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -567,8 +567,8 @@ describe('wata + postMessage (MessageChannel) integration', () => {
 
     let consumerClosed = false
     let hostClosed = false
-    consumer.on('close', () => (consumerClosed = true))
-    host.on('close', () => (hostClosed = true))
+    consumer.onClose(() => (consumerClosed = true))
+    host.onClose(() => (hostClosed = true))
 
     await Promise.all([consumer.start(), host.start()])
     await consumer.close()

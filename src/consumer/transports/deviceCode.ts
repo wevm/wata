@@ -27,7 +27,7 @@
  *   transports: [deviceCode({ url: 'https://wallet.example/auth/device' })],
  * })
  *
- * wata.on('prompt', ({ userCode, verificationUri }) => {
+ * wata.onPrompt(({ userCode, verificationUri }) => {
  *   console.log(`Visit ${verificationUri} and enter ${userCode}`)
  * })
  *

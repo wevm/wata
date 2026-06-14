@@ -412,8 +412,10 @@ describe('webhookCallback end-to-end', () => {
       identity: fromPrivateKey(setup.hostKeypair.privateKey),
       transports: [hostTransport],
     })
-    const events: Array<{ meta: Wata.RpcEnvelopeMeta; responses: Wata.RpcResponsesPayload }> = []
-    wata.on('rpc-responses', (responses, meta) => events.push({ meta, responses }))
+    const events: Array<{ meta: Wata.EnvelopeMeta; responses: Wata.RpcResponsesPayload }> = []
+    wata.onEnvelope((envelope, meta) => {
+      if (envelope.type === 'rpc-responses') events.push({ meta, responses: envelope.payload })
+    })
 
     const registration = await wata.send({ method: 'ping', params: [] })
     const approvalBody =
@@ -434,7 +436,6 @@ describe('webhookCallback end-to-end', () => {
           "meta": {
             "direction": "incoming",
             "transport": "webhookCallback",
-            "type": "rpc-responses",
           },
           "responses": [
             {
@@ -688,7 +689,9 @@ describe('webhookCallback end-to-end', () => {
       transports: [setup.hostTransport],
     })
     const events: Wata.RpcResponsesPayload[] = []
-    wata.on('rpc-responses', (responses) => events.push(responses))
+    wata.onEnvelope((envelope) => {
+      if (envelope.type === 'rpc-responses') events.push(envelope.payload)
+    })
 
     const registration = await wata.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
@@ -829,7 +832,9 @@ describe('webhookCallback end-to-end', () => {
       transports: [hostTransport],
     })
     const events: Wata.RpcResponsesPayload[] = []
-    wata.on('rpc-responses', (responses) => events.push(responses))
+    wata.onEnvelope((envelope) => {
+      if (envelope.type === 'rpc-responses') events.push(envelope.payload)
+    })
 
     const registration = await wata.send({ method: 'ping', params: [] })
     await deny()
@@ -876,10 +881,12 @@ describe('webhookCallback end-to-end', () => {
       identity: fromPrivateKey(hostKeypair.privateKey),
       transports: [hostTransport],
     })
-    host.on('request', (event) => event.respond({ ok: true }))
+    host.onRequest((event) => event.respond({ ok: true }))
     await host.start()
     const events: Wata.RpcResponsesPayload[] = []
-    consumer.on('rpc-responses', (responses) => events.push(responses))
+    consumer.onEnvelope((envelope) => {
+      if (envelope.type === 'rpc-responses') events.push(envelope.payload)
+    })
 
     await consumer.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
@@ -936,10 +943,12 @@ describe('webhookCallback end-to-end', () => {
       identity: fromPrivateKey(hostKeypair.privateKey),
       transports: [hostTransport],
     })
-    host.on('request', (event) => event.respond({ ok: true }))
+    host.onRequest((event) => event.respond({ ok: true }))
     await host.start()
     const events: Wata.RpcResponsesPayload[] = []
-    consumer.on('rpc-responses', (responses) => events.push(responses))
+    consumer.onEnvelope((envelope) => {
+      if (envelope.type === 'rpc-responses') events.push(envelope.payload)
+    })
 
     await consumer.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
@@ -1779,7 +1788,9 @@ describe('webhookCallback end-to-end', () => {
       transports: [setup.hostTransport],
     })
     const events: Wata.RpcResponsesPayload[] = []
-    consumer.on('rpc-responses', (responses) => events.push(responses))
+    consumer.onEnvelope((envelope) => {
+      if (envelope.type === 'rpc-responses') events.push(envelope.payload)
+    })
 
     await consumer.send({ method: 'ping', params: [] })
     const code = await setup.findActiveCode()
@@ -3560,7 +3571,9 @@ describe('webhookCallback end-to-end', () => {
       transports: [consumerTransport],
     })
     const events: Wata.RpcResponsesPayload[] = []
-    consumer.on('rpc-responses', (responses) => events.push(responses))
+    consumer.onEnvelope((envelope) => {
+      if (envelope.type === 'rpc-responses') events.push(envelope.payload)
+    })
 
     await consumer.send({ method: 'ping', params: [] })
     const code = await findActiveCode()
@@ -3779,7 +3792,9 @@ describe('webhookCallback end-to-end', () => {
       transports: [hostTransport],
     })
     const events: Wata.RpcResponsesPayload[] = []
-    wata.on('rpc-responses', (responses) => events.push(responses))
+    wata.onEnvelope((envelope) => {
+      if (envelope.type === 'rpc-responses') events.push(envelope.payload)
+    })
 
     await wata.send({ method: 'ping', params: [] })
     // Wait until the consumer has registered + we have a code,

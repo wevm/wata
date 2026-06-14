@@ -45,7 +45,7 @@ describe('relay (consumer)', () => {
 
   test('surfaces the relay prompt payload on the consumer `prompt` event', () => {
     const wata = Wata.create({ transports: [relay({ url: 'https://relay.example' })] })
-    wata.on('prompt', (prompt) => {
+    wata.onPrompt((prompt) => {
       expectTypeOf(prompt.transport).toEqualTypeOf<'relay'>()
       expectTypeOf(prompt.expiresAt).toEqualTypeOf<number>()
       expectTypeOf(prompt.uri).toEqualTypeOf<string>()

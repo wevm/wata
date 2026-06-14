@@ -41,8 +41,9 @@
  *   ],
  * })
  *
- * wata.on('rpc-responses', (responses, meta) => {
- *   console.log(responses, meta)
+ * wata.onEnvelope((envelope, meta) => {
+ *   if (envelope.type !== 'rpc-responses') return
+ *   console.log(envelope.payload, meta)
  * })
  *
  * const registration = await wata.send({ method: 'wallet_connect', params: [] })

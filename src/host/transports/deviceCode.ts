@@ -49,7 +49,7 @@
  *     }),
  *   ],
  * })
- * wata.on('request', async (event) => {
+ * wata.onRequest(async (event) => {
  *   await event.respond({ ok: true })
  * })
  *

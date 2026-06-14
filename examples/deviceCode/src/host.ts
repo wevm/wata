@@ -57,7 +57,7 @@ const wata = Wata.create({
   ],
 })
 
-wata.on('request', async (event) => {
+wata.onRequest(async (event) => {
   console.log(`request: ${event.method}`, event.params)
   await event.respond({ message: 'pong from host' })
 })

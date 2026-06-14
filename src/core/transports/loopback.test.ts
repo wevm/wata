@@ -224,7 +224,7 @@ describe('wata + loopback integration', () => {
     await consumer.start()
     await host.start()
 
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       if (event.method === 'eth_blockNumber') event.respond('0x1')
     })
 
@@ -245,7 +245,7 @@ describe('wata + loopback integration', () => {
     await consumer.start()
     await host.start()
 
-    host.on('request', async (event) => {
+    host.onRequest(async (event) => {
       // Reverse-order responses to verify id correlation rather than
       // sequential dispatch.
       if (event.method === 'eth_blockNumber') {
@@ -278,7 +278,7 @@ describe('wata + loopback integration', () => {
     await consumer.start()
     await host.start()
 
-    host.on('request', () => {
+    host.onRequest(() => {
       throw new Error('kaboom')
     })
 
@@ -297,11 +297,11 @@ describe('wata + loopback integration', () => {
 
     let consumerClosed = false
     let hostClosed = false
-    consumer.on('close', () => (consumerClosed = true))
-    host.on('close', () => (hostClosed = true))
+    consumer.onClose(() => (consumerClosed = true))
+    host.onClose(() => (hostClosed = true))
 
     // Host receives the request but never settles it.
-    host.on('request', () => undefined)
+    host.onRequest(() => undefined)
     const inflight = consumer.send({ method: 'eth_blockNumber', params: [] })
 
     await consumer.close()

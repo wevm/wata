@@ -22,15 +22,15 @@ const wata = Wata.create({
   transports: [relay({ receive, url })],
 })
 
-wata.on('prompt', ({ uri }) => {
+wata.onPrompt(({ uri }) => {
   console.log('pair the host with:')
   console.log(`  pnpm dev:host '${uri}'`)
 })
-wata.on('notification', (event) =>
+wata.onNotification((event) =>
   console.log(`notification: ${event.method} ${JSON.stringify(event.params)}`),
 )
-wata.on('close', (cause) => console.log(cause ? `closed: ${cause.message}` : 'closed'))
-wata.on('error', (error) => console.log(`error: ${error.message}`))
+wata.onClose((cause) => console.log(cause ? `closed: ${cause.message}` : 'closed'))
+wata.onError((error) => console.log(`error: ${error.message}`))
 
 console.log(`consumer receiving over '${receive}' — sending ping…`)
 try {

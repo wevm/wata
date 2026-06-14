@@ -28,7 +28,7 @@ const rl = createInterface({ input: process.stdin, output: process.stdout })
 
 const wata = Wata.create({ transports: [relay({ receive, uri })] })
 
-wata.on('request', async (event) => {
+wata.onRequest(async (event) => {
   console.log(`request: ${event.method} ${JSON.stringify(event.params)}`)
   const answer = (await rl.question('approve? (y/n) ')).trim().toLowerCase()
   if (answer === 'y' || answer === 'yes') {
@@ -39,8 +39,8 @@ wata.on('request', async (event) => {
     console.log('denied')
   }
 })
-wata.on('close', (cause) => console.log(cause ? `closed: ${cause.message}` : 'closed'))
-wata.on('error', (error) => console.log(`error: ${error.message}`))
+wata.onClose((cause) => console.log(cause ? `closed: ${cause.message}` : 'closed'))
+wata.onError((error) => console.log(`error: ${error.message}`))
 
 console.log(`host receiving over '${receive}' — connecting…`)
 await wata.start()

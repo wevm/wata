@@ -35,7 +35,7 @@ const host = HostWata.create({
   ],
 })
 
-host.on('request', async (event) => {
+host.onRequest(async (event) => {
   if (event.method === 'ping')
     await event.respond({ message: 'pong from host', transport: event.transport })
 })

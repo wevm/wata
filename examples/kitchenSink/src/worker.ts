@@ -13,9 +13,10 @@ let serverState: ServerState = { status: 'idle' }
 
 const app = new Hono()
 
-consumer.on('rpc-responses', (responses, meta) => {
+consumer.onEnvelope((envelope, meta) => {
+  if (envelope.type !== 'rpc-responses') return
   if (meta.transport !== 'webhookCallback') return
-  const response = responses[0]
+  const response = envelope.payload[0]
   if (!response) return
   if ('error' in response) serverState = { error: response.error.message, status: 'error' }
   else serverState = { result: response.result, status: 'done' }

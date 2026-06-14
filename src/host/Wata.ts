@@ -27,6 +27,13 @@ import * as Wata from '../Wata.js'
 /** Host transport accepted by {@link create}. */
 export type HostTransport = Transport.Transport<'host', string, unknown, Transport.MessageMeta>
 
+/**
+ * Host lifecycle/notification event names, used to derive the `onX` /
+ * `offX` surface. `'request'` is handled separately by
+ * {@link Host.onRequest} (method overloads + return-to-answer).
+ */
+const hostEventNames = ['close', 'envelope', 'error', 'notification', 'open'] as const
+
 /** Metadata delivered to host request and notification listeners. */
 export type HostEventMeta<transport extends HostTransport = HostTransport> =
   Transport.MessageMetaOf<transport> & {
@@ -210,27 +217,21 @@ export type HostEventMap<
   request: SchemaRequestEvent<schema, transports, context>
 }
 
-type HostOff<
+type HostOffRequest<
   schema extends Schema.Schema | undefined,
   transports extends HostTransports,
   context extends Rpc.RequestContext,
 > = {
   /** Remove a method-scoped request listener. */
   <const method extends Host.MethodName<schema>>(
-    type: 'request',
     method: method,
     listener: HostRequestListener<schema, method, transports[number], context>,
   ): void
   /** Remove a broad request listener. */
-  (type: 'request', listener: HostRequestDispatchListener<schema, transports, context>): void
-  /** Remove a previously subscribed host listener. */
-  <type extends Exclude<keyof HostEventMap<schema, transports, context>, 'request'>>(
-    type: type,
-    listener: Wata.Listener<HostEventMap<schema, transports, context>[type]>,
-  ): void
+  (listener: HostRequestDispatchListener<schema, transports, context>): void
 }
 
-type HostOn<
+type HostOnRequest<
   schema extends Schema.Schema | undefined,
   transports extends HostTransports,
   context extends Rpc.RequestContext,
@@ -240,7 +241,6 @@ type HostOn<
    * return value answers the request.
    */
   <const method extends Host.MethodName<schema>>(
-    type: 'request',
     method: method,
     listener: HostRequestListener<schema, method, transports[number], context>,
   ): AbortController
@@ -248,15 +248,68 @@ type HostOn<
    * Subscribe to broad host request dispatch. Respond via `event.respond`;
    * listener return values are ignored.
    */
-  (
-    type: 'request',
-    listener: HostRequestDispatchListener<schema, transports, context>,
-  ): AbortController
-  /** Subscribe to a host event. */
-  <type extends Exclude<keyof HostEventMap<schema, transports, context>, 'request'>>(
-    type: type,
-    listener: Wata.Listener<HostEventMap<schema, transports, context>[type]>,
-  ): AbortController
+  (listener: HostRequestDispatchListener<schema, transports, context>): AbortController
+}
+
+/**
+ * Host `onX` / `offX` listener surface — one method per
+ * {@link HostEventMap} event, excluding `'request'` (which has its own
+ * overloaded {@link Host.onRequest}). Payloads are sourced from `map`, so
+ * the per-event payload docs live on the event map; the docs here
+ * describe each subscription. Every `onX` returns an `AbortController` so
+ * the subscription can be cancelled (or composed with an external signal).
+ * Lazy-connects the transport on first call.
+ */
+export type HostListeners<map extends Record<string, unknown>> = {
+  /**
+   * Remove a previously subscribed `'close'` listener (matched by
+   * reference).
+   */
+  offClose: (listener: Wata.Listener<map['close']>) => void
+  /**
+   * Remove a previously subscribed `'envelope'` listener (matched by
+   * reference).
+   */
+  offEnvelope: (listener: Wata.Listener<map['envelope']>) => void
+  /**
+   * Remove a previously subscribed `'error'` listener (matched by
+   * reference).
+   */
+  offError: (listener: Wata.Listener<map['error']>) => void
+  /**
+   * Remove a previously subscribed `'notification'` listener (matched by
+   * reference).
+   */
+  offNotification: (listener: Wata.Listener<map['notification']>) => void
+  /**
+   * Remove a previously subscribed `'open'` listener (matched by
+   * reference).
+   */
+  offOpen: (listener: Wata.Listener<map['open']>) => void
+  /**
+   * Subscribe to the session closing, cleanly or with a cause. Fires
+   * exactly once per session.
+   */
+  onClose: (listener: Wata.Listener<map['close']>) => AbortController
+  /**
+   * Observe raw uRPC envelopes (`rpc-requests` / `rpc-responses`)
+   * crossing the wire in either direction — a read-only tap for
+   * logging/tracing. Discriminate on `envelope.type`; handle inbound
+   * requests via {@link Host.onRequest}.
+   */
+  onEnvelope: (listener: Wata.Listener<map['envelope']>) => AbortController
+  /**
+   * Subscribe to transport errors (network, parse, AEAD).
+   */
+  onError: (listener: Wata.Listener<map['error']>) => AbortController
+  /**
+   * Subscribe to inbound JSON-RPC notifications from the consumer.
+   */
+  onNotification: (listener: Wata.Listener<map['notification']>) => AbortController
+  /**
+   * Subscribe to the session opening — fired once `start()` completes.
+   */
+  onOpen: (listener: Wata.Listener<map['open']>) => AbortController
 }
 
 /** Non-empty tuple of host transports accepted by {@link create}. */
@@ -278,84 +331,91 @@ export type Host<
   schema extends Schema.Schema | undefined = undefined,
   transports extends HostTransports = HostTransports,
   context extends Rpc.RequestContext = Rpc.RequestContext,
-> = TransportsByName<transports> & {
-  /** Close the session. Idempotent. Emits `'close'`. */
-  close: (cause?: Error) => Promise<void>
-  /**
-   * Web-standard fetch handler forwarded from the transport when
-   * present. HTTP-shaped transports (`deviceCode`, `webhookCallback`,
-   * …) expose the standard {@link Http.Server} signature that drops
-   * onto Cloudflare Workers, Bun, Deno, Vercel Edge, etc. Non-HTTP
-   * transports (`postMessage`, `loopback`, …) leave it `undefined`.
-   */
-  fetch: Http.HandlersForTransports<transports>['fetch']
-  /**
-   * Send a typed JSON-RPC notification from the host to the consumer.
-   * Auto-starts transports that support host-origin notifications.
-   */
-  notify: <const method extends Host.MethodName<schema>>(
-    options: Host.NotifyOptions<schema, method>,
-  ) => Promise<void>
-  /** Remove a previously subscribed listener. */
-  off: HostOff<schema, transports, context>
-  /**
-   * Subscribe to a host event. Returns an `AbortController` so the
-   * subscription can be cancelled (or composed with an external signal).
-   *
-   * Lazy-connects the transport on first call, so most hosts never need
-   * to call {@link Host.start} explicitly.
-   */
-  on: HostOn<schema, transports, context>
-  /**
-   * Settle a still-pending inbound request by id with a JSON-RPC error.
-   * Mirror of {@link Host.respond}. Resolves once the error response
-   * has flushed to the transport.
-   *
-   * @param id - Id of the pending request to settle.
-   * @param error - JSON-RPC error envelope (`code` + `message`, optional `data`).
-   */
-  reject: (id: Rpc.Id, error: reject.Error) => Promise<void>
-  /**
-   * Settle a still-pending inbound request by id with a JSON-RPC `result`.
-   * Resolves once the success response has flushed to the transport, so
-   * popup hosts can `await` delivery before calling `window.close()`.
-   *
-   * Store `event.id` from a `'request'` listener for UI flows where
-   * the response is gathered asynchronously (approval dialogs, late
-   * confirmations, etc.). No need for per-request closures or to
-   * return a Promise from the listener.
-   *
-   * Throws {@link UnknownRequestError} if no request with that id is
-   * currently pending (already responded, never received, or the
-   * wata is closed).
-   *
-   * Throws {@link AmbiguousRequestError} if more than one transport has
-   * the same pending id. In multi-transport hosts, prefer
-   * `event.respond(...)` / `event.reject(...)` inside the request event
-   * when duplicate ids are possible.
-   *
-   * @param id - Id of the pending request to settle.
-   * @param result - Success `result` payload to send.
-   */
-  respond: <result = unknown>(id: Rpc.Id, result: result) => Promise<void>
-  /** Side of the protocol this wata speaks for. */
-  role: 'host'
-  /** Optional method-registry schema flowed through `'request'` / `'notification'` events. */
-  schema: schema
-  /**
-   * Explicitly bring the session up. Starts the transport and resolves
-   * once it is ready to send and receive frames. Emits `'open'` on success.
-   *
-   * Optional: {@link Host.on}, {@link Host.notify}, {@link Host.respond},
-   * and {@link Host.reject} trigger `start` internally on first use,
-   * so most hosts can skip it.
-   * Reach for it when a UI wants to surface the connecting state before
-   * any request lands, or when start-time errors should reject up-front.
-   */
-  start: () => Promise<void>
-  /** Configured transports, in user-supplied order. */
-  transports: transports
-}
+> = TransportsByName<transports> &
+  HostListeners<Omit<HostEventMap<schema, transports, context>, 'request'>> & {
+    /** Close the session. Idempotent. Emits `'close'`. */
+    close: (cause?: Error) => Promise<void>
+    /**
+     * Web-standard fetch handler forwarded from the transport when
+     * present. HTTP-shaped transports (`deviceCode`, `webhookCallback`,
+     * …) expose the standard {@link Http.Server} signature that drops
+     * onto Cloudflare Workers, Bun, Deno, Vercel Edge, etc. Non-HTTP
+     * transports (`postMessage`, `loopback`, …) leave it `undefined`.
+     */
+    fetch: Http.HandlersForTransports<transports>['fetch']
+    /**
+     * Send a typed JSON-RPC notification from the host to the consumer.
+     * Auto-starts transports that support host-origin notifications.
+     */
+    notify: <const method extends Host.MethodName<schema>>(
+      options: Host.NotifyOptions<schema, method>,
+    ) => Promise<void>
+    /** Remove a previously subscribed request listener. */
+    offRequest: HostOffRequest<schema, transports, context>
+    /**
+     * Subscribe to inbound JSON-RPC requests. Returns an `AbortController`
+     * so the subscription can be cancelled (or composed with an external
+     * signal).
+     *
+     * Pass a method name first (`onRequest('ping', listener)`) to scope to
+     * one method — that listener answers by *returning* a result. A broad
+     * `onRequest(listener)` sees every method; respond via `event.respond`
+     * (return values are ignored).
+     *
+     * Lazy-connects the transport on first call, so most hosts never need
+     * to call {@link Host.start} explicitly.
+     */
+    onRequest: HostOnRequest<schema, transports, context>
+    /**
+     * Settle a still-pending inbound request by id with a JSON-RPC error.
+     * Mirror of {@link Host.respond}. Resolves once the error response
+     * has flushed to the transport.
+     *
+     * @param id - Id of the pending request to settle.
+     * @param error - JSON-RPC error envelope (`code` + `message`, optional `data`).
+     */
+    reject: (id: Rpc.Id, error: reject.Error) => Promise<void>
+    /**
+     * Settle a still-pending inbound request by id with a JSON-RPC `result`.
+     * Resolves once the success response has flushed to the transport, so
+     * popup hosts can `await` delivery before calling `window.close()`.
+     *
+     * Store `event.id` from a `'request'` listener for UI flows where
+     * the response is gathered asynchronously (approval dialogs, late
+     * confirmations, etc.). No need for per-request closures or to
+     * return a Promise from the listener.
+     *
+     * Throws {@link UnknownRequestError} if no request with that id is
+     * currently pending (already responded, never received, or the
+     * wata is closed).
+     *
+     * Throws {@link AmbiguousRequestError} if more than one transport has
+     * the same pending id. In multi-transport hosts, prefer
+     * `event.respond(...)` / `event.reject(...)` inside the request event
+     * when duplicate ids are possible.
+     *
+     * @param id - Id of the pending request to settle.
+     * @param result - Success `result` payload to send.
+     */
+    respond: <result = unknown>(id: Rpc.Id, result: result) => Promise<void>
+    /** Side of the protocol this wata speaks for. */
+    role: 'host'
+    /** Optional method-registry schema flowed through `'request'` / `'notification'` events. */
+    schema: schema
+    /**
+     * Explicitly bring the session up. Starts the transport and resolves
+     * once it is ready to send and receive frames. Emits `'open'` on success.
+     *
+     * Optional: {@link Host.on}, {@link Host.notify}, {@link Host.respond},
+     * and {@link Host.reject} trigger `start` internally on first use,
+     * so most hosts can skip it.
+     * Reach for it when a UI wants to surface the connecting state before
+     * any request lands, or when start-time errors should reject up-front.
+     */
+    start: () => Promise<void>
+    /** Configured transports, in user-supplied order. */
+    transports: transports
+  }
 
 /** Helper types for the host-side {@link Host} API. */
 export declare namespace Host {
@@ -417,7 +477,7 @@ export declare namespace reject {
  *   transports: [postMessage()],
  * })
  *
- * wata.on('request', async (event) => {
+ * wata.onRequest(async (event) => {
  *   if (event.method === 'ping') await event.respond({ ok: true })
  * })
  * ```
@@ -434,7 +494,7 @@ export declare namespace reject {
  *
  * let id: string | number | undefined
  *
- * wata.on('request', (event) => {
+ * wata.onRequest((event) => {
  *   id = event.id
  * })
  *
@@ -636,11 +696,7 @@ export function create<
     responses: ReadonlyArray<Rpc.Response>,
   ): Promise<void> {
     const envelope = Envelope.rpcResponses(responses)
-    emitter.emit('rpc-responses', envelope.payload as Wata.RpcResponsesPayload<schema>, {
-      direction: 'outgoing',
-      transport: transport.name,
-      type: 'rpc-responses',
-    })
+    emitEnvelope(transport, envelope, 'outgoing')
     try {
       await transport.send(envelope)
     } catch {
@@ -649,22 +705,15 @@ export function create<
     }
   }
 
-  function emitRpcRequests(
+  function emitEnvelope(
     transport: HostTransport,
-    envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' }>,
-    direction: Wata.RpcEnvelopeMeta['direction'],
+    envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' | 'rpc-responses' }>,
+    direction: Wata.EnvelopeMeta['direction'],
   ): void {
     emitter.emit(
-      'rpc-requests',
-      envelope.payload as unknown as Wata.RpcRequestsPayload<
-        schema,
-        Wata.RequestContextOf<context>
-      >,
-      {
-        direction,
-        transport: transport.name,
-        type: 'rpc-requests',
-      },
+      'envelope',
+      envelope as unknown as Wata.ObservedEnvelope<schema, Wata.RequestContextOf<context>>,
+      { direction, transport: transport.name },
     )
   }
 
@@ -889,7 +938,7 @@ export function create<
         return
       }
       if (envelope.type === 'rpc-requests') {
-        emitRpcRequests(runtime.transport, envelope, 'incoming')
+        emitEnvelope(runtime.transport, envelope, 'incoming')
         for (const message of envelope.payload) {
           if ('id' in message) await dispatchRequest(runtime, message, metadata)
           else dispatchNotification(runtime, message, metadata)
@@ -924,7 +973,7 @@ export function create<
     await Promise.all(
       targets.map(async (runtime) => {
         await startRuntime(runtime)
-        emitRpcRequests(runtime.transport, envelope, 'outgoing')
+        emitEnvelope(runtime.transport, envelope, 'outgoing')
         await runtime.transport.send(envelope)
       }),
     )
@@ -969,61 +1018,30 @@ export function create<
     },
     fetch: httpFetch as Host<schema, transports, Wata.RequestContextOf<context>>['fetch'],
     notify,
-    off(
-      type: keyof HostEventMap<schema, transports, Wata.RequestContextOf<context>>,
-      method_or_listener:
-        | string
-        | HostRequestDispatchListener<schema, transports, Wata.RequestContextOf<context>>
-        | Wata.Listener<
-            HostEventMap<schema, transports, Wata.RequestContextOf<context>>[typeof type]
-          >,
-      listener?: unknown,
-    ) {
-      if (type === 'request') {
-        removeRequestListener(
-          typeof method_or_listener === 'string'
-            ? (listener as object)
-            : (method_or_listener as object),
-          typeof method_or_listener === 'string' ? method_or_listener : undefined,
-        )
-        return
-      }
-      emitter.off(type, method_or_listener as never)
+    ...Events.subscribers(emitter, hostEventNames, { onSubscribe: lazyConnect }),
+    offRequest(methodOrListener: string | object, listener?: unknown) {
+      const isMethod = typeof methodOrListener === 'string'
+      removeRequestListener(
+        (isMethod ? (listener as object) : methodOrListener) as object,
+        isMethod ? methodOrListener : undefined,
+      )
     },
-    on(
-      type: keyof HostEventMap<schema, transports, Wata.RequestContextOf<context>>,
-      method_or_listener:
-        | string
-        | HostRequestDispatchListener<schema, transports, Wata.RequestContextOf<context>>
-        | Wata.Listener<
-            HostEventMap<schema, transports, Wata.RequestContextOf<context>>[typeof type]
-          >,
-      listener?: unknown,
-    ) {
+    onRequest(methodOrListener: string | RequestListener, listener?: unknown) {
+      const isMethod = typeof methodOrListener === 'string'
+      const source = (isMethod ? (listener as object) : methodOrListener) as object
+      const entry = addRequestListener(
+        (isMethod ? listener : methodOrListener) as RequestListener,
+        source,
+        isMethod ? methodOrListener : undefined,
+      )
       const controller = new AbortController()
-      if (type === 'request') {
-        const source =
-          typeof method_or_listener === 'string'
-            ? (listener as object)
-            : (method_or_listener as object)
-        const entry = addRequestListener(
-          (typeof method_or_listener === 'string'
-            ? listener
-            : method_or_listener) as RequestListener,
-          source,
-          typeof method_or_listener === 'string' ? method_or_listener : undefined,
-        )
-        controller.signal.addEventListener(
-          'abort',
-          () => {
-            requestListeners.delete(entry)
-          },
-          { once: true },
-        )
-        lazyConnect()
-        return controller
-      }
-      emitter.on(type, method_or_listener as never, { signal: controller.signal })
+      controller.signal.addEventListener(
+        'abort',
+        () => {
+          requestListeners.delete(entry)
+        },
+        { once: true },
+      )
       lazyConnect()
       return controller
     },

@@ -30,9 +30,9 @@ const wata = Wata.create({
   ],
 })
 
-wata.on('open', () => append('open'))
-wata.on('close', (cause) => append(`close${cause ? `: ${cause.message}` : ''}`))
-wata.on('error', (error) => append(`error: ${error.message}`))
+wata.onOpen(() => append('open'))
+wata.onClose((cause) => append(`close${cause ? `: ${cause.message}` : ''}`))
+wata.onError((error) => append(`error: ${error.message}`))
 
 sendButton.addEventListener('click', async () => {
   try {

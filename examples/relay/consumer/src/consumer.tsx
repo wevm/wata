@@ -41,18 +41,18 @@ function App() {
 
   useEffect(() => {
     const subscriptions = [
-      wata.on('prompt', async ({ uri }) => {
+      wata.onPrompt(async ({ uri }) => {
         const qr = await QRCode.toDataURL(uri, { margin: 1, width: 240 })
         setPrompt({ qr, uri })
       }),
-      wata.on('notification', (event) =>
+      wata.onNotification((event) =>
         append(`notification: ${event.method} ${JSON.stringify(event.params)}`),
       ),
-      wata.on('close', (cause) => {
+      wata.onClose((cause) => {
         setPrompt(undefined)
         append(cause ? `closed: ${cause.message}` : 'closed')
       }),
-      wata.on('error', (error) => append(`error: ${error.message}`)),
+      wata.onError((error) => append(`error: ${error.message}`)),
     ]
     return () => {
       for (const subscription of subscriptions) subscription.abort()

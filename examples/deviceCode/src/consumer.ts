@@ -19,7 +19,7 @@ const wata = Wata.create({
   ],
 })
 
-wata.on('prompt', ({ userCode, verificationUriFull }) => {
+wata.onPrompt(({ userCode, verificationUriFull }) => {
   console.log(`open ${verificationUriFull}`)
   console.log(`user_code: ${userCode}`)
 })

@@ -144,7 +144,7 @@ describe('wata-device-code', () => {
     const wata = Wata.create({ transports: [consumer] })
     const hostWata = HostWata.create({ transports: [host] })
 
-    hostWata.on('request', (event) => {
+    hostWata.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -215,7 +215,7 @@ describe('wata-device-code', () => {
     const { approve, consumer, host } = pair()
     const wata = Wata.create({ transports: [consumer] })
     const hostWata = HostWata.create({ transports: [host] })
-    hostWata.on('request', (event) => {
+    hostWata.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -1126,7 +1126,7 @@ describe('wata-device-code', () => {
       url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transports: [consumer] })
-    wata.on('prompt', (received) => {
+    wata.onPrompt((received) => {
       prompt = received
     })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
@@ -1178,7 +1178,7 @@ describe('wata-device-code', () => {
       url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transports: [consumer] })
-    wata.on('prompt', (received) => {
+    wata.onPrompt((received) => {
       prompt = received
     })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
@@ -1218,7 +1218,7 @@ describe('wata-device-code', () => {
       url: 'https://example/auth/device',
     })
     const wata = Wata.create({ transports: [consumer] })
-    wata.on('prompt', (received) => {
+    wata.onPrompt((received) => {
       prompt = received
     })
     const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
@@ -1241,7 +1241,7 @@ describe('wata-device-code', () => {
     })
     const wata = Wata.create({ transports: [consumer] })
     const hostWata = HostWata.create({ transports: [host] })
-    hostWata.on('request', (event) => {
+    hostWata.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
 
@@ -1273,7 +1273,7 @@ describe('wata-device-code', () => {
     })
     const wata = Wata.create({ transports: [consumer] })
     const hostWata = HostWata.create({ transports: [host] })
-    hostWata.on('request', (event) => {
+    hostWata.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
     const sendPromise = wata.send({ method: 'ping', params: [] })

@@ -98,7 +98,7 @@ export const host = Wata.create({
   ],
 })
 
-host.on('request', async (event) => {
+host.onRequest(async (event) => {
   await event.respond({ message: 'pong from host', transport: event.transport })
   if (typeof window !== 'undefined') window.close()
 })

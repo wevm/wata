@@ -129,7 +129,7 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
     const { consumer, host } = pair()
 
     let captured: { id: number | string } | undefined
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       captured = { id: event.id }
     })
 
@@ -152,7 +152,7 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
     await Promise.all([consumer.start(), host.start()])
 
     let captured: { id: number | string } | undefined
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       captured = { id: event.id }
     })
 
@@ -180,7 +180,7 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
   test('wata.notify delivers a host notification when host started first', async () => {
     const { consumer, host } = pair()
     const seen: Rpc.Notification[] = []
-    consumer.on('notification', ({ notification }) => {
+    consumer.onNotification(({ notification }) => {
       seen.push(notification)
     })
 
@@ -237,7 +237,7 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
     const host = HostWata.create({ transports: [postMessage({ target: () => toConsumer.port2 })] })
 
     const seen: Rpc.Notification[] = []
-    consumer.on('notification', ({ notification }) => seen.push(notification))
+    consumer.onNotification(({ notification }) => seen.push(notification))
 
     await Promise.all([consumer.start(), host.start()])
     // Buffered until the re-announced hello makes the host ready.
@@ -265,14 +265,14 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
     })
     const events: Array<{ kind: string; origin: string | undefined; transport: string }> = []
 
-    host.on('notification', (event) => {
+    host.onNotification((event) => {
       events.push({
         kind: 'notification',
         origin: event.meta.origin,
         transport: event.meta.transport,
       })
     })
-    host.on('request', (event) => {
+    host.onRequest((event) => {
       events.push({
         kind: 'request',
         origin: event.meta.origin,
