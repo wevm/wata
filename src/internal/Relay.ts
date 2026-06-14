@@ -183,14 +183,14 @@ export function encodeSecret(secret: Hex.Hex | Bytes.Bytes): string {
  * depends on — the link MUST be treated as confidential and used once.
  */
 export function buildUri(options: buildUri.Options): string {
-  const { consumerPublicKey, host, pairingSecret, relay } = options
+  const { allowPrivateNetwork, consumerPublicKey, host, pairingSecret, relay } = options
   const search = new URLSearchParams()
   search.set(
     uriParams.consumerPublicKey,
     Crypto.encodePublicKey(Hex.fromBytes(Bytes.from(consumerPublicKey))),
   )
   search.set(uriParams.pairingSecret, encodeSecret(pairingSecret))
-  search.set(uriParams.relay, assertRelayUrl(relay))
+  search.set(uriParams.relay, assertRelayUrl(relay, { allowPrivateNetwork }))
   search.set(uriParams.version, String(version))
   if (!host) return `urpc://?${search.toString()}`
   const url = (() => {
@@ -207,6 +207,12 @@ export function buildUri(options: buildUri.Options): string {
 export declare namespace buildUri {
   /** Options for {@link buildUri}. */
   type Options = {
+    /**
+     * Permit an HTTP `relay` on a private / link-local network for LAN
+     * development. HTTPS and HTTP loopback are always allowed. Off by
+     * default.
+     */
+    allowPrivateNetwork?: boolean | undefined
     /** Consumer's raw 32-byte X25519 public key. */
     consumerPublicKey: Hex.Hex | Bytes.Bytes
     /** Universal-link base of the target host. Omit for the shared `urpc://` scheme. */
@@ -227,7 +233,7 @@ export declare namespace buildUri {
  * {@link Errors.ProtocolError} on any violation — the host transport
  * wraps this into its public `InvalidUriError`.
  */
-export function parseUri(uri: string): parseUri.ReturnType {
+export function parseUri(uri: string, options: parseUri.Options = {}): parseUri.ReturnType {
   const url = (() => {
     try {
       return new URL(uri)
@@ -254,12 +260,23 @@ export function parseUri(uri: string): parseUri.ReturnType {
   return {
     consumerPublicKey: Crypto.decodePublicKey(consumerPublicKeyParam),
     pairingSecret: decodeSecret(pairingSecretParam),
-    relay: assertRelayUrl(relayParam),
+    relay: assertRelayUrl(relayParam, options),
     version,
   }
 }
 
 export declare namespace parseUri {
+  /** Options for {@link parseUri}. */
+  type Options = {
+    /**
+     * Permit an HTTP `relay` on a private / link-local network for LAN
+     * development. HTTPS and HTTP loopback are always allowed. Off by
+     * default — the relay URL arrives inside attacker-controllable link
+     * material, so this would otherwise open an SSRF hole.
+     */
+    allowPrivateNetwork?: boolean | undefined
+  }
+
   /** Result of {@link parseUri}. */
   type ReturnType = {
     /** Consumer's X25519 public key (hex form of the raw 32 bytes). */
@@ -274,15 +291,19 @@ export declare namespace parseUri {
 }
 
 /**
- * Validate a relay base URL: HTTPS required, HTTP permitted only for
- * loopback and private-network development hosts (LAN testing with a
- * physical device). Rejecting public-internet HTTP here closes the
- * downgrade hole a malicious link could otherwise open (the relay URL
- * arrives inside attacker-controllable link material).
+ * Validate and normalize a relay base URL. HTTPS and HTTP loopback are
+ * always accepted; private/link-local HTTP is accepted only when
+ * {@link assertRelayUrl.Options.allowPrivateNetwork} is set (LAN testing
+ * with a physical device). A query or fragment is always rejected: the
+ * relay path (`/:channelId/:peer`) is appended by string concatenation,
+ * so a `?`/`#` in the base would capture it — and on the host side the
+ * base arrives inside attacker-controllable link material, making this
+ * an SSRF-shaping vector. Rejecting public-internet HTTP closes the
+ * downgrade hole the same link could otherwise open.
  *
  * @internal
  */
-function assertRelayUrl(value: string): string {
+function assertRelayUrl(value: string, options: assertRelayUrl.Options = {}): string {
   const url = (() => {
     try {
       return new URL(value)
@@ -290,14 +311,38 @@ function assertRelayUrl(value: string): string {
       throw new Errors.ProtocolError('relay must be a valid URL', { cause: cause as Error })
     }
   })()
-  if (url.protocol !== 'https:' && !Uri.isLoopbackHttp(url) && !Uri.isPrivateHttp(url))
+  if (url.search || url.hash)
+    throw new Errors.ProtocolError('relay must not contain a query or fragment', {
+      details: `received ${value}`,
+    })
+  const allowed =
+    url.protocol === 'https:' ||
+    Uri.isLoopbackHttp(url) ||
+    (options.allowPrivateNetwork === true && Uri.isPrivateHttp(url))
+  if (!allowed)
     throw new Errors.ProtocolError(
-      'relay must be an HTTPS URL (or HTTP loopback / private network for development)',
+      'relay must be an HTTPS URL (or HTTP loopback; pass `allowPrivateNetwork` for LAN development)',
       {
         details: `received ${value}`,
       },
     )
   return Uri.trimTrailingSlash(url.toString())
+}
+
+declare namespace assertRelayUrl {
+  /** Options for {@link assertRelayUrl}. */
+  type Options = {
+    /**
+     * Permit HTTP relay URLs on private / link-local networks (RFC 1918
+     * ranges, `169.254/16`, `.local`) for LAN development with a physical
+     * device. HTTPS and HTTP loopback are always allowed; this only
+     * widens acceptance to private hosts. Off by default — the relay URL
+     * arrives inside attacker-controllable link material on the host
+     * side, so private-network HTTP would otherwise open an SSRF hole
+     * (e.g. cloud metadata at `169.254.169.254`).
+     */
+    allowPrivateNetwork?: boolean | undefined
+  }
 }
 
 /**
@@ -400,6 +445,7 @@ export declare namespace createCipher {
  */
 export function createChannel(options: createChannel.Options): createChannel.ReturnType {
   const {
+    allowPrivateNetwork,
     channelId: id,
     fetch: fetchImpl,
     keypair,
@@ -408,7 +454,10 @@ export function createChannel(options: createChannel.Options): createChannel.Ret
     receive = 'sse',
     url,
   } = options
-  const base = Uri.trimTrailingSlash(url)
+  // Validate + normalize the relay URL up front, before any request is
+  // signed or sent — so an invalid/insecure `url` fails the channel's
+  // construction rather than mid-subscription.
+  const base = assertRelayUrl(url, { allowPrivateNetwork })
   const peer_target = peer === 'consumer' ? 'host' : 'consumer'
 
   // Requests are issued as `fetch(url, init)` — never `fetch(Request)` —
@@ -605,6 +654,12 @@ export function createChannel(options: createChannel.Options): createChannel.Ret
 export declare namespace createChannel {
   /** Options for {@link createChannel}. */
   type Options = {
+    /**
+     * Permit an HTTP relay `url` on a private / link-local network for
+     * LAN development. HTTPS and HTTP loopback are always allowed. Off
+     * by default.
+     */
+    allowPrivateNetwork?: boolean | undefined
     /** Channel identifier from {@link channelId}. */
     channelId: string
     /** `fetch` implementation carrying both POSTs and the SSE stream. */

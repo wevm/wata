@@ -2,7 +2,12 @@ import * as React from 'react'
 import { Button, ScrollView, Text, TextInput, View } from 'react-native'
 import { Wata, relay } from 'wata/host'
 
-const wata = Wata.create({ transports: [relay({ receive: 'poll' })] })
+// `allowPrivateNetwork` lets the host pair from a LAN pairing link
+// (`relay=http://192.168.x.x:4860`) when scanning the dev consumer.
+// Production relays are HTTPS and need no opt-in.
+const wata = Wata.create({
+  transports: [relay({ allowPrivateNetwork: true, receive: 'poll' })],
+})
 
 export default function App() {
   const [lines, setLines] = React.useState<readonly string[]>(['ready — paste a pairing uri'])

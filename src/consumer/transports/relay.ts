@@ -53,6 +53,13 @@ export type Prompt = {
 /** Options accepted by {@link relay}. */
 export type Options = {
   /**
+   * Permit an HTTP relay {@link Options.url} on a private / link-local
+   * network (RFC 1918, `169.254/16`, `.local`) for LAN development with
+   * a physical device. HTTPS and HTTP loopback are always allowed. Off
+   * by default.
+   */
+  allowPrivateNetwork?: boolean | undefined
+  /**
    * Pairing window in milliseconds: how long to wait for the host's
    * `hello` before failing closed with {@link PairingExpiredError}.
    * Defaults to 300_000 (the spec-recommended 5 minutes).
@@ -104,6 +111,7 @@ export function relay(
   options: Options,
 ): Transport.Transport<'consumer', 'relay', void, Transport.NoMessageMeta, Prompt> {
   const {
+    allowPrivateNetwork,
     expiresIn = 300_000,
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
     host,
@@ -298,6 +306,7 @@ export function relay(
         const pairingSecret_local = Hex.fromBytes(Bytes.random(32))
         const controller = new AbortController()
         const channel_local = Relay.createChannel({
+          allowPrivateNetwork,
           channelId: Relay.channelId({
             consumerPublicKey: keypair_local.x25519.publicKey,
             pairingSecret: pairingSecret_local,
@@ -329,6 +338,7 @@ export function relay(
             emitClose(new PairingExpiredError('host did not connect within the pairing window'))
         }, expiresIn)
         const uri = Relay.buildUri({
+          allowPrivateNetwork,
           consumerPublicKey: keypair_local.x25519.publicKey,
           host,
           pairingSecret: pairingSecret_local,

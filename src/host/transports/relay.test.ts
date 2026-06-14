@@ -21,6 +21,24 @@ describe('relay', () => {
     expect(() => relay({ uri })).not.toThrow()
   })
 
+  test('rejects a private-network relay uri by default', () => {
+    const privateUri = uri.replace(
+      'relay=https%3A%2F%2Frelay.example',
+      'relay=http%3A%2F%2F169.254.169.254',
+    )
+    expect(() => relay({ uri: privateUri })).toThrowErrorMatchingInlineSnapshot(
+      `[Relay.InvalidUriError: value is not a valid relay pairing uri]`,
+    )
+  })
+
+  test('accepts a private-network relay uri with `allowPrivateNetwork`', () => {
+    const privateUri = uri.replace(
+      'relay=https%3A%2F%2Frelay.example',
+      'relay=http%3A%2F%2F169.254.169.254',
+    )
+    expect(() => relay({ allowPrivateNetwork: true, uri: privateUri })).not.toThrow()
+  })
+
   test('validates a start-time pairingUri eagerly', async () => {
     const transport = relay()
     await expect(

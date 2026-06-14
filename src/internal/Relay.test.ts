@@ -141,8 +141,9 @@ describe('buildUri', () => {
     expect(new URL(uri).searchParams.get('relay')).toBe('http://localhost:8787')
   })
 
-  test('allows an HTTP private-network relay for development', () => {
+  test('allows an HTTP private-network relay with `allowPrivateNetwork`', () => {
     const uri = Relay.buildUri({
+      allowPrivateNetwork: true,
       consumerPublicKey,
       pairingSecret,
       relay: 'http://192.168.1.20:4860',
@@ -150,13 +151,47 @@ describe('buildUri', () => {
     expect(new URL(uri).searchParams.get('relay')).toBe('http://192.168.1.20:4860')
   })
 
+  test('rejects an HTTP private-network relay without `allowPrivateNetwork`', () => {
+    expect(() =>
+      Relay.buildUri({ consumerPublicKey, pairingSecret, relay: 'http://192.168.1.20:4860' }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `
+      [ProtocolError: relay must be an HTTPS URL (or HTTP loopback; pass \`allowPrivateNetwork\` for LAN development)
+      Details: received http://192.168.1.20:4860]
+    `,
+    )
+  })
+
   test('rejects a non-HTTPS relay', () => {
     expect(() =>
       Relay.buildUri({ consumerPublicKey, pairingSecret, relay: 'http://relay.example' }),
     ).toThrowErrorMatchingInlineSnapshot(
       `
-      [ProtocolError: relay must be an HTTPS URL (or HTTP loopback / private network for development)
+      [ProtocolError: relay must be an HTTPS URL (or HTTP loopback; pass \`allowPrivateNetwork\` for LAN development)
       Details: received http://relay.example]
+    `,
+    )
+  })
+
+  test('rejects a relay URL with a query or fragment', () => {
+    expect(() =>
+      Relay.buildUri({
+        consumerPublicKey,
+        pairingSecret,
+        relay: 'https://relay.example/api?foo=bar',
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `
+      [ProtocolError: relay must not contain a query or fragment
+      Details: received https://relay.example/api?foo=bar]
+    `,
+    )
+    expect(() =>
+      Relay.buildUri({ consumerPublicKey, pairingSecret, relay: 'https://relay.example/#x' }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `
+      [ProtocolError: relay must not contain a query or fragment
+      Details: received https://relay.example/#x]
     `,
     )
   })
@@ -258,10 +293,28 @@ describe('parseUri', () => {
     }).replace('relay=https%3A%2F%2Frelay.example', 'relay=http%3A%2F%2Frelay.example')
     expect(() => Relay.parseUri(uri)).toThrowErrorMatchingInlineSnapshot(
       `
-      [ProtocolError: relay must be an HTTPS URL (or HTTP loopback / private network for development)
+      [ProtocolError: relay must be an HTTPS URL (or HTTP loopback; pass \`allowPrivateNetwork\` for LAN development)
       Details: received http://relay.example]
     `,
     )
+  })
+
+  test('rejects a private-network relay by default but accepts it with `allowPrivateNetwork`', () => {
+    const uri = Relay.buildUri({
+      allowPrivateNetwork: true,
+      consumerPublicKey,
+      pairingSecret,
+      relay: 'http://169.254.169.254',
+    })
+    // A malicious pairing link pointing the host at the cloud metadata
+    // endpoint must fail closed unless the host explicitly opts in.
+    expect(() => Relay.parseUri(uri)).toThrowErrorMatchingInlineSnapshot(
+      `
+      [ProtocolError: relay must be an HTTPS URL (or HTTP loopback; pass \`allowPrivateNetwork\` for LAN development)
+      Details: received http://169.254.169.254]
+    `,
+    )
+    expect(Relay.parseUri(uri, { allowPrivateNetwork: true }).relay).toBe('http://169.254.169.254')
   })
 })
 

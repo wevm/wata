@@ -20,7 +20,10 @@ import { Wata, relay } from 'wata'
 const relayUrl = import.meta.env.VITE_RELAY_URL ?? `http://${location.hostname}:4860`
 
 const wata = Wata.create({
-  transports: [relay({ url: relayUrl })],
+  // `allowPrivateNetwork` permits the HTTP `relayUrl` on a LAN address
+  // (e.g. `http://192.168.x.x:4860`) so a phone can reach the dev
+  // machine. Production relays are HTTPS and need no opt-in.
+  transports: [relay({ allowPrivateNetwork: true, url: relayUrl })],
 })
 
 type Prompt = {

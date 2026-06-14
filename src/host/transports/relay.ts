@@ -51,6 +51,16 @@ import * as Relay from '../../internal/Relay.js'
 /** Options accepted by {@link relay}. */
 export type Options = {
   /**
+   * Permit an HTTP relay on a private / link-local network (RFC 1918,
+   * `169.254/16`, `.local`) when parsing the consumer's pairing link,
+   * for LAN development with a physical device. HTTPS and HTTP loopback
+   * are always allowed. Off by default — the relay URL arrives inside
+   * the attacker-controllable pairing link, so private-network HTTP
+   * would otherwise open an SSRF hole (e.g. cloud metadata at
+   * `169.254.169.254`).
+   */
+  allowPrivateNetwork?: boolean | undefined
+  /**
    * Handshake window in milliseconds: how long `start()` waits for the
    * consumer's encrypted `ready` confirmation before rejecting with
    * {@link PairingExpiredError}. Defaults to 300_000 (5 minutes).
@@ -104,14 +114,19 @@ export type Options = {
  * const { relay: relayUrl } = Relay.parseUri(scanned)
  * ```
  */
-export function parseUri(uri: string): Relay.parseUri.ReturnType {
+export function parseUri(uri: string, options: parseUri.Options = {}): Relay.parseUri.ReturnType {
   try {
-    return Relay.parseUri(uri)
+    return Relay.parseUri(uri, options)
   } catch (cause) {
     throw new InvalidUriError('value is not a valid relay pairing uri', {
       cause: cause as Error,
     })
   }
+}
+
+export declare namespace parseUri {
+  /** Options for {@link parseUri}. */
+  type Options = Relay.parseUri.Options
 }
 
 /**
@@ -126,6 +141,7 @@ export function parseUri(uri: string): Relay.parseUri.ReturnType {
  */
 export function relay(options: Options = {}): relay.ReturnType {
   const {
+    allowPrivateNetwork,
     expiresIn = 300_000,
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
     pollInterval,
@@ -144,7 +160,7 @@ export function relay(options: Options = {}): relay.ReturnType {
   let pairingQueued: string | undefined
 
   function publishPairing(uri: string) {
-    parseUri(uri)
+    parseUri(uri, { allowPrivateNetwork })
     if (pairingPending) {
       const { resolve } = pairingPending
       pairingPending = undefined
@@ -331,7 +347,7 @@ export function relay(options: Options = {}): relay.ReturnType {
       const controller = new AbortController()
       abort = controller
       try {
-        const parsed = parseUri(await nextPairing(controller.signal))
+        const parsed = parseUri(await nextPairing(controller.signal), { allowPrivateNetwork })
         const keypair = Crypto.randomKeypair()
         const sharedSecret = Session.shared({
           privateKey: keypair.x25519.privateKey,
@@ -356,6 +372,7 @@ export function relay(options: Options = {}): relay.ReturnType {
           role: 'host',
         })
         channel = Relay.createChannel({
+          allowPrivateNetwork,
           channelId: Relay.channelId({
             consumerPublicKey: parsed.consumerPublicKey,
             pairingSecret: parsed.pairingSecret,
