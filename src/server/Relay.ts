@@ -73,6 +73,7 @@
  */
 
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { cors } from 'hono/cors'
 import { streamSSE } from 'hono/streaming'
 import { Bytes, type Hex } from 'ox'
@@ -296,55 +297,89 @@ export function create(options: create.Options = {}): create.ReturnType {
       return { description: 'signature keyid must equal the channel id', status: 401 }
     if (!nonce) return { description: 'missing signature nonce', status: 401 }
 
-    // First-write-wins key registration (spec §4.3). The registered key
-    // always wins; a divergent `uRPC-Public-Key` on a later request is
-    // rejected outright.
-    const declared = request.headers.get('urpc-public-key')
-    const registered = await store.get<string>(registrationKey(channelId, peer))
-    if (registered && declared && declared !== registered)
-      return { description: 'peer slot is registered to a different key', status: 401 }
-    const encoded = registered ?? declared
-    if (!encoded) return { description: 'first request must carry `uRPC-Public-Key`', status: 401 }
-    let publicKey: Hex.Hex
-    try {
-      publicKey = Crypto.decodePublicKey(encoded)
-    } catch (cause) {
-      return { description: (cause as Error).message, status: 401 }
-    }
+    // Serialize the stateful section per `(channelId, peer)` so the
+    // first-write-wins registration (read → verify → write) and the
+    // replay-nonce check (read → write) are each atomic. Without it two
+    // concurrent first requests could both read "no registration" and
+    // both register (last-writer-wins), and two same-nonce requests
+    // could both pass the replay check. Both peers of a channel reach
+    // one instance per the deployment model, so this in-process lock is
+    // the whole guarantee (a shared multi-instance store would need an
+    // atomic conditional write instead).
+    return withSlot(`auth:${channelId}:${peer}`, async () => {
+      // First-write-wins key registration (spec §4.3). The registered
+      // key always wins; a divergent `uRPC-Public-Key` on a later
+      // request is rejected outright.
+      const declared = request.headers.get('urpc-public-key')
+      const registered = await store.get<string>(registrationKey(channelId, peer))
+      if (registered && declared && declared !== registered)
+        return { description: 'peer slot is registered to a different key', status: 401 }
+      const encoded = registered ?? declared
+      if (!encoded)
+        return { description: 'first request must carry `uRPC-Public-Key`', status: 401 }
+      let publicKey: Hex.Hex
+      try {
+        publicKey = Crypto.decodePublicKey(encoded)
+      } catch (cause) {
+        return { description: (cause as Error).message, status: 401 }
+      }
 
-    const requiredComponents = ['@method', '@path', '@authority']
-    if (body !== undefined) requiredComponents.push('content-digest')
-    if (!registered) requiredComponents.push('urpc-public-key')
-    if (extraRequiredComponents) requiredComponents.push(...extraRequiredComponents)
-    let verified: boolean
-    try {
-      verified = MessageSig.verify({
-        message: { headers: collectHeaders(request.headers), method: request.method, url },
-        publicKey,
-        requiredComponents,
+      const requiredComponents = ['@method', '@path', '@authority']
+      if (body !== undefined) requiredComponents.push('content-digest')
+      if (!registered) requiredComponents.push('urpc-public-key')
+      if (extraRequiredComponents) requiredComponents.push(...extraRequiredComponents)
+      let verified: boolean
+      try {
+        verified = MessageSig.verify({
+          message: { headers: collectHeaders(request.headers), method: request.method, url },
+          publicKey,
+          requiredComponents,
+        })
+      } catch (cause) {
+        return { description: (cause as Error).message, status: 401 }
+      }
+      if (!verified) return { description: 'signature verification failed', status: 401 }
+
+      // The signature covers the `Content-Digest` header; binding the
+      // header to the actual body closes the substitution gap.
+      if (body !== undefined) {
+        const digest = request.headers.get('content-digest')
+        if (digest !== MessageSig.contentDigest(body))
+          return { description: '`Content-Digest` does not match the request body', status: 401 }
+      }
+
+      // Replay protection (spec §4.4): one nonce, one request, per slot.
+      // Hold the nonce for the rest of the signature's acceptance window
+      // (`created + tolerance`), not just `tolerance` from now — a
+      // future-dated `created` stays valid longer than it would
+      // otherwise be remembered, so a shorter TTL would let it be
+      // replayed after the nonce expired.
+      const seenKey = nonceKey(channelId, peer, nonce)
+      if (await store.get(seenKey)) return { description: 'signature nonce replayed', status: 401 }
+      await store.set(seenKey, true, {
+        ttl: Math.max(1, created + createdToleranceSeconds - now),
       })
-    } catch (cause) {
-      return { description: (cause as Error).message, status: 401 }
-    }
-    if (!verified) return { description: 'signature verification failed', status: 401 }
 
-    // The signature covers the `Content-Digest` header; binding the
-    // header to the actual body closes the substitution gap.
-    if (body !== undefined) {
-      const digest = request.headers.get('content-digest')
-      if (digest !== MessageSig.contentDigest(body))
-        return { description: '`Content-Digest` does not match the request body', status: 401 }
-    }
+      // Persist (and TTL-refresh) the registration — channel state is
+      // GC'd `channelTtl` after the last authenticated request (spec
+      // §7.3).
+      await store.set(registrationKey(channelId, peer), encoded, { ttl: channelTtl })
+      return undefined
+    })
+  }
 
-    // Replay protection (spec §4.4): one nonce, one request, per slot.
-    const seenKey = nonceKey(channelId, peer, nonce)
-    if (await store.get(seenKey)) return { description: 'signature nonce replayed', status: 401 }
-    await store.set(seenKey, true, { ttl: createdToleranceSeconds })
-
-    // Persist (and TTL-refresh) the registration — channel state is GC'd
-    // `channelTtl` after the last authenticated request (spec §7.3).
-    await store.set(registrationKey(channelId, peer), encoded, { ttl: channelTtl })
-    return undefined
+  /**
+   * Refresh the registration TTL for an active receiver's slot so a
+   * long-lived (idle) SSE subscription cannot outlive `channelTtl` and
+   * leave its slot re-registrable by a squatter (spec §7.3). Idempotent:
+   * re-sets the same registered key. Runs under the auth lock so it can't
+   * interleave with a concurrent registration.
+   */
+  async function touchRegistration(channelId: string, peer: Peer): Promise<void> {
+    await withSlot(`auth:${channelId}:${peer}`, async () => {
+      const encoded = await store.get<string>(registrationKey(channelId, peer))
+      if (encoded) await store.set(registrationKey(channelId, peer), encoded, { ttl: channelTtl })
+    })
   }
 
   const app = path ? new Hono().basePath(path) : new Hono()
@@ -549,7 +584,9 @@ export function create(options: create.Options = {}): create.ReturnType {
         },
       }
       stream.onAbort(() => {
-        if (receivers.get(slot) === receiver) receivers.delete(slot)
+        void withSlot(slot, async () => {
+          if (receivers.get(slot) === receiver) receivers.delete(slot)
+        })
         closed.resolve()
       })
       // Supersede, register, emit `opened`, and drain the buffer (FIFO)
@@ -566,19 +603,38 @@ export function create(options: create.Options = {}): create.ReturnType {
         for (let head = await bufferShift(slot); head !== undefined; head = await bufferShift(slot))
           await receiver.write(head)
       })
+      // Keep the connection warm through proxies and, on the same beat,
+      // refresh the slot's registration TTL so a long-lived idle stream
+      // never lets `channelTtl` lapse and its slot become re-registrable.
       const keepalive = setInterval(() => {
+        void touchRegistration(channelId, peer)
         stream.write(': keepalive\n\n').catch(() => closed.resolve())
       }, keepaliveInterval)
       try {
         await closed.promise
       } finally {
         clearInterval(keepalive)
-        if (receivers.get(slot) === receiver) receivers.delete(slot)
+        await withSlot(slot, async () => {
+          if (receivers.get(slot) === receiver) receivers.delete(slot)
+        })
       }
     })
   })
 
-  app.post('/:channelId/:peer', async (c) => {
+  // Bound the request body *before* it is read into memory (spec §5.4.1).
+  // The middleware short-circuits on an oversized `Content-Length` and
+  // otherwise streams with a running byte cap, so a malicious sender can
+  // never force the relay to buffer an unbounded body.
+  const limitBody = bodyLimit({
+    maxSize: maxBodySize,
+    onError: (c) =>
+      c.json(
+        { error: 'payload_too_large', error_description: 'request body exceeds the relay limit' },
+        { status: 413 },
+      ),
+  })
+
+  app.post('/:channelId/:peer', limitBody, async (c) => {
     const params = parseParams(c.req.param('channelId'), c.req.param('peer'))
     if (!params)
       return c.json(
@@ -595,13 +651,9 @@ export function create(options: create.Options = {}): create.ReturnType {
         },
         { status: 400 },
       )
+    // `limitBody` already bounded the body to `maxBodySize`.
     const body = await c.req.text()
     const bytes = Bytes.fromString(body).length
-    if (bytes > maxBodySize)
-      return c.json(
-        { error: 'payload_too_large', error_description: 'request body exceeds the relay limit' },
-        { status: 413 },
-      )
     // POSTs are signed by the *sender* — the opposite slot of the
     // destination `:peer` in the path.
     const failure = await authenticate({

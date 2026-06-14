@@ -297,6 +297,38 @@ describe('create', () => {
     )
   })
 
+  test('serializes concurrent same-nonce requests so only one is accepted', async () => {
+    const relay = Relay.create()
+    const keypair = Crypto.randomKeypair()
+    const nonce = crypto.randomUUID()
+    const send = () =>
+      relay.fetch(
+        signedRequest({
+          body: '{}',
+          keypair,
+          method: 'POST',
+          nonce,
+          url: relayUrl(channel, 'consumer'),
+        }),
+      )
+    const statuses = (await Promise.all([send(), send()])).map((r) => r.status).sort()
+    expect(statuses).toEqual([204, 401])
+  })
+
+  test('serializes concurrent first registrations so one key wins', async () => {
+    const relay = Relay.create()
+    const a = Crypto.randomKeypair()
+    const b = Crypto.randomKeypair()
+    const send = (keypair: Crypto.Keypair) =>
+      relay.fetch(
+        signedRequest({ body: '{}', keypair, method: 'POST', url: relayUrl(channel, 'host') }),
+      )
+    const statuses = (await Promise.all([send(a), send(b)])).map((r) => r.status).sort()
+    // One registers (204, no receiver), the other diverges from the now
+    // registered key and is rejected (401).
+    expect(statuses).toEqual([204, 401])
+  })
+
   test('enforces first-write-wins on the peer-slot key', async () => {
     const relay = Relay.create({ keepaliveInterval: 50 })
     const original = Crypto.randomKeypair()
