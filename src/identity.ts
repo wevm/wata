@@ -31,7 +31,10 @@ export function fromPrivateKey(privateKey: fromPrivateKey.PrivateKey): fromPriva
 
   return {
     publicKey,
-    sign(options) {
+    sign(bytes) {
+      return Ed25519.sign({ as: 'Bytes', payload: bytes, privateKey })
+    },
+    signHttpMessage(options) {
       return MessageSig.sign({ ...options, privateKey })
     },
   }

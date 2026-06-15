@@ -31,8 +31,7 @@
  * in the transports that call into this module.
  */
 
-import { sha256 } from '@noble/hashes/sha2.js'
-import { Base64, Bytes, Ed25519, Hex } from 'ox'
+import { Base64, Bytes, Ed25519, Hash, Hex } from 'ox'
 
 import * as Errors from './Errors.js'
 
@@ -109,7 +108,7 @@ export const defaultLabel = 'sig'
  */
 export function contentDigest(body: string | Uint8Array): string {
   const bytes = typeof body === 'string' ? Bytes.fromString(body) : body
-  return `sha-256=:${Base64.fromBytes(sha256(bytes))}:`
+  return `sha-256=:${Base64.fromBytes(Hash.sha256(bytes, { as: 'Bytes' }))}:`
 }
 
 /**

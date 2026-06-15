@@ -39,6 +39,7 @@ packages:
   - examples/*
   - examples/relay/*
   - playgrounds/*
+  - playgrounds/mobileLink/*
 
 shellEmulator: true
 

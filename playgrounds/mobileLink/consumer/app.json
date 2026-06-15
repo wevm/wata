@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "mobileLink consumer",
+    "slug": "mobile-link-consumer-playground",
+    "scheme": "com.wata.mobilelink.consumer",
+    "ios": {
+      "bundleIdentifier": "com.anonymous.mobile-link-consumer-playground"
+    }
+  }
+}

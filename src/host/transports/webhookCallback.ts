@@ -1118,7 +1118,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       'urpc-idempotency-key': record.authReqId,
       'urpc-public-key': identity.publicKey,
     }
-    const signedHeaders = await identity.sign({
+    const signedHeaders = await identity.signHttpMessage({
       components,
       message: { headers, method: 'POST', url: record.webhookUrl },
       parameters: { alg: 'ed25519', created, keyid: resolveKeyid(), nonce },

@@ -7,5 +7,5 @@
     "skipLibCheck": true,
     "strict": true
   },
-  "include": ["index.ts", "polyfills.ts", "src"]
+  "include": ["index.ts", "src"]
 }
