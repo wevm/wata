@@ -23,13 +23,6 @@ describe('relay (consumer)', () => {
     >()
   })
 
-  test('constructs with no options and accepts a start-time url', () => {
-    const transport = relay()
-    expectTypeOf(transport.start({ url: 'https://relay.example' })).toEqualTypeOf<
-      Promise<Relay.Prompt>
-    >()
-  })
-
   test('feeds Wata.create as a consumer transport', () => {
     const transport = relay({ url: 'https://relay.example' })
     const wata = Wata.create({ transports: [transport] })

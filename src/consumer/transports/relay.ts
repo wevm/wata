@@ -45,13 +45,6 @@
  * // Target a specific wallet's scheme chosen out of band.
  * await wata.relay.start({ scheme: 'example-wallet' }) // example-wallet://?version=1&...
  * ```
- *
- * @example
- * ```ts
- * // Supply the relay URL dynamically at start time
- * const wata = Wata.create({ transports: [relay()] })
- * await wata.relay.start({ url: 'https://relay.example' })
- * ```
  */
 
 import { Base64, Bytes, Hex } from 'ox'
@@ -116,15 +109,8 @@ export type Options = {
    * Overridable per call via `start({ scheme })`.
    */
   scheme?: string | undefined
-  /**
-   * Relay server base URL (HTTPS, or HTTP loopback for development).
-   * Optional — when omitted, supply it per call via
-   * {@link StartOptions.url} (`wata.relay.start({ url })`). A
-   * construction-time `url` acts as the default; a start-time `url`
-   * overrides it. `start()` throws {@link Transport.TransportError} if
-   * neither is set.
-   */
-  url?: string | undefined
+  /** Relay server base URL (HTTPS, or HTTP loopback for development). */
+  url: string
 }
 
 /** Options for the relay transport's {@link Transport.Transport.start | start}. */
@@ -139,16 +125,6 @@ export type StartOptions = {
    * `await wata.relay.start({ scheme: 'example-wallet' })`.
    */
   scheme?: string | undefined
-  /**
-   * Relay server base URL for this session, overriding the
-   * construction-time {@link Options.url}. Supply it when the relay
-   * endpoint is only known at start time (e.g. resolved from a host's
-   * `host.json` or chosen out of band):
-   * `await wata.relay.start({ url: 'https://relay.example' })`. `start()`
-   * throws {@link Transport.TransportError} if neither this nor a
-   * construction-time `url` is set.
-   */
-  url?: string | undefined
 }
 
 /**
@@ -164,7 +140,7 @@ export type StartOptions = {
  * ```
  */
 export function relay(
-  options: Options = {},
+  options: Options,
 ): Transport.Transport<
   'consumer',
   'relay',
@@ -366,11 +342,6 @@ export function relay(
       return prompt
     }
     if (startPromise) return startPromise
-    const relayUrl = options.url ?? url
-    if (!relayUrl)
-      throw new Transport.TransportError(
-        'relay requires a `url` — set it on `relay({ url })` or `wata.relay.start({ url })`',
-      )
     startPromise = (async () => {
       try {
         const keypair_local = Crypto.randomKeypair()
@@ -387,7 +358,7 @@ export function relay(
           peer: 'consumer',
           pollInterval,
           receive,
-          url: relayUrl,
+          url,
         })
         // Expose the controller before subscribing so a concurrent
         // `close()` can cancel an in-flight `start()`.
@@ -412,7 +383,7 @@ export function relay(
           allowPrivateNetwork,
           consumerPublicKey: keypair_local.x25519.publicKey,
           pairingSecret: pairingSecret_local,
-          relay: relayUrl,
+          relay: url,
           scheme: options.scheme ?? scheme,
         })
         prompt = { expiresAt: Date.now() + expiresIn, uri }
