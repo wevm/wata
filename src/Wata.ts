@@ -318,9 +318,14 @@ type ConsumerSessionCore<
    * when a UI wants to surface the connecting state before any traffic.
    *
    * Forwards any start options the wrapped transport accepts (e.g. the
-   * relay transport's `{ scheme }`).
+   * relay transport's `{ scheme }`) and resolves with whatever the
+   * transport surfaces on open (e.g. the relay transport's pairing
+   * {@link Transport.PromptOf | prompt}, so callers can render the
+   * pairing link without subscribing to `'prompt'`).
    */
-  start: (options?: Transport.StartOptionsOf<transport>) => Promise<void>
+  start: (
+    options?: Transport.StartOptionsOf<transport>,
+  ) => Promise<Transport.StartReturnOf<transport>>
   /** The wrapped transport. */
   transport: transport
 }
@@ -594,7 +599,8 @@ function createConsumerSession<
     phase: 'pre-key',
     started: false,
   }
-  let startPromise: Promise<void> | undefined
+  let startPromise: Promise<Transport.StartReturnOf<transport>> | undefined
+  let startReturn: Transport.StartReturnOf<transport> | undefined
   let nextId = 1
 
   function rejectPending(cause: Error) {
@@ -780,16 +786,20 @@ function createConsumerSession<
     emitPrompt('prompt', { ...(prompt as object), transport: transport.name })
   })
 
-  async function start(options?: Transport.StartOptionsOf<transport>): Promise<void> {
-    if (state.started) return
+  async function start(
+    options?: Transport.StartOptionsOf<transport>,
+  ): Promise<Transport.StartReturnOf<transport>> {
+    if (state.started) return startReturn as Transport.StartReturnOf<transport>
     if (startPromise) return startPromise
-    startPromise = (async () => {
+    startPromise = (async (): Promise<Transport.StartReturnOf<transport>> => {
       try {
-        await (transport.start as (options?: Transport.StartOptionsOf<transport>) => Promise<void>)(
-          options,
-        )
+        const result = (await (
+          transport.start as (options?: Transport.StartOptionsOf<transport>) => Promise<unknown>
+        )(options)) as Transport.StartReturnOf<transport>
+        startReturn = result
         state.started = true
         emitter.emit('open', undefined)
+        return result
       } finally {
         startPromise = undefined
       }

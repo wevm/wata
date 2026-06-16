@@ -170,6 +170,8 @@ export type Options = {
   sendValue?: unknown
   /** Options accepted by {@link Transport.start}. Defaults to `never`. */
   startOptions?: unknown
+  /** Value resolved by {@link Transport.start}. Defaults to `void`. */
+  startReturn?: unknown
 }
 
 /**
@@ -189,6 +191,8 @@ type ResolvedOptions = {
   sendValue: unknown
   /** Options accepted by {@link Transport.start}. */
   startOptions: unknown
+  /** Value resolved by {@link Transport.start}. */
+  startReturn: unknown
 }
 
 /** Normalize a partial {@link Options} bag into a {@link ResolvedOptions}. */
@@ -197,18 +201,20 @@ type ResolveOptions<options extends Options> = {
   prompt: options extends { prompt: infer prompt extends object } ? prompt : never
   sendValue: options extends { sendValue: infer sendValue } ? sendValue : void
   startOptions: options extends { startOptions: infer startOptions } ? startOptions : never
+  startReturn: options extends { startReturn: infer startReturn } ? startReturn : void
 }
 
 /**
- * A {@link Transport} with an unconstrained {@link Options.sendValue},
- * for constraint positions that accept any transport regardless of what
- * its `send` resolves with. Prefer this over `Transport<role, name>` in
- * `extends` clauses — the bare form pins `sendValue` to `void`.
+ * A {@link Transport} with an unconstrained {@link Options.sendValue} and
+ * {@link Options.startReturn}, for constraint positions that accept any
+ * transport regardless of what its `send` / `start` resolve with. Prefer
+ * this over `Transport<role, name>` in `extends` clauses — the bare form
+ * pins both to `void`.
  */
 export type Any<role extends Role = Role, name extends string = string> = Transport<
   role,
   name,
-  { sendValue: unknown }
+  { sendValue: unknown; startReturn: unknown }
 >
 
 /**
@@ -322,9 +328,12 @@ type Shape<role extends Role, name extends string, options extends ResolvedOptio
    * Open the transport. Resolves once the wire is ready to send and
    * receive. Transports that accept per-start configuration (e.g. the
    * relay transport's `{ scheme }` / `{ pairingUri }`) widen
-   * {@link Options.startOptions}; the rest take no argument.
+   * {@link Options.startOptions}; the rest take no argument. Transports
+   * that surface a value on open (e.g. the relay transport's pairing
+   * {@link PromptOf | prompt}) widen {@link Options.startReturn}; the
+   * rest resolve `void`.
    */
-  start: (options?: options['startOptions']) => Promise<void>
+  start: (options?: options['startOptions']) => Promise<options['startReturn']>
 }
 
 /** Metadata emitted by a concrete transport. */
@@ -350,6 +359,10 @@ export type StartOptionsOf<transport extends { start: (...args: never) => unknow
   Parameters<transport['start']>[0],
   undefined
 >
+
+/** Value resolved by a transport's {@link Transport.start}. */
+export type StartReturnOf<transport extends { start: (...args: never) => Promise<unknown> }> =
+  Awaited<ReturnType<transport['start']>>
 
 /** Value resolved by a transport's {@link Transport.send}. */
 export type SendValue<transport extends { send: (...args: never) => Promise<unknown> }> = Awaited<

@@ -5,9 +5,10 @@
  * Implements the consumer half of the uRPC `relay` transport spec. On
  * `start()` the transport generates fresh bootstrap material (ephemeral
  * keypair + 32-byte `pairing_secret`), locks its relay slot over a
- * signed SSE subscription, and surfaces the pairing link via the
- * `'prompt'` event — render it as a QR code or deep link for the host
- * device. Once the host's `hello` arrives, the transport
+ * signed SSE subscription, and surfaces the pairing link — `start()`
+ * resolves with the `'prompt'` payload (and also emits it as an event)
+ * — render it as a QR code or deep link for the host device. Once the
+ * host's `hello` arrives, the transport
  * verifies `host_proof` in constant time, derives the per-direction
  * AEAD keys, confirms with an encrypted `ready` frame, and from then on
  * carries `rpc-requests` / `rpc-responses` envelopes sealed end-to-end —
@@ -31,8 +32,10 @@
  *   transports: [relay({ url: 'https://relay.example' })],
  * })
  *
- * // Render the pairing link out-of-band (QR code, deep link, …).
- * wata.onPrompt(({ uri }) => renderQrCode(uri))
+ * // `start()` resolves with the pairing prompt — render it out-of-band
+ * // (QR code, deep link, …). (Or subscribe via `wata.onPrompt`.)
+ * const { uri } = await wata.start()
+ * renderQrCode(uri)
  *
  * const { result } = await wata.send({ method: 'wallet_connect', params: [] })
  * ```
@@ -41,6 +44,13 @@
  * ```ts
  * // Target a specific wallet's scheme chosen out of band.
  * await wata.relay.start({ scheme: 'example-wallet' }) // example-wallet://?version=1&...
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Supply the relay URL dynamically at start time
+ * const wata = Wata.create({ transports: [relay()] })
+ * await wata.relay.start({ url: 'https://relay.example' })
  * ```
  */
 
@@ -106,8 +116,15 @@ export type Options = {
    * Overridable per call via `start({ scheme })`.
    */
   scheme?: string | undefined
-  /** Relay server base URL (HTTPS, or HTTP loopback for development). */
-  url: string
+  /**
+   * Relay server base URL (HTTPS, or HTTP loopback for development).
+   * Optional — when omitted, supply it per call via
+   * {@link StartOptions.url} (`wata.relay.start({ url })`). A
+   * construction-time `url` acts as the default; a start-time `url`
+   * overrides it. `start()` throws {@link Transport.TransportError} if
+   * neither is set.
+   */
+  url?: string | undefined
 }
 
 /** Options for the relay transport's {@link Transport.Transport.start | start}. */
@@ -122,6 +139,16 @@ export type StartOptions = {
    * `await wata.relay.start({ scheme: 'example-wallet' })`.
    */
   scheme?: string | undefined
+  /**
+   * Relay server base URL for this session, overriding the
+   * construction-time {@link Options.url}. Supply it when the relay
+   * endpoint is only known at start time (e.g. resolved from a host's
+   * `host.json` or chosen out of band):
+   * `await wata.relay.start({ url: 'https://relay.example' })`. `start()`
+   * throws {@link Transport.TransportError} if neither this nor a
+   * construction-time `url` is set.
+   */
+  url?: string | undefined
 }
 
 /**
@@ -137,8 +164,12 @@ export type StartOptions = {
  * ```
  */
 export function relay(
-  options: Options,
-): Transport.Transport<'consumer', 'relay', { prompt: Prompt; startOptions: StartOptions }> {
+  options: Options = {},
+): Transport.Transport<
+  'consumer',
+  'relay',
+  { prompt: Prompt; startOptions: StartOptions; startReturn: Prompt }
+> {
   const {
     allowPrivateNetwork,
     expiresIn = 300_000,
@@ -162,7 +193,8 @@ export function relay(
   let cipher: Relay.createCipher.ReturnType | undefined
   let keypair: Crypto.Keypair | undefined
   let pairingSecret: Hex.Hex | undefined
-  let startPromise: Promise<void> | undefined
+  let prompt: Prompt | undefined
+  let startPromise: Promise<Prompt> | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
 
   function emitError(error: Error) {
@@ -178,6 +210,7 @@ export function relay(
     cipher = undefined
     keypair = undefined
     pairingSecret = undefined
+    prompt = undefined
     if (timer) {
       clearTimeout(timer)
       timer = undefined
@@ -326,9 +359,18 @@ export function relay(
     emitter.emit('message', inner)
   }
 
-  async function start(options: StartOptions = {}): Promise<void> {
-    if (state.started) return
+  async function start(options: StartOptions = {}): Promise<Prompt> {
+    if (state.started) {
+      if (!prompt)
+        throw new Transport.ClosedError('relay session is started without a pairing prompt')
+      return prompt
+    }
     if (startPromise) return startPromise
+    const relayUrl = options.url ?? url
+    if (!relayUrl)
+      throw new Transport.TransportError(
+        'relay requires a `url` — set it on `relay({ url })` or `wata.relay.start({ url })`',
+      )
     startPromise = (async () => {
       try {
         const keypair_local = Crypto.randomKeypair()
@@ -345,7 +387,7 @@ export function relay(
           peer: 'consumer',
           pollInterval,
           receive,
-          url,
+          url: relayUrl,
         })
         // Expose the controller before subscribing so a concurrent
         // `close()` can cancel an in-flight `start()`.
@@ -370,10 +412,12 @@ export function relay(
           allowPrivateNetwork,
           consumerPublicKey: keypair_local.x25519.publicKey,
           pairingSecret: pairingSecret_local,
-          relay: url,
+          relay: relayUrl,
           scheme: options.scheme ?? scheme,
         })
-        emitter.emit('prompt', { expiresAt: Date.now() + expiresIn, uri })
+        prompt = { expiresAt: Date.now() + expiresIn, uri }
+        emitter.emit('prompt', prompt)
+        return prompt
       } finally {
         startPromise = undefined
       }

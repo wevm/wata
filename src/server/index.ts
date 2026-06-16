@@ -1,3 +1,4 @@
+export * as Directory from './Directory.js'
 export * as Discovery from './Discovery.js'
 export * as Store from '../core/Store.js'
 export * as Relay from './Relay.js'
