@@ -18,8 +18,8 @@
  * flushed after `ready`, so `wata.send(...)` can be called immediately —
  * it resolves once the host answers.
  *
- * The pairing link's target scheme can be chosen at construction
- * (`relay({ scheme })`) or per call (`wata.relay.start({ scheme })`),
+ * The pairing link's target can be chosen at construction
+ * (`relay({ target })`) or per call (`wata.relay.start({ target })`),
  * defaulting to the shared `urpc://` scheme — direct a freshly built
  * link at a wallet selected out of band (a wallet modal or deep link)
  * without rendering a QR code at all.
@@ -42,8 +42,8 @@
  *
  * @example
  * ```ts
- * // Target a specific wallet's scheme chosen out of band.
- * await wata.relay.start({ scheme: 'example-wallet' }) // example-wallet://?version=1&...
+ * // Target a specific wallet chosen out of band.
+ * await wata.relay.start({ target: 'example-wallet' }) // example-wallet://?version=1&...
  * ```
  */
 
@@ -106,9 +106,9 @@ export type Options = {
    * `example-wallet://`), a full universal link
    * (`'https://wallet.example/urpc'`) that opens the host app directly,
    * or omitted for the shared `urpc://` scheme used for any-host flows.
-   * Overridable per call via `start({ scheme })`.
+   * Overridable per call via `start({ target })`.
    */
-  scheme?: string | undefined
+  target?: string | undefined
   /** Relay server base URL (HTTPS, or HTTP loopback for development). */
   url: string
 }
@@ -117,20 +117,20 @@ export type Options = {
 export type StartOptions = {
   /**
    * Target of this pairing link, overriding the construction-time
-   * {@link Options.scheme}: a bare scheme (`'example-wallet'` → `example-wallet://`),
+   * {@link Options.target}: a bare scheme (`'example-wallet'` → `example-wallet://`),
    * a full universal link (`'https://wallet.example/urpc'`), or omitted
    * for the construction-time default (falling back to the shared
    * `urpc://` scheme). Reach for it to direct a freshly built pairing
    * link at a wallet chosen out of band:
-   * `await wata.relay.start({ scheme: 'example-wallet' })`.
+   * `await wata.relay.start({ target: 'example-wallet' })`.
    */
-  scheme?: string | undefined
+  target?: string | undefined
 }
 
 /**
  * Create a consumer-side `relay` transport. Its `start` additionally
- * accepts a {@link StartOptions} so the pairing link's target scheme
- * can be supplied at start time.
+ * accepts a {@link StartOptions} so the pairing link's target can be
+ * supplied at start time.
  *
  * @example
  * ```ts
@@ -152,7 +152,7 @@ export function relay(
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
     pollInterval,
     receive = 'sse',
-    scheme,
+    target,
     url,
   } = options
 
@@ -384,7 +384,7 @@ export function relay(
           consumerPublicKey: keypair_local.x25519.publicKey,
           pairingSecret: pairingSecret_local,
           relay: url,
-          scheme: options.scheme ?? scheme,
+          target: options.target ?? target,
         })
         prompt = { expiresAt: Date.now() + expiresIn, uri }
         emitter.emit('prompt', prompt)

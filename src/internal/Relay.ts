@@ -177,7 +177,7 @@ export function encodeSecret(secret: Hex.Hex | Bytes.Bytes): string {
 /**
  * Build the initial pairing link delivered out-of-band (§2.3.3).
  *
- * The {@link buildUri.Options.scheme} selects the link's target:
+ * The {@link buildUri.Options.target} selects the link's target:
  * - omitted → the shared `urpc://?version=1&...` scheme for any-host
  *   flows (the default);
  * - a bare scheme like `'example-wallet'` → `example-wallet://?version=1&...`, a
@@ -191,7 +191,7 @@ export function encodeSecret(secret: Hex.Hex | Bytes.Bytes): string {
  * depends on — the link MUST be treated as confidential and used once.
  */
 export function buildUri(options: buildUri.Options): string {
-  const { allowPrivateNetwork, consumerPublicKey, pairingSecret, relay, scheme } = options
+  const { allowPrivateNetwork, consumerPublicKey, pairingSecret, relay, target } = options
   const search = new URLSearchParams()
   search.set(
     uriParams.consumerPublicKey,
@@ -205,15 +205,15 @@ export function buildUri(options: buildUri.Options): string {
   // carrying `://` (a custom scheme or full universal-link URL) used
   // verbatim.
   const base = (() => {
-    if (!scheme) return 'urpc://'
-    if (scheme.includes('://')) return scheme
-    return `${scheme}://`
+    if (!target) return 'urpc://'
+    if (target.includes('://')) return target
+    return `${target}://`
   })()
   const url = (() => {
     try {
       return new URL(base)
     } catch (cause) {
-      throw new Errors.ProtocolError('`scheme` must be a valid scheme or URL', {
+      throw new Errors.ProtocolError('`target` must be a valid scheme or URL', {
         cause: cause as Error,
       })
     }
@@ -243,7 +243,7 @@ export declare namespace buildUri {
      * (`'https://wallet.example/urpc'`), or omitted for the shared
      * `urpc://` scheme.
      */
-    scheme?: string | undefined
+    target?: string | undefined
   }
 }
 
