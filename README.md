@@ -363,7 +363,7 @@ createServer(Server.node(relay).listener).listen(8787)
 
 ### `mobileLink`
 
-Direct, ongoing same-device session between two mobile apps. The consumer hands off to the host app via its custom URL scheme; the host verifies the consumer against its published `consumer.json` and signs an `identity_sig` that the consumer pins against the host's `host.json`. Subsequent messages flow over OS deep links in both directions — feed OS-routed callbacks back in via `transport.handleUrl(url)`.
+Direct, ongoing same-device session between two mobile apps over OS deep links. Feed OS-routed callbacks back in via `transport.handleUrl(url)`.
 
 [See example →](./playgrounds/mobileLink)
 
