@@ -275,8 +275,13 @@ export type ConsumerTransports = readonly [
 /** Default single-transport tuple used by the broad {@link Consumer} type. */
 export type SingleConsumerTransports = readonly [Transport.Transport<'consumer', string>]
 
-/** Transport-specific consumer session exposed on `wata.<transportName>`. */
-export type ConsumerSession<
+/**
+ * Session core shared by the consumer's named accessor
+ * ({@link ConsumerSession}) and the single-transport top-level surface.
+ * Holds the wrapped lifecycle methods; transport-specific extras are
+ * layered on by {@link ConsumerSession}.
+ */
+type ConsumerSessionCore<
   schema extends Schema.Schema | undefined,
   transport extends Transport.Any<'consumer'>,
   context extends Rpc.RequestContext = Rpc.RequestContext,
@@ -320,6 +325,22 @@ export type ConsumerSession<
   transport: transport
 }
 
+/**
+ * Transport-specific consumer session exposed on `wata.<transportName>`.
+ * Carries the session's wrapped lifecycle surface plus any
+ * transport-specific {@link Transport.Extras extras} (e.g. the
+ * `mobileLink` transport's `handleUrl`), hoisted up so callers reach
+ * them directly as `wata.<name>.handleUrl(...)` — mirroring the host,
+ * where the named accessor *is* the transport. Extras that would collide
+ * with a session member are dropped so the wrapped surface always wins.
+ */
+export type ConsumerSession<
+  schema extends Schema.Schema | undefined,
+  transport extends Transport.Any<'consumer'>,
+  context extends Rpc.RequestContext = Rpc.RequestContext,
+> = ConsumerSessionCore<schema, transport, context> &
+  Omit<Transport.Extras<transport>, keyof ConsumerSessionCore<schema, transport, context>>
+
 /** Consumer surface shared by single and multi-transport instances. */
 export type ConsumerBase<
   schema extends Schema.Schema | undefined,
@@ -349,26 +370,27 @@ export type ConsumerChildMap<
   transports extends ConsumerTransports,
   context extends Rpc.RequestContext = Rpc.RequestContext,
 > = {
-  [name in transports[number]['name']]: ConsumerSession<
-    schema,
-    Extract<transports[number], { name: name }>,
-    context
-  >
+  [transport in transports[number] as string extends transport['name']
+    ? never
+    : transport['name']]: ConsumerSession<schema, transport, context>
 }
 
 /**
- * Consumer-side `Wata`. Returned by {@link create}. A single transport
- * exposes `send` / `notify` at the top level; multiple transports expose
- * named child sessions such as `wata.webhookCallback.send`.
+ * Consumer-side `Wata`. Returned by {@link create}. Every transport is
+ * exposed as a named child session (e.g. `wata.webhookCallback.send`,
+ * `wata.mobileLink.handleUrl`), mirroring the host. A single transport
+ * additionally lifts its `send` / `notify` / `start` / `close` surface
+ * to the top level for ergonomics.
  */
 export type Consumer<
   schema extends Schema.Schema | undefined = undefined,
   transports extends ConsumerTransports = SingleConsumerTransports,
   context extends Rpc.RequestContext = Rpc.RequestContext,
 > = ConsumerBase<schema, transports, context> &
+  ConsumerChildMap<schema, transports, context> &
   (transports extends readonly [infer transport extends Transport.Any<'consumer'>]
     ? ConsumerSession<schema, transport, context>
-    : ConsumerChildMap<schema, transports, context>)
+    : {})
 
 /** Request context value inferred from an optional Wata-wide context schema. */
 export type RequestContextOf<context extends Schema.Context | undefined> =
@@ -500,11 +522,15 @@ export function create<
 
   if (sessions.length === 1) {
     const session = sessions[0]!
-    return {
+    const consumer = {
       ...session,
       fetch: httpFetch as Consumer<schema, transports, RequestContextOf<context>>['fetch'],
       transports,
-    } as unknown as Consumer<schema, transports, RequestContextOf<context>>
+    }
+    // Surface the transport by name (e.g. `wata.mobileLink`) so the
+    // accessor matches multi-transport mode and the host side.
+    Object.assign(consumer, { [session.transport.name]: session })
+    return consumer as unknown as Consumer<schema, transports, RequestContextOf<context>>
   }
 
   const emitter =
@@ -772,6 +798,9 @@ function createConsumerSession<
   }
 
   return {
+    // Hoist transport-specific extras (e.g. `mobileLink`'s `handleUrl`)
+    // first so the wrapped session members below always win on any clash.
+    ...transportExtras(transport),
     async close(cause) {
       if (!state.started) return
       state.started = false
@@ -911,6 +940,21 @@ function collectPublicKey(transports: readonly Transport.Any[]): string | undefi
     publicKey = transport.publicKey
   }
   return publicKey
+}
+
+/**
+ * Own members of a transport beyond the base {@link Transport} contract
+ * (e.g. `mobileLink`'s `handleUrl`), filtered by {@link Transport.baseKeys}.
+ * Hoisted onto the wrapping consumer session so `wata.<name>.handleUrl`
+ * works directly.
+ */
+function transportExtras<transport extends Transport.Any>(
+  transport: transport,
+): Transport.Extras<transport> {
+  const baseKeys = new Set<string>(Transport.baseKeys)
+  return Object.fromEntries(
+    Object.entries(transport).filter(([key]) => !baseKeys.has(key)),
+  ) as Transport.Extras<transport>
 }
 
 function isHttpServer<transport extends Transport.Any>(

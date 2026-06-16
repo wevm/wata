@@ -282,7 +282,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       'content-digest',
       'urpc-public-key',
     ]
-    const signedHeaders = await identity.sign({
+    const signedHeaders = await identity.signHttpMessage({
       components,
       message: {
         headers: {
@@ -519,7 +519,7 @@ export function webhookCallback(options: Options): WebhookCallback {
     const created = Math.floor(Date.now() / 1000)
     const identity = getIdentity()
     const components = ['@method', '@target-uri', '@authority', 'urpc-public-key']
-    const signedHeaders = await identity.sign({
+    const signedHeaders = await identity.signHttpMessage({
       components,
       message: { headers: { 'urpc-public-key': identity.publicKey }, method: 'DELETE', url },
       parameters: { alg: 'ed25519', created, keyid: getKeyid(), nonce },

@@ -39,7 +39,18 @@
     "ox": "catalog:",
     "zod": "catalog:"
   },
-  "sideEffects": false,
+  "peerDependencies": {
+    "expo-crypto": "*"
+  },
+  "peerDependenciesMeta": {
+    "expo-crypto": {
+      "optional": true
+    }
+  },
+  "sideEffects": [
+    "./dist/react-native/polyfills.js",
+    "./src/react-native/polyfills.ts"
+  ],
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -60,6 +71,12 @@
       "src": "./src/consumer/transports/deviceCode.ts",
       "react-native": "./dist/consumer/transports/deviceCode.js",
       "default": "./dist/consumer/transports/deviceCode.js"
+    },
+    "./consumer/transports/mobileLink": {
+      "types": "./dist/consumer/transports/mobileLink.d.ts",
+      "src": "./src/consumer/transports/mobileLink.ts",
+      "react-native": "./dist/consumer/transports/mobileLink.js",
+      "default": "./dist/consumer/transports/mobileLink.js"
     },
     "./consumer/transports/mobileWebAuth": {
       "types": "./dist/consumer/transports/mobileWebAuth.d.ts",
@@ -96,6 +113,12 @@
       "src": "./src/host/transports/deviceCode.ts",
       "react-native": "./dist/host/transports/deviceCode.js",
       "default": "./dist/host/transports/deviceCode.js"
+    },
+    "./host/transports/mobileLink": {
+      "types": "./dist/host/transports/mobileLink.d.ts",
+      "src": "./src/host/transports/mobileLink.ts",
+      "react-native": "./dist/host/transports/mobileLink.js",
+      "default": "./dist/host/transports/mobileLink.js"
     },
     "./host/transports/mobileWebAuth": {
       "types": "./dist/host/transports/mobileWebAuth.d.ts",
@@ -139,6 +162,12 @@
       "types": "./dist/internal/Outbound.native.d.ts",
       "src": "./src/internal/Outbound.native.ts",
       "default": "./dist/internal/Outbound.native.js"
+    },
+    "./react-native/polyfills": {
+      "types": "./dist/react-native/polyfills.d.ts",
+      "src": "./src/react-native/polyfills.ts",
+      "react-native": "./dist/react-native/polyfills.js",
+      "default": "./dist/react-native/polyfills.js"
     },
     "./server": {
       "types": "./dist/server/index.d.ts",

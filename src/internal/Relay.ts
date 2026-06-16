@@ -21,7 +21,7 @@
 
 import { hmac } from '@noble/hashes/hmac.js'
 import { sha256 } from '@noble/hashes/sha2.js'
-import { Base64, Bytes, Hex } from 'ox'
+import { Base64, Bytes, Hash, Hex } from 'ox'
 
 import * as Aad from '../core/Aad.js'
 import * as Aead from '../core/Aead.js'
@@ -92,8 +92,13 @@ export function channelId(options: channelId.Options): string {
     throw new Errors.ProtocolError('pairingSecret must be 32 bytes', {
       details: `received ${pairingSecret.length} bytes`,
     })
-  const digest = sha256(
-    Bytes.concat(Bytes.fromString(channelIdPrefix), publicKey, sha256(pairingSecret)),
+  const digest = Hash.sha256(
+    Bytes.concat(
+      Bytes.fromString(channelIdPrefix),
+      publicKey,
+      Hash.sha256(pairingSecret, { as: 'Bytes' }),
+    ),
+    { as: 'Bytes' },
   )
   return Base64.fromBytes(digest, { pad: false, url: true })
 }
@@ -129,7 +134,7 @@ export function hostProof(options: hostProof.Options): Hex.Hex {
     Bytes.fromString(hostProofPrefix),
     Bytes.from(options.consumerPublicKey),
     Bytes.from(options.hostPublicKey),
-    sha256(Bytes.from(options.sharedSecret)),
+    Hash.sha256(Bytes.from(options.sharedSecret), { as: 'Bytes' }),
   )
   return Hex.fromBytes(hmac(sha256, Bytes.from(options.pairingSecret), message))
 }

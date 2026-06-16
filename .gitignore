@@ -1,5 +1,8 @@
 .expo
+.wrangler
+android
 dist
+ios
 node_modules
 tasks
 *.tsbuildinfo

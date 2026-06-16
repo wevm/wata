@@ -24,6 +24,8 @@
  * transport boundary stays stable across schema and protocol revisions.
  */
 
+import type { Bytes } from 'ox'
+
 import * as Envelope from './Envelope.js'
 import * as Errors from './Errors.js'
 import * as Events from './Events.js'
@@ -80,15 +82,24 @@ export type NoMessageMeta = {}
 export type Identity = {
   /** Ed25519 public key encoded as unpadded base64url. */
   publicKey: string
-  /** Sign an HTTP message under the identity key. */
-  sign: (options: IdentitySignOptions) => IdentitySignReturn | Promise<IdentitySignReturn>
+  /**
+   * Sign an arbitrary byte string under the identity key, returning the
+   * raw 64-byte Ed25519 signature. The fundamental signing primitive,
+   * used by transports whose proof is a detached signature over a
+   * constructed blob (e.g. the `mobile-link` host `identity_sig`).
+   */
+  sign: (bytes: Bytes.Bytes) => Bytes.Bytes
+  /** Sign an HTTP message under the identity key (RFC 9421). */
+  signHttpMessage: (
+    options: IdentitySignHttpMessageOptions,
+  ) => IdentitySignHttpMessageReturn | Promise<IdentitySignHttpMessageReturn>
 }
 
-/** Options passed to an identity signer. */
-export type IdentitySignOptions = Omit<MessageSig.sign.Options, 'privateKey'>
+/** Options passed to an identity HTTP-message signer. */
+export type IdentitySignHttpMessageOptions = Omit<MessageSig.sign.Options, 'privateKey'>
 
-/** RFC 9421 headers returned by an identity signer. */
-export type IdentitySignReturn = MessageSig.Headers
+/** RFC 9421 headers returned by an identity HTTP-message signer. */
+export type IdentitySignHttpMessageReturn = MessageSig.Headers
 
 /**
  * Parent `Wata.create` context lazy-bound into transports that need
@@ -199,6 +210,38 @@ export type Any<role extends Role = Role, name extends string = string> = Transp
   name,
   { sendValue: unknown }
 >
+
+/**
+ * Transport-owned members beyond the normalized base {@link Transport}
+ * contract — e.g. the `mobileLink` transport's `handleUrl`. The wrapping
+ * consumer session hoists these onto its named accessor so callers reach
+ * them directly as `wata.<name>.<member>`, mirroring the host side where
+ * the named accessor *is* the transport.
+ */
+export type Extras<transport> = Omit<transport, keyof Any>
+
+/**
+ * Runtime counterpart to {@link Extras}: the own keys of the normalized
+ * base {@link Transport} contract. The consumer session hoists every
+ * *other* own key off the wrapped transport so transport-specific
+ * helpers (e.g. `mobileLink`'s `handleUrl`) surface directly on
+ * `wata.<name>`.
+ */
+export const baseKeys = [
+  'bind',
+  'callbackUrls',
+  'capabilities',
+  'close',
+  'discovery',
+  'exchange',
+  'name',
+  'on',
+  'publicKey',
+  'role',
+  'routes',
+  'send',
+  'start',
+] as const satisfies readonly (keyof Any)[]
 
 /**
  * The normalized transport contract. Every adapter — consumer-side,

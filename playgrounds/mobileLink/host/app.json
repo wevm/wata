@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "mobileLink host",
+    "slug": "mobile-link-host-playground",
+    "scheme": "com.wata.mobilelink.host",
+    "ios": {
+      "bundleIdentifier": "com.anonymous.mobile-link-host-playground"
+    }
+  }
+}

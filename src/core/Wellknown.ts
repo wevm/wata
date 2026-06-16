@@ -13,8 +13,7 @@
  *
  */
 
-import { sha256 } from '@noble/hashes/sha2.js'
-import { Bytes, Hex } from 'ox'
+import { Bytes, Hash } from 'ox'
 
 import * as Discovery from './Discovery.js'
 import * as Http from './Http.js'
@@ -45,7 +44,7 @@ export const consumerMaxAge = 3600
  * is byte-stable: the same input always produces the same output.
  */
 export function etag(serialized: string): string {
-  return `"${Hex.fromBytes(sha256(Bytes.fromString(serialized))).slice(2)}"`
+  return `"${Hash.sha256(Bytes.fromString(serialized), { as: 'Hex' }).slice(2)}"`
 }
 
 /**

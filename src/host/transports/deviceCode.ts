@@ -57,9 +57,8 @@
  * ```
  */
 
-import { sha256 } from '@noble/hashes/sha2.js'
 import { Hono } from 'hono'
-import { Base64, Bytes } from 'ox'
+import { Base64, Bytes, Hash } from 'ox'
 
 import * as Discovery from '../../core/Discovery.js'
 import * as Envelope from '../../core/Envelope.js'
@@ -703,7 +702,7 @@ function generateUserCode(): string {
 
 /** PKCE challenge from `code_verifier` (`base64url(SHA-256(verifier))`). */
 export function pkceChallenge(verifier: string): string {
-  const digest = sha256(Bytes.fromString(verifier))
+  const digest = Hash.sha256(Bytes.fromString(verifier), { as: 'Bytes' })
   return Base64.fromBytes(digest, { pad: false, url: true })
 }
 

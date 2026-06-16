@@ -7,6 +7,14 @@
     "moduleResolution": "nodenext",
     "target": "esnext",
     "paths": {
+      // Resolve the optional `expo-crypto` peer (imported by
+      // `wata/react-native/polyfills`) to a self-contained ambient shim when
+      // compiling wata's own source, so its real types don't pull Expo/React
+      // Native global augmentations (e.g. a `FormData` without `.get`) into the
+      // node-flavored source graph. Emit is unaffected — `import 'expo-crypto'`
+      // survives for consumers. Expo apps override this with `paths: {}` and
+      // resolve the real package.
+      "expo-crypto": ["./src/react-native/expo-crypto.d.ts"],
       "wata": ["./src/index.ts"],
       "wata/consumer": ["./src/consumer.ts"],
       "wata/consumer/transports/deviceCode": ["./src/consumer/transports/deviceCode.ts"],
