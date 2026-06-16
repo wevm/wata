@@ -470,19 +470,19 @@ export default {
 ```ts
 import { Discovery, Wata, relay } from 'wata'
 
-// 1. Create the consumer with a relay transport (URL supplied later).
-const wata = Wata.create({ transports: [relay()] })
-
-// 2. Discover relay-capable hosts.
+// 1. Discover relay-capable hosts.
 const response = await fetch('https://directory.example/v1/hosts?transport=relay')
 const { items } = await response.json()
 
-// 3. Validate the candidate against its own host.json.
+// 2. Validate the candidate against its own host.json.
 const host = await Discovery.fetchHost(items[0].origin)
 
-// 4. Connect over the validated host's advertised relay — `start()`
-//    resolves with the pairing prompt to render for the host to scan.
-const { uri } = await wata.start({ url: host.transports.relay.url })
+// 3. Create the consumer over the validated host's advertised relay.
+const wata = Wata.create({ transports: [relay({ url: host.transports.relay.url })] })
+
+// 4. Connect — `start()` resolves with the pairing prompt to render for
+//    the host to scan.
+const { uri } = await wata.start()
 renderQrCode(uri)
 
 const { result } = await wata.send({ method: 'ping', params: [] })
