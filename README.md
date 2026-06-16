@@ -365,8 +365,6 @@ createServer(Server.node(relay).listener).listen(8787)
 
 Direct, ongoing same-device session between two mobile apps. The consumer hands off to the host app via its custom URL scheme; the host verifies the consumer against its published `consumer.json` and signs an `identity_sig` that the consumer pins against the host's `host.json`. Subsequent messages flow over OS deep links in both directions — feed OS-routed callbacks back in via `transport.handleUrl(url)`.
 
-React Native (Hermes) lacks `crypto.getRandomValues`, so import the polyfill once at app startup: `import 'wata/react-native/polyfills'`.
-
 [See example →](./playgrounds/mobileLink)
 
 #### Consumer
