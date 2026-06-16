@@ -318,7 +318,7 @@ type ConsumerSessionCore<
    * when a UI wants to surface the connecting state before any traffic.
    *
    * Forwards any start options the wrapped transport accepts (e.g. the
-   * relay transport's `{ scheme }`) and resolves with whatever the
+   * relay transport's `{ target }`) and resolves with whatever the
    * transport surfaces on open (e.g. the relay transport's pairing
    * {@link Transport.PromptOf | prompt}, so callers can render the
    * pairing link without subscribing to `'prompt'`).

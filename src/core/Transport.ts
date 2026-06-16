@@ -327,7 +327,7 @@ type Shape<role extends Role, name extends string, options extends ResolvedOptio
   /**
    * Open the transport. Resolves once the wire is ready to send and
    * receive. Transports that accept per-start configuration (e.g. the
-   * relay transport's `{ scheme }` / `{ pairingUri }`) widen
+   * relay transport's `{ target }` / `{ pairingUri }`) widen
    * {@link Options.startOptions}; the rest take no argument. Transports
    * that surface a value on open (e.g. the relay transport's pairing
    * {@link PromptOf | prompt}) widen {@link Options.startReturn}; the
