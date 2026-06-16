@@ -477,8 +477,16 @@ const { items } = await response.json()
 // 2. Validate the candidate against its own host.json.
 const host = await Discovery.fetchHost(items[0].origin)
 
-// 3. Create the consumer over the validated host's advertised relay.
-const wata = Wata.create({ transports: [relay({ url: host.transports.relay.url })] })
+// 3. Create the consumer over the validated host's advertised relay,
+//    targeting the host's `deep_link` so the pairing link opens its app.
+const wata = Wata.create({
+  transports: [
+    relay({
+      target: host.deep_link?.universal_link ?? host.deep_link?.scheme,
+      url: host.transports.relay.url,
+    }),
+  ],
+})
 
 // 4. Connect — `start()` resolves with the pairing prompt to render for
 //    the host to scan.

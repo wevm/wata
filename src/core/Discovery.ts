@@ -205,11 +205,35 @@ export namespace schema {
     version: z.literal(version),
   } as const
 
+  /**
+   * Top-level app-launch descriptor (`deep_link`). Tells consumers how to
+   * open the host's native app and is used as the default link `target`
+   * when pairing. At least one of `scheme` / `universal_link` MUST be
+   * present.
+   */
+  export const deepLink = z
+    .object({
+      /** Custom URL scheme registered by the host app (e.g. `examplewallet`). */
+      scheme: z.optional(z.string().check(z.minLength(1))),
+      /** HTTPS universal/app-link prefix the host responds to. */
+      universal_link: z.optional(httpsUrl),
+    })
+    .check(
+      z.refine((value) => value.scheme !== undefined || value.universal_link !== undefined, {
+        error: 'deep_link must contain `scheme` or `universal_link`',
+      }),
+    )
+
   /** Host-side discovery manifest published at `host.json`. */
   export const hostDocument = z.object({
     ...sharedHeader,
     /** Optional capability tags for coarse-grained directory filtering. */
     capabilities: z.optional(z.array(z.string())),
+    /**
+     * How to launch the host's native app when pairing. Used as the
+     * default link `target` for transports that emit deep links.
+     */
+    deep_link: z.optional(deepLink),
     /** Short human-facing description shown alongside `name`. */
     description: z.optional(z.string()),
     /** Optional URL of a square icon. */

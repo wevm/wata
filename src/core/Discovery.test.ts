@@ -149,6 +149,25 @@ describe('parseHost', () => {
       Errors.ProtocolError,
     )
   })
+
+  test('parses a top-level deep_link', () => {
+    const parsed = Discovery.parseHost({
+      ...validHostJson,
+      deep_link: { scheme: 'examplewallet', universal_link: 'https://wallet.example/app' },
+    })
+    expect(parsed.deep_link).toMatchInlineSnapshot(`
+      {
+        "scheme": "examplewallet",
+        "universal_link": "https://wallet.example/app",
+      }
+    `)
+  })
+
+  test('rejects a deep_link with neither scheme nor universal_link', () => {
+    expect(() => Discovery.parseHost({ ...validHostJson, deep_link: {} })).toThrowError(
+      Errors.ProtocolError,
+    )
+  })
 })
 
 describe('parseConsumer', () => {
