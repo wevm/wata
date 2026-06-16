@@ -16,13 +16,14 @@ bun i wata
 
 ## Transports
 
-| Transport         | Description                                                                                            | Peers             |
-| ----------------- | ------------------------------------------------------------------------------------------------------ | ----------------- |
-| `postMessage`     | Same-device browser session over a `Window`, `WindowProxy`, or `MessagePort` (popup, iframe, channel). | Browser ⇄ Browser |
-| `deviceCode`      | OAuth 2.0 Device Authorization Grant (RFC 8628) over HTTP, with PKCE and a bring-your-own approval UI. | CLI ⇄ Browser     |
-| `mobileWebAuth`   | Same-device mobile app to web host flow using browser auth and encrypted app-link callbacks.           | Mobile ⇄ Browser  |
-| `webhookCallback` | Signed HTTP registration + callback flow for consumers that can receive webhooks.                      | Server ⇄ Server   |
+| Transport         | Description                                                                                                                                                          | Peers             |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `postMessage`     | Same-device browser session over a `Window`, `WindowProxy`, or `MessagePort` (popup, iframe, channel).                                                               | Browser ⇄ Browser |
+| `deviceCode`      | OAuth 2.0 Device Authorization Grant (RFC 8628) over HTTP, with PKCE and a bring-your-own approval UI.                                                               | CLI ⇄ Browser     |
+| `mobileWebAuth`   | Same-device mobile app to web host flow using browser auth and encrypted app-link callbacks.                                                                         | Mobile ⇄ Browser  |
+| `webhookCallback` | Signed HTTP registration + callback flow for consumers that can receive webhooks.                                                                                    | Server ⇄ Server   |
 | `relay`           | Remote session over an untrusted HTTPS relay; the web consumer shows a QR/link, the mobile host scans it, exchanging end-to-end-encrypted bodies (SSE or long-poll). | Web ⇄ Mobile      |
+| `mobileLink`      | Direct, ongoing same-device session between two mobile apps over OS deep links / custom URL schemes, with host long-term identity verification (`identity_sig`).     | Mobile ⇄ Mobile   |
 
 ## Usage
 
@@ -358,6 +359,73 @@ import { Relay, Server, Store } from 'wata/server'
 
 const relay = Relay.create({ store: Store.memory() })
 createServer(Server.node(relay).listener).listen(8787)
+```
+
+### `mobileLink`
+
+Direct, ongoing same-device session between two mobile apps. The consumer hands off to the host app via its custom URL scheme; the host verifies the consumer against its published `consumer.json` and signs an `identity_sig` that the consumer pins against the host's `host.json`. Subsequent messages flow over OS deep links in both directions — feed OS-routed callbacks back in via `transport.handleUrl(url)`.
+
+React Native (Hermes) lacks `crypto.getRandomValues`, so import the polyfill once at app startup: `import 'wata/react-native/polyfills'`.
+
+[See example →](./playgrounds/mobileLink)
+
+#### Consumer
+
+Hands off to the host on the first request, then receives the encrypted, identity-verified response via the callback deep link.
+
+```ts
+import * as Linking from 'expo-linking'
+import { Wata, mobileLink } from 'wata'
+
+const wata = Wata.create({
+  baseUrl: 'https://app.example',
+  meta: { name: 'Example App' },
+  transports: [
+    mobileLink({
+      host: 'https://wallet.example',
+      async openLink(url) {
+        await Linking.openURL(url)
+      },
+      returnUrl: 'com.example.app://cb',
+    }),
+  ],
+})
+
+// Feed OS-routed callback deep links back into the transport.
+Linking.addEventListener('url', ({ url }) => wata.mobileLink.handleUrl(url))
+
+const { result } = await wata.send({ method: 'wallet_connect', params: [] })
+```
+
+#### Host
+
+Verifies the inbound consumer, answers approved requests, and opens the consumer's `return_url` to deliver the signed response.
+
+```ts
+import * as Linking from 'expo-linking'
+import { Identity, Wata, mobileLink } from 'wata/host'
+
+const wata = Wata.create({
+  baseUrl: 'https://wallet.example',
+  identity: Identity.fromPrivateKey(privateKey),
+  meta: { name: 'Example Wallet' },
+  transports: [
+    mobileLink({
+      async openLink(url) {
+        await Linking.openURL(url)
+      },
+      scheme: 'com.example.wallet',
+    }),
+  ],
+})
+
+wata.onRequest(async (event) => {
+  if (event.method === 'wallet_connect')
+    await event.respond(['0x0000000000000000000000000000000000000001'])
+})
+
+// Feed OS-routed inbound deep links back into the transport.
+Linking.addEventListener('url', ({ url }) => wata.mobileLink.handleUrl(url))
 ```
 
 ## License
