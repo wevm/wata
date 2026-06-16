@@ -14,11 +14,20 @@ describe('relay (consumer)', () => {
     expectTypeOf<Relay.Options>().not.toHaveProperty('onPrompt')
   })
 
-  test('start accepts an optional scheme', () => {
+  test('start accepts an optional scheme and resolves with the prompt', () => {
     const transport = relay({ url: 'https://relay.example' })
     expectTypeOf(transport.start).parameter(0).toEqualTypeOf<Relay.StartOptions | undefined>()
-    expectTypeOf(transport.start()).toEqualTypeOf<Promise<void>>()
-    expectTypeOf(transport.start({ scheme: 'example-wallet' })).toEqualTypeOf<Promise<void>>()
+    expectTypeOf(transport.start()).toEqualTypeOf<Promise<Relay.Prompt>>()
+    expectTypeOf(transport.start({ scheme: 'example-wallet' })).toEqualTypeOf<
+      Promise<Relay.Prompt>
+    >()
+  })
+
+  test('constructs with no options and accepts a start-time url', () => {
+    const transport = relay()
+    expectTypeOf(transport.start({ url: 'https://relay.example' })).toEqualTypeOf<
+      Promise<Relay.Prompt>
+    >()
   })
 
   test('feeds Wata.create as a consumer transport', () => {
@@ -27,9 +36,10 @@ describe('relay (consumer)', () => {
     expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
   })
 
-  test('forwards the scheme through a single-transport `wata.start`', () => {
+  test('forwards the scheme through a single-transport `wata.start` and resolves with the prompt', () => {
     const wata = Wata.create({ transports: [relay({ url: 'https://relay.example' })] })
-    expectTypeOf(wata.start({ scheme: 'example-wallet' })).toEqualTypeOf<Promise<void>>()
+    expectTypeOf(wata.start({ scheme: 'example-wallet' })).toEqualTypeOf<Promise<Relay.Prompt>>()
+    expectTypeOf(wata.start()).toEqualTypeOf<Promise<Relay.Prompt>>()
   })
 
   test('surfaces the relay transport by name on a multi-transport consumer', () => {
@@ -40,7 +50,9 @@ describe('relay (consumer)', () => {
       ],
     })
     expectTypeOf(wata.relay.start).parameter(0).toEqualTypeOf<Relay.StartOptions | undefined>()
-    expectTypeOf(wata.relay.start({ scheme: 'example-wallet' })).toEqualTypeOf<Promise<void>>()
+    expectTypeOf(wata.relay.start({ scheme: 'example-wallet' })).toEqualTypeOf<
+      Promise<Relay.Prompt>
+    >()
   })
 
   test('surfaces the relay prompt payload on the consumer `prompt` event', () => {

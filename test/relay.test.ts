@@ -22,6 +22,24 @@ function serverFetch(server: { fetch: (request: Request) => Promise<Response> })
 }
 
 describe('relay', () => {
+  test('start() resolves with the pairing prompt without subscribing', async () => {
+    const server = Relay.create({ keepaliveInterval: 50 })
+    const consumer = Wata.create({
+      transports: [relay({ fetch: serverFetch(server), url: 'https://relay.test' })],
+    })
+
+    // No `onPrompt` — read the pairing link straight off `start()`.
+    const { expiresAt, uri } = await consumer.start()
+    expect(uri).toMatch(/^urpc:\/\/\?consumer_pubkey=/)
+    expect(typeof expiresAt).toBe('number')
+
+    // A second `start()` is idempotent and returns the same prompt.
+    const again = await consumer.start()
+    expect(again.uri).toBe(uri)
+
+    await consumer.close()
+  })
+
   test('establishes a session and messages back and forth end to end', async () => {
     const server = Relay.create({ keepaliveInterval: 50 })
     const prompt = deferred<string>()

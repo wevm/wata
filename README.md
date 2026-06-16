@@ -317,7 +317,7 @@ Remote session between a web consumer and a mobile host, brokered by an untruste
 
 #### Consumer
 
-Lazily starts the session on the first request and emits a `'prompt'` event carrying the pairing `uri` to display.
+Starts the session, which resolves with the pairing `uri` to display, then sends once the host connects.
 
 ```ts
 import { Wata, relay } from 'wata'
@@ -326,8 +326,10 @@ const wata = Wata.create({
   transports: [relay({ url: 'https://relay.example' })],
 })
 
-// Render the pairing link (e.g. as a QR code) when it's issued.
-wata.onPrompt(({ uri }) => renderQrCode(uri))
+// `start()` resolves with the pairing prompt — render it (e.g. as a QR
+// code) for the host to scan. (Or subscribe via `wata.onPrompt`.)
+const { uri } = await wata.start()
+renderQrCode(uri)
 
 const { result } = await wata.send({ method: 'ping', params: [] })
 ```
@@ -424,6 +426,66 @@ wata.onRequest(async (event) => {
 
 // Feed OS-routed inbound deep links back into the transport.
 Linking.addEventListener('url', ({ url }) => wata.mobileLink.handleUrl(url))
+```
+
+## Directory
+
+#### Server
+
+```ts
+import { createServer } from 'node:http'
+import { Directory, Server, Store } from 'wata/server'
+
+const store = Store.memory()
+const origins = ['https://wallet.example', 'https://other.example']
+
+// Index the seed list now, then keep it fresh (run on a cron in production).
+await Directory.crawl({ origins, store })
+setInterval(() => Directory.crawl({ origins, store }), 60 * 60 * 1000)
+
+// Serve `/v1/hosts` — `create` returns a web-standard `{ fetch }` handler.
+const directory = Directory.create({ store })
+createServer(Server.node(directory).listener).listen(8788)
+```
+
+On Cloudflare, back it with KV and run the crawl from a cron trigger:
+
+```ts
+import { Directory, Store } from 'wata/server'
+
+const origins = ['https://wallet.example']
+
+export default {
+  fetch(request: Request, env: Env) {
+    return Directory.create({ store: Store.cloudflare(env.DIRECTORY_KV) }).fetch(request)
+  },
+  scheduled(_event: ScheduledEvent, env: Env) {
+    return Directory.crawl({ origins, store: Store.cloudflare(env.DIRECTORY_KV) })
+  },
+}
+```
+
+#### Query
+
+```ts
+import { Discovery, Wata, relay } from 'wata'
+
+// 1. Create the consumer with a relay transport (URL supplied later).
+const wata = Wata.create({ transports: [relay()] })
+
+// 2. Discover relay-capable hosts.
+const response = await fetch('https://directory.example/v1/hosts?transport=relay')
+const { items } = await response.json()
+
+// 3. Validate the candidate against its own host.json.
+const host = await Discovery.fetchHost(items[0].origin)
+
+// 4. Connect over the validated host's advertised relay — `start()`
+//    resolves with the pairing prompt to render for the host to scan.
+const { uri } = await wata.start({ url: host.transports.relay.url })
+renderQrCode(uri)
+
+const { result } = await wata.send({ method: 'ping', params: [] })
 ```
 
 ## License
