@@ -1,5 +1,13 @@
 # wata
 
+## 0.1.1
+
+### Patch Changes
+
+- 3d0b005: Added `Directory` server.
+- cde49e2: Added a top-level `deep_link` field to parsed host discovery documents.
+- cde49e2: Renamed the relay transport's `scheme` option to `target` on `relay({ target })` and `relay.start({ target })`.
+
 ## 0.1.0
 
 ### Minor Changes
