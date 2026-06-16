@@ -23,7 +23,7 @@ bun i wata
 | `mobileWebAuth`   | Same-device mobile app to web host flow using browser auth and encrypted app-link callbacks.                                                                         | Mobile ⇄ Browser  |
 | `webhookCallback` | Signed HTTP registration + callback flow for consumers that can receive webhooks.                                                                                    | Server ⇄ Server   |
 | `relay`           | Remote session over an untrusted HTTPS relay; the web consumer shows a QR/link, the mobile host scans it, exchanging end-to-end-encrypted bodies (SSE or long-poll). | Web ⇄ Mobile      |
-| `mobileLink`      | Direct, ongoing same-device session between two mobile apps over OS deep links / custom URL schemes, with host long-term identity verification (`identity_sig`).     | Mobile ⇄ Mobile   |
+| `mobileLink`      | Direct, ongoing same-device session between two mobile apps over OS deep links                                                                                       | Mobile ⇄ Mobile   |
 
 ## Usage
 
