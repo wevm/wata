@@ -1,0 +1,21 @@
+{
+  "name": "example-mobile-web-auth-host",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check:types": "tsc",
+    "dev": "vite",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "ox": "latest",
+    "wata": "latest"
+  },
+  "devDependencies": {
+    "@hono/node-server": "latest",
+    "@types/node": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}

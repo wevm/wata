@@ -1,0 +1,22 @@
+{
+  "name": "example-mobile-web-auth-consumer",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "scripts": {
+    "check:types": "tsc",
+    "dev": "expo start"
+  },
+  "dependencies": {
+    "expo": "latest",
+    "expo-crypto": "~56.0.4",
+    "expo-web-browser": "latest",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "wata": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "typescript": "latest"
+  }
+}

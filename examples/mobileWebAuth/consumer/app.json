@@ -1,0 +1,8 @@
+{
+  "expo": {
+    "name": "mobile-web-auth example",
+    "platforms": ["ios", "android"],
+    "scheme": "com.example.mobilewebauth",
+    "slug": "example-mobile-web-auth-consumer"
+  }
+}
