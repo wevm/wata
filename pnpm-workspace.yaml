@@ -36,8 +36,7 @@ nodeOptions: '--disable-warning=ExperimentalWarning --disable-warning=Deprecatio
 
 packages:
   - .
-  - examples/*
-  - examples/relay/*
+  - examples/**
   - playgrounds/*
   - playgrounds/mobileLink/*
 
