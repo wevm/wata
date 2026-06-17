@@ -284,8 +284,8 @@ function pair(options: PairOptions = {}) {
     )
   }
 
-  async function approve(body?: string): Promise<void> {
-    const code = await findActiveCode()
+  async function approve(body?: string, code_explicit?: string): Promise<void> {
+    const code = code_explicit ?? (await findActiveCode())
     await submitApproval(
       code,
       body ??
@@ -467,6 +467,70 @@ describe('webhookCallback end-to-end', () => {
         },
       ]
     `)
+  })
+
+  test('keeps one session open across sequential sends', async () => {
+    const setup = pair()
+    const { approve, consumerTransport, hostTransport } = setup
+    const wata = await Wata.create({
+      baseUrl: setup.consumerOrigin,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
+      transports: [consumerTransport],
+    }).start()
+    await HostWata.create({
+      identity: fromPrivateKey(setup.hostKeypair.privateKey),
+      transports: [hostTransport],
+    }).start()
+    const responses: Session.RpcResponsesPayload[] = []
+    wata.onEnvelope((envelope) => {
+      if (envelope.type === 'rpc-responses') responses.push(envelope.payload)
+    })
+
+    // First send → approve → response.
+    const first = await wata.send({ method: 'ping', params: [] })
+    await approve(undefined, new URL(first.verificationUri).searchParams.get('code')!)
+    await waitFor(() => responses.length === 1)
+
+    // Second send on the SAME session — previously threw `ClosedError`.
+    const second = await wata.send({ method: 'ping', params: [] })
+    await approve(undefined, new URL(second.verificationUri).searchParams.get('code')!)
+    await waitFor(() => responses.length === 2)
+
+    expect(first.authReqId).not.toBe(second.authReqId)
+    expect(responses).toHaveLength(2)
+  })
+
+  test('routes concurrent in-flight sends to the matching intent', async () => {
+    const setup = pair()
+    const { approve, consumerTransport, hostTransport } = setup
+    const wata = await Wata.create({
+      baseUrl: setup.consumerOrigin,
+      identity: fromPrivateKey(setup.consumerKeypair.privateKey),
+      transports: [consumerTransport],
+    }).start()
+    await HostWata.create({
+      identity: fromPrivateKey(setup.hostKeypair.privateKey),
+      transports: [hostTransport],
+    }).start()
+    const responses: Session.RpcResponsesPayload[] = []
+    wata.onEnvelope((envelope) => {
+      if (envelope.type === 'rpc-responses') responses.push(envelope.payload)
+    })
+
+    // Two intents in flight at once.
+    const [reg1, reg2] = await Promise.all([
+      wata.send({ method: 'ping', params: [] }),
+      wata.send({ method: 'ping', params: [] }),
+    ])
+    expect(reg1.authReqId).not.toBe(reg2.authReqId)
+
+    // Approve out of order; each delivery is routed by `auth_req_id`.
+    await approve(undefined, new URL(reg2.verificationUri).searchParams.get('code')!)
+    await approve(undefined, new URL(reg1.verificationUri).searchParams.get('code')!)
+    await waitFor(() => responses.length === 2)
+
+    const ids = responses.flat().map((r) => r.id)
+    expect(ids.sort()).toEqual([1, 2])
   })
 
   test('host deferred to `start({ host })` drives the register exchange', async () => {
@@ -3875,9 +3939,9 @@ describe('webhookCallback end-to-end', () => {
     // Build a hand-rolled "replay" of the original delivery by
     // POSTing arbitrary bytes back to the consumer's webhook
     // listener with the same auth_req_id but a different idempotency
-    // key — we expect the request to be ignored because the
-    // single-exchange transport is already closed (no active
-    // auth_req_id), and the consumer returns idempotent 200.
+    // key — we expect the request to be ignored because the intent
+    // was consumed on the terminal response (no matching in-flight
+    // intent remains), and the consumer returns idempotent 200.
     const replay = await consumerTransport.fetch(
       new Request('https://acme.dev/cb', {
         body: '{"type":"rpc-responses","payload":[]}',
