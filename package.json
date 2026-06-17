@@ -14,8 +14,12 @@
   "devDependencies": {
     "@changesets/cli": "catalog:",
     "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "playwright": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
     "typescript": "catalog:",
     "vp": "catalog:",
     "zile": "catalog:"
@@ -40,10 +44,14 @@
     "zod": "catalog:"
   },
   "peerDependencies": {
-    "expo-crypto": "*"
+    "expo-crypto": "*",
+    "react": ">=18"
   },
   "peerDependenciesMeta": {
     "expo-crypto": {
+      "optional": true
+    },
+    "react": {
       "optional": true
     }
   },
@@ -162,6 +170,12 @@
       "types": "./dist/internal/Outbound.native.d.ts",
       "src": "./src/internal/Outbound.native.ts",
       "default": "./dist/internal/Outbound.native.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "src": "./src/react/index.ts",
+      "react-native": "./dist/react/index.js",
+      "default": "./dist/react/index.js"
     },
     "./react-native/polyfills": {
       "types": "./dist/react-native/polyfills.d.ts",

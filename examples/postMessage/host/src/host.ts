@@ -17,11 +17,13 @@ const log = document.getElementById('log') as HTMLPreElement
 let current: { id: number | string } | undefined
 
 // The consumer conveys its origin out of band on the host URL (spec §3.1).
-const session = await Wata.create({
-  transports: [
-    postMessage({ targetOrigin: new URL(location.href).searchParams.get('origin') ?? undefined }),
-  ],
-}).start()
+const consumerOrigin = new URL(location.href).searchParams.get('origin') ?? undefined
+
+const wata = Wata.create({
+  transports: [postMessage()],
+})
+
+const session = await wata.start({ targetOrigin: consumerOrigin })
 
 append('open')
 session.onClose((cause) => append(`close${cause ? `: ${cause.message}` : ''}`))

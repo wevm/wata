@@ -8,5 +8,5 @@
     "skipLibCheck": true,
     "strict": true
   },
-  "include": ["index.ts", "src"]
+  "include": ["discovery.ts", "index.ts", "src"]
 }

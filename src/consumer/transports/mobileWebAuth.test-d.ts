@@ -40,13 +40,29 @@ describe('mobileWebAuth (consumer)', () => {
     expectTypeOf(transport.start)
       .parameter(0)
       .toEqualTypeOf<
-        Required<Pick<MobileWebAuth.Options, 'host'>> & Pick<MobileWebAuth.Options, 'authUrl'>
+        Required<Pick<MobileWebAuth.Options, 'host'>> &
+          Pick<MobileWebAuth.Options, 'authUrl' | 'openAuthSession'>
       >()
     expectTypeOf(transport.start({ host: 'https://wallet.example' })).toEqualTypeOf<Promise<void>>()
     // @ts-expect-error host is required when it was omitted at construction
     transport.start()
     // @ts-expect-error host is required when it was omitted at construction
     transport.start({ authUrl: 'https://wallet.example/auth/mobile' })
+  })
+
+  test('host + openAuthSession can both be deferred to start', () => {
+    const transport = mobileWebAuth({ callback: 'com.example.app:/auth' })
+    expectTypeOf(transport.start)
+      .parameter(0)
+      .toEqualTypeOf<
+        Required<Pick<MobileWebAuth.Options, 'host'>> &
+          Pick<MobileWebAuth.Options, 'authUrl' | 'openAuthSession'>
+      >()
+    expectTypeOf(
+      transport.start({ host: 'https://wallet.example', openAuthSession: () => undefined }),
+    ).toEqualTypeOf<Promise<void>>()
+    // @ts-expect-error host is required when it was omitted at construction
+    transport.start({ openAuthSession: () => undefined })
   })
 
   test('start makes host optional when it was pinned at construction', () => {

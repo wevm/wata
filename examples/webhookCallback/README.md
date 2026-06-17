@@ -6,5 +6,3 @@ cd webhook-callback
 pnpm install
 pnpm dev
 ```
-
-Open http://localhost:4646, send a message, then approve or deny it on the host page.

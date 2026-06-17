@@ -65,10 +65,19 @@ export type Options = {
    * Open `authorizationUrl` in a system-browser auth session and
    * resolve with the delivered callback URL. Resolve `undefined` when
    * the user dismisses the session without a callback.
+   *
+   * Omit it to supply the platform primitive at start time instead via
+   * `wata.mobileWebAuth.start({ openAuthSession })`, so a single hoisted
+   * `Wata.create({ transports: [mobileWebAuth()] })` can be shared
+   * between a discovery server (which only serves `consumer.json` and
+   * never starts a session) and the app (which injects its native
+   * auth-session primitive at start). `start`/`send` throw
+   * {@link Transport.TransportError} when neither construction nor start
+   * supplies it.
    */
-  openAuthSession: (
-    options: openAuthSession.Options,
-  ) => AuthSessionResult | Promise<AuthSessionResult>
+  openAuthSession?:
+    | ((options: openAuthSession.Options) => AuthSessionResult | Promise<AuthSessionResult>)
+    | undefined
 }
 
 export declare namespace openAuthSession {
@@ -88,12 +97,13 @@ export declare namespace openAuthSession {
  * Parameterized by the construction {@link Options}: a per-session
  * `host` is **required** here only when it was not supplied at
  * construction (`mobileWebAuth()`); once `mobileWebAuth({ host })` pins
- * it, both fields are optional per-session overrides.
+ * it, `host` joins `authUrl` and `openAuthSession` as optional
+ * per-session overrides.
  */
 export type StartOptions<options = Options> = Transport.StartOptions<
   options,
   Options,
-  { optional: 'authUrl'; required: 'host' }
+  { optional: 'authUrl' | 'openAuthSession'; required: 'host' }
 >
 
 /** Consumer-side mobile-web-auth transport. */
@@ -109,16 +119,12 @@ export type MobileWebAuth<options = Options> = Transport.Transport<
 export function mobileWebAuth<options extends Options>(
   options: options = {} as options,
 ): MobileWebAuth<options> {
-  const {
-    callback,
-    fetch: fetchImpl = globalThis.fetch.bind(globalThis),
-    openAuthSession,
-  } = options
+  const { callback, fetch: fetchImpl = globalThis.fetch.bind(globalThis) } = options
 
   // Per-session start-time overrides, captured when `start()` runs and
   // read by the `send()`-driven auth exchange. Start values win over
   // construction.
-  let start_options: Pick<Options, 'authUrl' | 'host'> = {}
+  let start_options: Pick<Options, 'authUrl' | 'host' | 'openAuthSession'> = {}
   const callbackUrl = assertCallback(callback)
   const id_ctor = options.id ? assertConsumerId(options.id) : undefined
   let id_bound: string | undefined
@@ -144,6 +150,16 @@ export function mobileWebAuth<options extends Options>(
   /** Host `auth_url` override from start ?? construction. */
   function authUrlOverride(): string | undefined {
     return start_options.authUrl ?? options.authUrl
+  }
+
+  /** Platform auth-session opener from start ?? construction. */
+  function resolveOpenAuthSession(): NonNullable<Options['openAuthSession']> {
+    const openAuthSession = start_options.openAuthSession ?? options.openAuthSession
+    if (!openAuthSession)
+      throw new Transport.TransportError(
+        'mobile-web-auth `openAuthSession` must be supplied to `mobileWebAuth({ openAuthSession })` or `start({ openAuthSession })`',
+      )
+    return openAuthSession
   }
 
   async function resolveHost(): Promise<Discovery.HostDocument> {
@@ -221,7 +237,7 @@ export function mobileWebAuth<options extends Options>(
       requestId,
       state: stateValue,
     }
-    const result = await openAuthSession({ authorizationUrl, callback: callbackUrl })
+    const result = await resolveOpenAuthSession()({ authorizationUrl, callback: callbackUrl })
     if (result === undefined) {
       settle(cancelledEnvelope(requestId))
       return
@@ -280,12 +296,15 @@ export function mobileWebAuth<options extends Options>(
     }
   }
 
-  async function start(options: Pick<Options, 'authUrl' | 'host'> = {}): Promise<void> {
+  async function start(
+    options: Pick<Options, 'authUrl' | 'host' | 'openAuthSession'> = {},
+  ): Promise<void> {
     if (state.closed) throw new Transport.ClosedError('mobile-web-auth transport already closed')
     start_options = options
-    // Fail fast: surface a missing host at `start()` rather than waiting
-    // for the first `send()` to open the auth session.
+    // Fail fast: surface a missing host or auth-session opener at `start()`
+    // rather than waiting for the first `send()` to open the auth session.
     resolveHostInput()
+    resolveOpenAuthSession()
     state.started = true
   }
 

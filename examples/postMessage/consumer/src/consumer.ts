@@ -15,10 +15,9 @@ const hostOrigin = 'http://localhost:5182'
 const sendButton = document.getElementById('send') as HTMLButtonElement
 const log = document.getElementById('log') as HTMLPreElement
 
-const session = await Wata.create({
+const wata = Wata.create({
   transports: [
     postMessage({
-      host: hostOrigin,
       target: ({ host }) => {
         // Convey our origin out of band so the host can pin it (spec §3.1).
         const url = `${host}?origin=${encodeURIComponent(location.origin)}`
@@ -28,7 +27,9 @@ const session = await Wata.create({
       },
     }),
   ],
-}).start()
+})
+
+const session = await wata.start({ host: hostOrigin })
 
 append('open')
 session.onClose((cause) => append(`close${cause ? `: ${cause.message}` : ''}`))

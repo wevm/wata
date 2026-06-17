@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "pnpm \"/^dev:(discovery|host)$/\"",
     "dev:consumer": "pnpm --filter example-mobile-web-auth-consumer dev",
+    "dev:discovery": "pnpm --filter example-mobile-web-auth-consumer dev:discovery",
     "dev:host": "pnpm --filter example-mobile-web-auth-host dev"
   }
 }

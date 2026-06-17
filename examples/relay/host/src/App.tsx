@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { Button, ScrollView, Text, TextInput, View } from 'react-native'
 import { Session, Wata, relay } from 'wata/host'
+import { useSession } from 'wata/react'
 
 // `allowPrivateNetwork` lets the host pair from a LAN pairing link
 // (`relay=http://192.168.x.x:4860`) when scanning the dev consumer.
@@ -11,23 +12,28 @@ const wata = Wata.create({
 
 export default function App() {
   const [lines, setLines] = React.useState<readonly string[]>(['ready — paste a pairing uri'])
-  const [connected, setConnected] = React.useState(false)
   const [pending, setPending] = React.useState<readonly Session.RequestEvent[]>([])
   const [uri, setUri] = React.useState('')
-  const session = React.useRef<Awaited<ReturnType<typeof wata.relay.start>> | undefined>(undefined)
 
   const append = React.useCallback((line: string) => setLines((lines) => [...lines, line]), [])
-
-  React.useEffect(
-    () => () => {
-      void session.current?.close()
-    },
-    [],
-  )
 
   function settle(event: Session.RequestEvent) {
     setPending((queue) => queue.filter((queued) => queued !== event))
   }
+
+  const { session, start, status } = useSession(wata, {
+    onClose: (cause) => {
+      append(cause ? `closed: ${cause.message}` : 'closed')
+      setPending([])
+    },
+    onError: (error) => append(`error: ${error.message}`),
+    onRequest: (event) => {
+      append(`request: ${event.method} ${JSON.stringify(event.params)} — approve or deny`)
+      setPending((queue) => [...queue, event])
+    },
+  })
+
+  const connected = status === 'open'
 
   async function approve(event: Session.RequestEvent) {
     try {
@@ -54,24 +60,8 @@ export default function App() {
   async function connect() {
     try {
       append('connecting…')
-      const next = await wata.relay.start({ uri: uri.trim() })
-      session.current = next
-      const subscriptions = [
-        next.onRequest((event) => {
-          append(`request: ${event.method} ${JSON.stringify(event.params)} — approve or deny`)
-          setPending((queue) => [...queue, event])
-        }),
-        next.onClose((cause) => {
-          append(cause ? `closed: ${cause.message}` : 'closed')
-          session.current = undefined
-          setConnected(false)
-          setPending([])
-        }),
-        next.onError((error) => append(`error: ${error.message}`)),
-      ]
-      next.onClose(() => subscriptions.forEach((subscription) => subscription.abort()))
+      await start({ uri: uri.trim() })
       append('connected')
-      setConnected(true)
     } catch (error) {
       append(`${(error as Error).name}: ${(error as Error).message}`)
     }
@@ -95,16 +85,14 @@ export default function App() {
           <>
             <Button
               onPress={() => {
-                const current = session.current
-                if (!current) return
-                current
-                  .notify({ method: 'accountsChanged', params: [['0xabc']] })
+                session
+                  ?.notify({ method: 'accountsChanged', params: [['0xabc']] })
                   .then(() => append('notified accountsChanged'))
                   .catch((error: Error) => append(`error: ${error.message}`))
               }}
               title="Notify accountsChanged"
             />
-            <Button onPress={() => void session.current?.close()} title="Disconnect" />
+            <Button onPress={() => void session?.close()} title="Disconnect" />
           </>
         )
       ) : (

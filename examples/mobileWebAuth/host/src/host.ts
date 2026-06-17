@@ -21,12 +21,6 @@ import * as Identity from 'wata/identity'
 /** Origin the host is reachable at — must match what the mobile app dials. */
 const baseUrl = (process.env.HOST_BASE_URL ?? 'http://localhost:5611').replace(/\/+$/, '')
 
-/** Reverse-DNS private-use callback the mobile app registers (shared constant). */
-const callback = 'com.example.mobilewebauth://callback'
-
-/** The mobile app's app-link origin that publishes its `consumer.json`. */
-const consumerOrigin = 'https://app.example'
-
 /** Long-term Ed25519 identity published in `host.json`. */
 const privateKey = process.env.HOST_PRIVATE_KEY ?? Ed25519.createKeyPair().privateKey
 
@@ -40,18 +34,10 @@ const wata = Wata.create({
   },
   transports: [
     mobileWebAuth({
-      fetch: async (input) => {
-        const url = new URL(String(input))
-        if (url.href === `${consumerOrigin}/.well-known/urpc/consumer.json`)
-          return Response.json({
-            callback_urls: [callback],
-            id: 'app',
-            name: 'Example App',
-            origin: consumerOrigin,
-            version: '1.0',
-          })
-        return await globalThis.fetch(input)
-      },
+      // No `fetch` override: the host fetches the consumer's published
+      // `consumer.json` (served by the app's discovery server, see
+      // `consumer/discovery.ts`) over the network to confirm the callback
+      // URI is registered.
       html: {
         async authenticate({ actions, request }) {
           const form = await request.formData()

@@ -5,7 +5,8 @@
   "main": "./index.ts",
   "scripts": {
     "check:types": "tsc",
-    "dev": "expo start"
+    "dev": "expo start",
+    "dev:discovery": "tsx discovery.ts"
   },
   "dependencies": {
     "expo": "latest",
@@ -16,7 +17,10 @@
     "wata": "latest"
   },
   "devDependencies": {
+    "@hono/node-server": "latest",
+    "@types/node": "latest",
     "@types/react": "latest",
+    "tsx": "latest",
     "typescript": "latest"
   }
 }
