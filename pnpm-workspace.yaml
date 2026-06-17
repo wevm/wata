@@ -12,7 +12,11 @@ catalog:
   '@noble/ciphers': ^2.2.0
   '@noble/hashes': ^2.2.0
   '@types/node': ^25.6.0
+  '@types/react': ^19.0.0
+  '@types/react-dom': ^19.0.0
   hono: ^4.6.14
+  react: ^19.0.0
+  react-dom: ^19.0.0
   '@vitest/coverage-v8': 4.1.5
   ox: ~0.14.20
   playwright: ^1.60.0
@@ -36,8 +40,7 @@ nodeOptions: '--disable-warning=ExperimentalWarning --disable-warning=Deprecatio
 
 packages:
   - .
-  - examples/*
-  - examples/relay/*
+  - examples/**
   - playgrounds/*
   - playgrounds/mobileLink/*
 

@@ -46,7 +46,9 @@ const wata = Wata.create({
   ],
 })
 
-wata.onRequest(async (event) => {
+const session = await wata.start()
+
+session.onRequest(async (event) => {
   if (event.method !== 'message.send') {
     await event.reject({ code: -32601, data: event.method, message: 'method not found' })
     return

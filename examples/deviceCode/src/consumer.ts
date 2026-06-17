@@ -10,21 +10,21 @@ import { Wata, deviceCode } from 'wata'
 
 const baseUrl = 'http://localhost:4747'
 
-const wata = Wata.create({
+const session = await Wata.create({
   transports: [
     deviceCode({
       pollingInterval: 1_000,
       url: `${baseUrl}/auth/device`,
     }),
   ],
-})
+}).start()
 
-wata.onPrompt(({ userCode, verificationUriFull }) => {
+session.onPrompt(({ userCode, verificationUriFull }) => {
   console.log(`open ${verificationUriFull}`)
   console.log(`user_code: ${userCode}`)
 })
 
-const { result } = await wata.send({
+const { result } = await session.send({
   method: 'ping',
   params: [{ message: 'hello from consumer' }],
 })

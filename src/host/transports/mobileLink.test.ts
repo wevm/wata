@@ -1,6 +1,6 @@
 import { Base64 } from 'ox'
 import { describe, expect, test } from 'vp/test'
-import { Crypto, Discovery, Envelope, Identity, Session } from 'wata'
+import { Crypto, Discovery, Envelope, Identity, SessionKey } from 'wata'
 import { mobileLink } from 'wata/host'
 
 import * as MobileLinkEnvelope from '../../internal/MobileLinkEnvelope.js'
@@ -72,7 +72,7 @@ describe('mobileLink', () => {
     expect(callback.searchParams.get('version')).toBe('1')
     const pubkeyHost = Crypto.decodePublicKey(callback.searchParams.get('pubkey')!)
     const signature = Base64.toBytes(callback.searchParams.get('identity_sig')!)
-    const shared = Session.shared({
+    const shared = SessionKey.shared({
       privateKey: consumer.x25519.privateKey,
       publicKey: pubkeyHost,
     })

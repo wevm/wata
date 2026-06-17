@@ -22,20 +22,21 @@ function serverFetch(server: { fetch: (request: Request) => Promise<Response> })
 }
 
 describe('relay', () => {
-  test('start() resolves with the pairing prompt without subscribing', async () => {
+  test('start() resolves with a session that carries the pairing prompt without subscribing', async () => {
     const server = Relay.create({ keepaliveInterval: 50 })
     const consumer = Wata.create({
       transports: [relay({ fetch: serverFetch(server), url: 'https://relay.test' })],
     })
 
-    // No `onPrompt` — read the pairing link straight off `start()`.
-    const { expiresAt, uri } = await consumer.start()
+    // No `onPrompt` — read the pairing link straight off the session.
+    const session = await consumer.start()
+    const { expiresAt, uri } = session.prompt!
     expect(uri).toMatch(/^urpc:\/\/\?consumer_pubkey=/)
     expect(typeof expiresAt).toBe('number')
 
-    // A second `start()` is idempotent and returns the same prompt.
+    // A second `start()` is idempotent and returns the same session prompt.
     const again = await consumer.start()
-    expect(again.uri).toBe(uri)
+    expect(again.prompt?.uri).toBe(uri)
 
     await consumer.close()
   })
@@ -54,36 +55,39 @@ describe('relay', () => {
         }),
       ],
     })
-    consumer.onPrompt(({ uri }) => prompt.resolve(uri))
-    const pending = consumer.send({ method: 'ping', params: [] })
+    const consumer_session = await consumer.start()
+    consumer_session.onPrompt(({ uri }) => prompt.resolve(uri))
     const uri = await prompt.promise
     expect(uri).toMatch(/^urpc:\/\/\?consumer_pubkey=/)
+    const pending = consumer_session.send({ method: 'ping', params: [] })
 
     // Mobile app (host): constructed from the scanned pairing link.
-    const host = HostWata.create({ transports: [hostRelay({ fetch: serverFetch(server), uri })] })
-    host.onRequest(async (event) => {
+    const host = HostWata.create({
+      transports: [hostRelay({ fetch: serverFetch(server), uri: uri })],
+    })
+    const host_session = await host.start()
+    host_session.onRequest(async (event) => {
       if (event.method === 'ping') await event.respond('pong')
       if (event.method === 'add') {
         const [a, b] = event.params as [number, number]
         await event.respond(a + b)
       }
     })
-    await host.start()
 
     // The pre-pairing request flushes once the session keys.
     const { result } = await pending
     expect(result).toBe('pong')
 
     // Steady state — more round trips on the same session.
-    const second = await consumer.send({ method: 'add', params: [2, 3] })
+    const second = await consumer_session.send({ method: 'add', params: [2, 3] })
     expect(second.result).toBe(5)
 
     // Host → consumer notification over the same encrypted channel.
     const notified = deferred<{ method: string; params: unknown }>()
-    const subscription = consumer.onNotification((event) =>
+    const subscription = consumer_session.onNotification((event) =>
       notified.resolve({ method: event.method, params: event.params }),
     )
-    await host.notify({ method: 'accountsChanged', params: [['0xabc']] })
+    await host_session.notify({ method: 'accountsChanged', params: [['0xabc']] })
     expect(await notified.promise).toEqual({ method: 'accountsChanged', params: [['0xabc']] })
     subscription.abort()
 
@@ -106,33 +110,34 @@ describe('relay', () => {
         }),
       ],
     })
-    consumer.onPrompt(({ uri }) => prompt.resolve(uri))
-    const pending = consumer.send({ method: 'ping', params: [] })
+    const consumer_session = await consumer.start()
+    consumer_session.onPrompt(({ uri }) => prompt.resolve(uri))
     const uri = await prompt.promise
+    const pending = consumer_session.send({ method: 'ping', params: [] })
 
     const host = HostWata.create({
-      transports: [hostRelay({ fetch: serverFetch(server), receive: 'poll', uri })],
+      transports: [hostRelay({ fetch: serverFetch(server), uri: uri, receive: 'poll' })],
     })
-    host.onRequest(async (event) => {
+    const host_session = await host.start()
+    host_session.onRequest(async (event) => {
       if (event.method === 'ping') await event.respond('pong')
       if (event.method === 'add') {
         const [a, b] = event.params as [number, number]
         await event.respond(a + b)
       }
     })
-    await host.start()
 
     const { result } = await pending
     expect(result).toBe('pong')
 
-    const second = await consumer.send({ method: 'add', params: [2, 3] })
+    const second = await consumer_session.send({ method: 'add', params: [2, 3] })
     expect(second.result).toBe(5)
 
     const notified = deferred<{ method: string; params: unknown }>()
-    const subscription = consumer.onNotification((event) =>
+    const subscription = consumer_session.onNotification((event) =>
       notified.resolve({ method: event.method, params: event.params }),
     )
-    await host.notify({ method: 'accountsChanged', params: [['0xabc']] })
+    await host_session.notify({ method: 'accountsChanged', params: [['0xabc']] })
     expect(await notified.promise).toEqual({ method: 'accountsChanged', params: [['0xabc']] })
     subscription.abort()
 
@@ -152,9 +157,10 @@ describe('relay', () => {
       ],
     })
     const closed = deferred<Error | undefined>()
-    consumer.onPrompt(({ uri }) => prompt.resolve(uri))
-    consumer.onClose((cause) => closed.resolve(cause))
-    const pending = consumer.send({ method: 'ping', params: [] })
+    const consumer_session = await consumer.start()
+    consumer_session.onPrompt(({ uri }) => prompt.resolve(uri))
+    consumer_session.onClose((cause) => closed.resolve(cause))
+    const pending = consumer_session.send({ method: 'ping', params: [] })
     pending.catch(() => undefined)
     const uri = await prompt.promise
 
@@ -199,13 +205,9 @@ describe('relay', () => {
   test('a hoisted host pairs repeatedly through wata.relay.start', async () => {
     const server = Relay.create({ keepaliveInterval: 50 })
 
-    // Host is built once, listeners registered once — no uri yet.
+    // Host config is built once — no uri yet.
     const host = HostWata.create({
       transports: [hostRelay({ fetch: serverFetch(server) })],
-    })
-    host.onRequest(async (event) => {
-      if (event.method === 'ping') return event.respond('pong')
-      return event.respond(null)
     })
 
     async function pairOnce() {
@@ -213,10 +215,15 @@ describe('relay', () => {
       const consumer = Wata.create({
         transports: [relay({ fetch: serverFetch(server), url: 'https://relay.test' })],
       })
-      consumer.onPrompt(({ uri }) => prompt.resolve(uri))
-      const pending = consumer.send({ method: 'ping', params: [] })
+      const consumer_session = await consumer.start()
+      consumer_session.onPrompt(({ uri }) => prompt.resolve(uri))
       // Supply the scanned link at start time — no external pairing source.
-      await host.relay.start({ pairingUri: await prompt.promise })
+      const host_session = await host.relay.start({ uri: await prompt.promise })
+      host_session.onRequest(async (event) => {
+        if (event.method === 'ping') return event.respond('pong')
+        return event.respond(null)
+      })
+      const pending = consumer_session.send({ method: 'ping', params: [] })
       expect((await pending).result).toBe('pong')
       await consumer.close()
     }
@@ -265,15 +272,22 @@ describe('relay receive modes', () => {
         }),
       ],
     })
-    consumer.onPrompt(({ uri }) => prompt.resolve(uri))
-    const pending = consumer.send({ method: 'ping', params: [] })
+    const consumer_session = await consumer.start()
+    consumer_session.onPrompt(({ uri }) => prompt.resolve(uri))
     const uri = await prompt.promise
+    const pending = consumer_session.send({ method: 'ping', params: [] })
     const host = HostWata.create({
       transports: [
-        hostRelay({ fetch: serverFetch(server), pollInterval: 10, receive: receive.host, uri }),
+        hostRelay({
+          fetch: serverFetch(server),
+          uri: uri,
+          pollInterval: 10,
+          receive: receive.host,
+        }),
       ],
     })
-    host.onRequest(async (event) => {
+    const host_session = await host.start()
+    host_session.onRequest(async (event) => {
       if (event.method === 'ping') return event.respond('pong')
       if (event.method === 'add') {
         const [a, b] = event.params as [number, number]
@@ -281,9 +295,8 @@ describe('relay receive modes', () => {
       }
       return event.respond(null)
     })
-    await host.start()
     expect((await pending).result).toBe('pong')
-    return { consumer, host }
+    return { consumer: consumer_session, host: host_session }
   }
 
   for (const receive of modes) {

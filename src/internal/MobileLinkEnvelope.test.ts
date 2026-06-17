@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vp/test'
-import { Crypto, Envelope, Identity, Nonce, Session } from 'wata'
+import { Crypto, Envelope, Identity, Nonce, SessionKey } from 'wata'
 
 import * as MobileLinkEnvelope from './MobileLinkEnvelope.js'
 
@@ -7,7 +7,7 @@ const consumer = Crypto.randomKeypair()
 const host = Crypto.randomKeypair()
 const identity = Crypto.randomKeypair()
 
-const shared = Session.shared({
+const shared = SessionKey.shared({
   privateKey: consumer.x25519.privateKey,
   publicKey: host.x25519.publicKey,
 })

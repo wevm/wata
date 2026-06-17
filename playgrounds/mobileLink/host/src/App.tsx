@@ -19,33 +19,42 @@ const host = Wata.create({
   ],
 })
 
+type Session = Awaited<ReturnType<typeof host.mobileLink.start>>
+type Pending = Parameters<Parameters<Session['onRequest']>[0]>[0]
+
 export default function App() {
   const [log, setLog] = React.useState('waiting for requests...')
+  const sessionRef = React.useRef<Session | undefined>(undefined)
 
   // Incoming requests are held here until the user approves or rejects them.
-  type Pending = Parameters<Parameters<typeof host.onRequest>[0]>[0]
   const [pending, setPending] = React.useState<readonly Pending[]>([])
 
   React.useEffect(() => {
-    host.onRequest((event) => {
-      setLog(`request: ${event.method} ${JSON.stringify(event.params)} — awaiting approval`)
-      setPending((queue) => [...queue, event])
+    let onClose: AbortController | undefined
+    let onError: AbortController | undefined
+    let onRequest: AbortController | undefined
+    void host.mobileLink.start().then((session) => {
+      sessionRef.current = session
+      onClose = session.onClose((cause) => setLog(`closed${cause ? `: ${cause.message}` : ''}`))
+      onError = session.onError((cause) => setLog(`error: ${cause.name}: ${cause.message}`))
+      onRequest = session.onRequest((event) => {
+        setLog(`request: ${event.method} ${JSON.stringify(event.params)} — awaiting approval`)
+        setPending((queue) => [...queue, event])
+      })
     })
-
-    const onError = host.onError((cause) => setLog(`error: ${cause.name}: ${cause.message}`))
-    const onClose = host.onClose((cause) => setLog(`closed${cause ? `: ${cause.message}` : ''}`))
     const subscription = Linking.addEventListener('url', ({ url }) => {
-      void host.mobileLink.handleUrl(url)
+      void sessionRef.current?.handleUrl(url)
     })
     void Linking.getInitialURL().then((url) => {
-      if (url) void host.mobileLink.handleUrl(url)
+      if (url) void sessionRef.current?.handleUrl(url)
     })
     return () => {
       subscription.remove()
-      onError.abort()
-      onClose.abort()
+      onClose?.abort()
+      onError?.abort()
+      onRequest?.abort()
     }
-  }, [host])
+  }, [])
 
   function approve(event: Pending) {
     setPending((queue) => queue.filter((entry) => entry !== event))

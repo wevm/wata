@@ -1,6 +1,6 @@
 import { Base64 } from 'ox'
 import { describe, expect, test } from 'vp/test'
-import { Crypto, Discovery, Envelope, Identity, Nonce, Session } from 'wata'
+import { Crypto, Discovery, Envelope, Identity, Nonce, SessionKey } from 'wata'
 
 import * as MobileLinkEnvelope from '../../internal/MobileLinkEnvelope.js'
 import { mobileLink } from './mobileLink.js'
@@ -44,7 +44,7 @@ function hostRespond(
   const url = new URL(initialLink)
   const publicKeyConsumer = Crypto.decodePublicKey(url.searchParams.get('pubkey')!)
   const hostEph = Crypto.randomKeypair()
-  const shared = Session.shared({
+  const shared = SessionKey.shared({
     privateKey: hostEph.x25519.privateKey,
     publicKey: publicKeyConsumer,
   })
@@ -113,6 +113,9 @@ describe('mobileLink', () => {
 
   test('throws when no host is supplied at construction or start', async () => {
     const transport = mobileLink({ id: consumerId, openLink: () => {}, returnUrl })
+    // The type forbids `start()` here (host is required when omitted at
+    // construction); this guards the runtime fallback for untyped callers.
+    // @ts-expect-error host is required at start when omitted at construction
     await expect(transport.start()).rejects.toThrowError(/mobile-link host must be supplied/)
   })
 

@@ -1,10 +1,9 @@
-# mobileWebAuth example
-
-Minimal browser simulation of the `mobileWebAuth` transport.
+# Mobile Web Auth Example
 
 ```sh
+pnpx gitpick https://github.com/wevm/wata/tree/main/examples/mobileWebAuth mobile-web-auth
+cd mobile-web-auth
 pnpm install
-pnpm dev
+pnpm dev          # web wallet + consumer discovery
+pnpm dev:consumer # Expo mobile app (separate terminal)
 ```
-
-Open `http://localhost:5174`, click **Send ping**, approve the in-memory browser flow, and the page will print the encrypted callback result.

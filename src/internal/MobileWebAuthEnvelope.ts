@@ -6,7 +6,7 @@ import * as Crypto from '../core/Crypto.js'
 import * as Envelope from '../core/Envelope.js'
 import * as Errors from '../core/Errors.js'
 import * as Nonce from '../core/Nonce.js'
-import * as Session from '../core/Session.js'
+import * as SessionKey from '../core/SessionKey.js'
 
 /** Decodes a base64url JSON payload. */
 export function decodeJson(value: string): unknown {
@@ -25,7 +25,7 @@ export function openResponse(options: openResponse.Options): Envelope.Envelope {
     throw new Errors.ProtocolError('callback message must be encrypted')
   if (encrypted.payload.from !== 'host')
     throw new Errors.ProtocolError('callback message must be from host')
-  const keys = Session.derive({
+  const keys = SessionKey.derive({
     peer: { publicKey: options.publicKey },
     role: 'consumer',
     self: options.self,
@@ -60,7 +60,7 @@ export declare namespace openResponse {
 
 /** Seals a host-to-consumer callback response. */
 export function sealResponse(options: sealResponse.Options): Envelope.Envelope {
-  const keys = Session.derive({
+  const keys = SessionKey.derive({
     peer: { publicKey: options.publicKey },
     role: 'host',
     self: options.self,

@@ -30,7 +30,7 @@ import * as Envelope from '../core/Envelope.js'
 import * as Errors from '../core/Errors.js'
 import * as MessageSig from '../core/MessageSig.js'
 import * as Nonce from '../core/Nonce.js'
-import type * as Session from '../core/Session.js'
+import type * as SessionKey from '../core/SessionKey.js'
 import * as Transport from '../core/Transport.js'
 import * as Uri from './Uri.js'
 
@@ -441,8 +441,8 @@ export declare namespace createCipher {
   type Options = {
     /** Consumer's raw 32-byte X25519 public key (the session anchor, AAD-bound). */
     consumerPublicKey: Hex.Hex | Bytes.Bytes
-    /** Per-direction AEAD keys from {@link "../core/Session".derive}. */
-    keys: Session.derive.ReturnType
+    /** Per-direction AEAD keys from {@link "../core/SessionKey".derive}. */
+    keys: SessionKey.derive.ReturnType
     /** Local role this cipher seals for. */
     role: Envelope.From
   }

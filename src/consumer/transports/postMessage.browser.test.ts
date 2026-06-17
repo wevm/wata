@@ -5,6 +5,14 @@ import { z } from 'zod/mini'
 
 import * as protocol from './internal/protocol.js'
 
+// The consumer defers connection — target acquisition + hello — to the first
+// outbound frame, so `start()` never opens a popup outside a user gesture.
+// Receive-path / handshake tests drive that by sending one throwaway
+// notification, which buffers locally until the peer is ready.
+function connect(transport: { send: (envelope: Envelope.Envelope) => Promise<unknown> }) {
+  return transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'connect', params: [] })]))
+}
+
 /**
  * Browser unit tests for the consumer-side `postMessage` transport.
  *
@@ -29,6 +37,7 @@ describe('postMessage (consumer)', () => {
     port2.start()
 
     await transport.start()
+    await connect(transport)
 
     const received = new Promise<Envelope.Envelope>((resolve) => {
       transport.on('message', (envelope) => resolve(envelope))
@@ -70,11 +79,9 @@ describe('postMessage (consumer)', () => {
     port2.start()
 
     await transport.start()
-    // Wait for the consumer's hello to land at the peer before clearing.
-    await new Promise((resolve) => setTimeout(resolve, 10))
 
-    // The consumer's hello has been emitted, but no `hostReady` yet —
-    // outbound frames should be buffered locally.
+    // The first `send` connects (acquires the target, emits hello), but no
+    // `hostReady` has arrived yet — so both outbound frames buffer locally.
     await transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'one', params: [] })]))
     await transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'two', params: [] })]))
 
@@ -125,6 +132,7 @@ describe('postMessage (consumer)', () => {
       source,
     })
     await transport.start()
+    await connect(transport)
 
     const seen: unknown[] = []
     transport.on('message', (envelope) => seen.push(envelope))
@@ -183,6 +191,7 @@ describe('postMessage (consumer)', () => {
       source: window,
     })
     await transport.start()
+    await connect(transport)
 
     const seen: unknown[] = []
     transport.on('message', (envelope) => seen.push(envelope))
@@ -246,6 +255,7 @@ describe('postMessage (consumer)', () => {
     port2.start()
 
     await transport.start()
+    await connect(transport)
     await vi.waitFor(() => expect(hellos).toHaveLength(1)) // initial hello
 
     // The host (which "missed" the first hello) sends its ready.
@@ -265,6 +275,7 @@ describe('postMessage (consumer)', () => {
     transport.on('error', (error) => errors.push(error))
 
     await transport.start()
+    await connect(transport)
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     port2.postMessage(protocol.withId({ shape: 'not an envelope' }))
@@ -287,6 +298,7 @@ describe('postMessage (consumer)', () => {
     transport.on('error', (error) => errors.push(error))
 
     await transport.start()
+    await connect(transport)
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     // Bare envelope shape without the spec-mandated top-level `id`.
@@ -307,6 +319,7 @@ describe('postMessage (consumer)', () => {
     transport.on('error', (error) => errors.push(error))
 
     await transport.start()
+    await connect(transport)
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     port2.postMessage({
@@ -321,19 +334,23 @@ describe('postMessage (consumer)', () => {
     await transport.close()
   })
 
-  test('throws `PopupBlockedError` when `target` returns null', async () => {
+  test('throws `PopupBlockedError` on connect when `target` returns null', async () => {
     const transport = postMessage_consumer({
       target: () => null as unknown as Window,
       host: 'https://wallet.example',
     })
-    await expect(transport.start()).rejects.toBeInstanceOf(PostMessage.PopupBlockedError)
+    // `start` defers target acquisition — the first outbound frame connects
+    // and surfaces the blocked popup.
+    await transport.start()
+    await expect(connect(transport)).rejects.toBeInstanceOf(PostMessage.PopupBlockedError)
   })
 
-  test('throws `InvalidTargetError` when `target` returns a non-Window-non-Port handle', async () => {
+  test('throws `InvalidTargetError` on connect when `target` returns a non-Window-non-Port handle', async () => {
     const transport = postMessage_consumer({
       target: () => 'nope' as unknown as MessagePort,
     })
-    await expect(transport.start()).rejects.toBeInstanceOf(PostMessage.InvalidTargetError)
+    await transport.start()
+    await expect(connect(transport)).rejects.toBeInstanceOf(PostMessage.InvalidTargetError)
   })
 
   test('`send` lazily calls `start` (no manual start required)', async () => {
@@ -359,7 +376,8 @@ describe('postMessage (consumer)', () => {
         return port1
       },
     })
-    await transport.start()
+    // First `send` connects (acquires the target once).
+    await connect(transport)
     await transport.close()
     // `close` is non-terminal — the next `send` should call `target()` again.
     await transport.send(Envelope.rpcRequests([Rpc.notification({ method: 'nope', params: [] })]))
@@ -376,8 +394,59 @@ describe('postMessage (consumer)', () => {
       },
     })
     await transport.start()
+    await connect(transport)
     await transport.close()
     expect(closed).toMatchInlineSnapshot(`1`)
+  })
+
+  test('defers `target` to `start({ target })`', async () => {
+    const { port1, port2 } = new MessageChannel()
+    // No `target` at construction — supplied at start instead.
+    const transport = postMessage_consumer()
+
+    port2.addEventListener('message', (event) => {
+      const inbound = protocol.readFrame(event.data)
+      if (inbound && (inbound.frame as { type?: string }).type === protocol.consumerHello.type)
+        port2.postMessage(protocol.withId(protocol.hostReady))
+    })
+    port2.start()
+
+    await transport.start({ target: () => port1 })
+    await connect(transport)
+
+    const received = new Promise<Envelope.Envelope>((resolve) => {
+      transport.on('message', (envelope) => resolve(envelope))
+    })
+    port2.postMessage(
+      protocol.withId(Envelope.rpcRequests([Rpc.notification({ method: 'ping', params: [] })])),
+    )
+    expect((await received).type).toMatchInlineSnapshot(`"rpc-requests"`)
+
+    await transport.close()
+  })
+
+  test('throws `TargetRequiredError` when `target` is supplied at neither construction nor start', async () => {
+    const transport = postMessage_consumer()
+    await expect(transport.start()).rejects.toBeInstanceOf(PostMessage.TargetRequiredError)
+  })
+
+  test('start-time `close` override wins over construction `close`', async () => {
+    const { port1 } = new MessageChannel()
+    let which = ''
+    const transport = postMessage_consumer({
+      target: () => port1,
+      close: () => {
+        which = 'construction'
+      },
+    })
+    await transport.start({
+      close: () => {
+        which = 'start'
+      },
+    })
+    await connect(transport)
+    await transport.close()
+    expect(which).toMatchInlineSnapshot(`"start"`)
   })
 
   test('unsubscribe removes the message listener', async () => {
@@ -392,6 +461,7 @@ describe('postMessage (consumer)', () => {
     port2.start()
 
     await transport.start()
+    await connect(transport)
 
     const seen: unknown[] = []
     const controller = new AbortController()
@@ -427,7 +497,7 @@ describe('postMessage (consumer)', () => {
     await transport.close()
   })
 
-  test('sends the consumer-hello frame on start', async () => {
+  test('sends the consumer-hello frame on first send', async () => {
     const { port1, port2 } = new MessageChannel()
     const transport = postMessage_consumer({ target: () => port1 })
 
@@ -438,6 +508,9 @@ describe('postMessage (consumer)', () => {
     port2.start()
 
     await transport.start()
+    // `start` is deferred — connecting (here, via the first `send`) is what
+    // emits the consumer hello. The throwaway frame buffers behind it.
+    await connect(transport)
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     const hello = seen[0] as { type: string; id: string }
@@ -486,10 +559,10 @@ describe('wata + postMessage (MessageChannel) integration', () => {
       transports: [postMessage_consumer({ target: () => port1 })],
       schema: integrationSchema,
     })
-    const host = HostWata.create({
+    const host = await HostWata.create({
       transports: [postMessage_host({ target: () => port2 })],
       schema: integrationSchema,
-    })
+    }).start()
 
     host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
@@ -499,11 +572,11 @@ describe('wata + postMessage (MessageChannel) integration', () => {
       }
     })
 
-    // Bootstrap consumer + connect host concurrently — readiness wata
-    // races between both sides, so neither order matters.
-    await Promise.all([consumer.start(), host.start()])
+    // Start both sides — readiness wata races between both transports, so
+    // neither order matters.
+    const session = await consumer.start()
 
-    const ping = await consumer.send({ method: 'ping', params: [] })
+    const ping = await session.send({ method: 'ping', params: [] })
     expect(ping).toMatchInlineSnapshot(`
       {
         "id": 1,
@@ -513,10 +586,10 @@ describe('wata + postMessage (MessageChannel) integration', () => {
       }
     `)
 
-    const sum = await consumer.send({ method: 'add', params: [2, 3] })
+    const sum = await session.send({ method: 'add', params: [2, 3] })
     expect(sum.result).toMatchInlineSnapshot(`5`)
 
-    await consumer.close()
+    await session.close()
   })
 
   test('buffers outbound frames sent before the peer is ready', async () => {
@@ -531,17 +604,16 @@ describe('wata + postMessage (MessageChannel) integration', () => {
       schema: integrationSchema,
     })
 
-    host.onRequest((event) => {
-      if (event.method === 'ping') event.respond({ ok: true })
-    })
-
     // Start the consumer first; host is still un-connected. The transport
     // should buffer the request until the host sends `urpc.ready`.
-    await consumer.start()
-    const inflight = consumer.send({ method: 'ping', params: [] })
+    const session = await consumer.start()
+    const inflight = session.send({ method: 'ping', params: [] })
 
     // Now bring the host up.
-    await host.start()
+    const host_session = await host.start()
+    host_session.onRequest((event) => {
+      if (event.method === 'ping') event.respond({ ok: true })
+    })
 
     const out = await inflight
     expect(out.result).toMatchInlineSnapshot(`
@@ -550,7 +622,8 @@ describe('wata + postMessage (MessageChannel) integration', () => {
       }
     `)
 
-    await consumer.close()
+    await session.close()
+    await host_session.close()
   })
 
   test('emits `close` on both sides when consumer closes', async () => {
@@ -567,16 +640,16 @@ describe('wata + postMessage (MessageChannel) integration', () => {
 
     let consumerClosed = false
     let hostClosed = false
-    consumer.onClose(() => (consumerClosed = true))
-    host.onClose(() => (hostClosed = true))
 
-    await Promise.all([consumer.start(), host.start()])
-    await consumer.close()
+    const [session, host_session] = await Promise.all([consumer.start(), host.start()])
+    session.onClose(() => (consumerClosed = true))
+    host_session.onClose(() => (hostClosed = true))
+    await session.close()
 
     expect(consumerClosed).toMatchInlineSnapshot(`true`)
     // Host side gets `close` on the next tick once its own port loses its
     // peer; we explicitly close it to make this deterministic.
-    await host.close()
+    await host_session.close()
     expect(hostClosed).toMatchInlineSnapshot(`true`)
   })
 
@@ -590,7 +663,12 @@ describe('wata + postMessage (MessageChannel) integration', () => {
       ],
     })
 
-    await expect(consumer.start()).rejects.toThrowErrorMatchingInlineSnapshot(
+    // `start` defers target acquisition, so the blocked popup surfaces on the
+    // first outbound request rather than at start.
+    const session = await consumer.start()
+    await expect(
+      session.send({ method: 'ping', params: [] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[PostMessage.PopupBlockedError: \`target\` returned null — popup blocked or window unavailable]`,
     )
   })

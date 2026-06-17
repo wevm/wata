@@ -13,7 +13,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Button, Input, Tag } from 'regen-ui'
-import { Wata, PostMessage, postMessage } from 'wata'
+import { PostMessage, Session, Wata, postMessage } from 'wata'
 
 import * as Log from './Log.js'
 import { Window } from './Window.js'
@@ -24,6 +24,8 @@ const hostOrigin = 'http://localhost:5182'
 type Mount = 'popup' | 'iframe'
 
 type State = 'idle' | 'open' | 'closed' | 'error'
+
+type ConsumerSession = Session.Session<undefined, ReturnType<typeof postMessage<Window>>>
 
 const stateIntent: Record<State, Log.Intent> = {
   idle: 'neutral',
@@ -37,15 +39,15 @@ function App() {
   const [state, setState] = useState<State>('idle')
   const [message, setMessage] = useState('')
   const log = Log.useLog()
-  const wataRef = useRef<Wata.Consumer | undefined>(undefined)
+  const sessionRef = useRef<ConsumerSession | undefined>(undefined)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const hostChromeRef = useRef<HTMLDivElement | null>(null)
 
-  const ensureWata = useCallback(() => {
-    if (wataRef.current) return wataRef.current
+  const ensureSession = useCallback(async () => {
+    if (sessionRef.current) return sessionRef.current
 
     let cleanup = () => {}
-    const wata = Wata.create({
+    const session = await Wata.create({
       transports: [
         postMessage<Window>({
           host: hostOrigin,
@@ -87,40 +89,39 @@ function App() {
           },
         }),
       ],
-    })
-    wata.onOpen(() => {
-      setState('open')
-      log.push({ intent: 'positive', label: 'open' })
-    })
-    wata.onClose((cause) => {
+    }).start()
+    setState('open')
+    log.push({ intent: 'positive', label: 'open' })
+    session.onClose((cause) => {
       setState('closed')
-      wataRef.current = undefined
+      sessionRef.current = undefined
       log.push({ intent: 'neutral', label: 'close', detail: cause })
     })
-    wata.onError((error) => {
+    session.onError((error) => {
       setState('error')
       log.push({ intent: 'negative', label: 'error', detail: error })
     })
 
-    wataRef.current = wata
-    return wata
+    sessionRef.current = session
+    return session
   }, [log, mount])
 
   const setup = useCallback(async () => {
     log.push({ intent: 'accent', label: 'setup' })
     try {
-      await ensureWata().start()
+      await ensureSession()
     } catch (error) {
       log.push({ intent: 'negative', label: 'setup threw', detail: error })
     }
-  }, [ensureWata, log])
+  }, [ensureSession, log])
 
   const send = useCallback(async () => {
     const id = nextRequestId()
     const params = [{ message: message || 'hello from consumer' }]
     log.push({ intent: 'accent', label: 'send', requestId: id, detail: params })
     try {
-      const response = await ensureWata().send({ id, method: 'ping', params })
+      const session = await ensureSession()
+      const response = await session.send({ id, method: 'ping', params })
       log.push({
         intent: 'positive',
         label: 'result',
@@ -130,7 +131,7 @@ function App() {
     } catch (error) {
       log.push({ intent: 'negative', label: 'send threw', requestId: id, detail: error })
     }
-  }, [ensureWata, log, message])
+  }, [ensureSession, log, message])
 
   return (
     <div className="flex flex-col bg-background">

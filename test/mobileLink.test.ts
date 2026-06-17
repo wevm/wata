@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'vp/test'
-import { Crypto, Discovery, Identity, Wata, mobileLink } from 'wata'
-import { Wata as HostWata, mobileLink as hostMobileLink } from 'wata/host'
+import {
+  Crypto,
+  Discovery,
+  Identity,
+  MobileLink,
+  Session as ConsumerSession,
+  Wata,
+  mobileLink,
+} from 'wata'
+import { Session, Wata as HostWata, mobileLink as hostMobileLink } from 'wata/host'
 import { consumerWellknown } from 'wata/server'
 
 /** Bridge a `{ fetch }` server handler into a `typeof fetch` override. */
@@ -39,21 +47,24 @@ describe('mobileLink', () => {
     })
 
     // In-memory deep-link bus wiring each side's openLink to the other's
-    // handleUrl.
-    let consumerTransport!: ReturnType<typeof mobileLink>
+    // session handleUrl.
+    // Pin the host at construction so `consumer.start()` needs no start-time host.
+    let consumerTransport!: MobileLink.MobileLink<{ host: Discovery.HostDocument }>
+    let consumerSession!: ConsumerSession.Session<undefined, typeof consumerTransport>
+    let hostSession!: Session.Session<undefined, ReturnType<typeof hostMobileLink>>
     let hostTransport!: ReturnType<typeof hostMobileLink>
     consumerTransport = mobileLink({
       host: hostDoc,
       id: consumerOrigin,
       openLink: (url) => {
-        void hostTransport.handleUrl(url)
+        void hostSession.handleUrl(url)
       },
       returnUrl,
     })
     hostTransport = hostMobileLink({
       fetch: serverFetch(consumerWk),
       openLink: (url) => {
-        consumerTransport.handleUrl(url)
+        consumerSession.handleUrl(url)
       },
       scheme: 'examplewallet',
       universalLink: `${hostOrigin}/urpc`,
@@ -66,17 +77,19 @@ describe('mobileLink', () => {
       meta: { name: 'Wallet' },
       transports: [hostTransport],
     })
-    host.onRequest(async (event) => {
+    consumerSession = await consumer.start()
+    hostSession = await host.start()
+    hostSession.onRequest(async (event) => {
       if (event.method === 'ping') await event.respond('pong')
       if (event.method === 'echo') await event.respond(event.params)
     })
 
     // First exchange runs the handshake (initial deep link + signed callback).
-    const first = await consumer.send({ method: 'ping', params: [] })
+    const first = await consumerSession.send({ method: 'ping', params: [] })
     expect(first.result).toBe('pong')
 
     // Second exchange runs over the keyed, ongoing session.
-    const second = await consumer.send({ method: 'echo', params: ['hello'] })
+    const second = await consumerSession.send({ method: 'echo', params: ['hello'] })
     expect(second.result).toEqual(['hello'])
 
     await consumer.close()

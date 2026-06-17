@@ -3,16 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "check:types": "tsc",
-    "dev": "vite dev",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "wata": "latest"
-  },
-  "devDependencies": {
-    "typescript": "latest",
-    "vite": "latest"
+    "dev": "pnpm \"/^dev:(discovery|host)$/\"",
+    "dev:consumer": "pnpm --filter example-mobile-web-auth-consumer dev",
+    "dev:discovery": "pnpm --filter example-mobile-web-auth-consumer dev:discovery",
+    "dev:host": "pnpm --filter example-mobile-web-auth-host dev"
   }
 }

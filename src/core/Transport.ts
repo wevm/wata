@@ -210,12 +210,17 @@ type ResolveOptions<options extends Options> = {
  * transport regardless of what its `send` / `start` resolve with. Prefer
  * this over `Transport<role, name>` in `extends` clauses — the bare form
  * pins both to `void`.
+ *
+ * `start` is widened to the permissive `(options: never) => …` so a
+ * transport that defers a *required* start option (e.g. a `relay()`
+ * built without a `url`, whose start param is mandatory) still satisfies
+ * `extends Any`. Concrete transports keep their own {@link StartFn}
+ * signature; only the constraint is loosened.
  */
-export type Any<role extends Role = Role, name extends string = string> = Transport<
-  role,
-  name,
-  { sendValue: unknown; startReturn: unknown }
->
+export type Any<role extends Role = Role, name extends string = string> = Omit<
+  Transport<role, name, { sendValue: unknown; startReturn: unknown }>,
+  'start'
+> & { start: (options: never) => Promise<unknown> }
 
 /**
  * Transport-owned members beyond the normalized base {@link Transport}
@@ -327,14 +332,87 @@ type Shape<role extends Role, name extends string, options extends ResolvedOptio
   /**
    * Open the transport. Resolves once the wire is ready to send and
    * receive. Transports that accept per-start configuration (e.g. the
-   * relay transport's `{ target }` / `{ pairingUri }`) widen
+   * relay transport's `{ target }` / `{ uri }`) widen
    * {@link Options.startOptions}; the rest take no argument. Transports
    * that surface a value on open (e.g. the relay transport's pairing
    * {@link PromptOf | prompt}) widen {@link Options.startReturn}; the
-   * rest resolve `void`.
+   * rest resolve `void`. See {@link StartFn} for how the options
+   * parameter's optionality is derived.
    */
-  start: (options?: options['startOptions']) => Promise<options['startReturn']>
+  start: StartFn<options['startOptions'], options['startReturn']>
 }
+
+/**
+ * Build a transport's start-time options from its construction `Options`
+ * by picking the fields usable at start time — so their docs stay on
+ * `Options` and are never re-declared. Keyed by the construction
+ * `options` generic so a deferred field's requiredness can flip:
+ *
+ * - `optional` keys are always optional per-session overrides
+ *   (e.g. `start({ target })`).
+ * - `required` keys must be supplied *somewhere*: optional at start when
+ *   they were pinned at construction (present in `options`), required at
+ *   start when they were omitted. (All `required` keys flip together;
+ *   transports today defer at most one.)
+ *
+ * Reach for it only when `start()` genuinely cannot proceed without the
+ * deferred field (it throws otherwise, like consumer `relay`'s `url` or
+ * `mobileLink`'s `host`). When `start()` may legitimately run without a
+ * field (e.g. host `relay`'s `uri`, whose `start()` waits for the scan),
+ * leave it as a plain optional `Pick<Options, …>` instead.
+ *
+ * @example
+ * ```ts
+ * // consumer relay: `target` is an override, `url` is required-unless-pinned
+ * export type StartOptions<options = Options> = Transport.StartOptions<
+ *   options,
+ *   Options,
+ *   { optional: 'target'; required: 'url' }
+ * >
+ * ```
+ */
+export type StartOptions<options, base, keys extends StartOptions.Keys<base> = {}> = Pick<
+  base,
+  Extract<keys['optional'], keyof base>
+> &
+  (options extends Required<Pick<base, Extract<keys['required'], keyof base>>>
+    ? Pick<base, Extract<keys['required'], keyof base>>
+    : Required<Pick<base, Extract<keys['required'], keyof base>>>)
+
+export declare namespace StartOptions {
+  /**
+   * Selects which {@link Options} fields a transport exposes at start.
+   * Both keys accept a single field name or a union; omit either when
+   * the transport has no fields of that kind.
+   */
+  type Keys<base> = {
+    /**
+     * Always-optional per-session overrides (e.g. `start({ target })`).
+     */
+    optional?: keyof base
+    /**
+     * Must be supplied *somewhere*: optional at start when pinned at
+     * construction, required at start when omitted.
+     */
+    required?: keyof base
+  }
+}
+
+/**
+ * `start` method signature derived from a transport's resolved
+ * `startOptions` / `startReturn`. The options parameter is **absent**
+ * (`options?: never`) when the transport takes no start options
+ * (`startOptions: never`), **optional** when every start option is
+ * optional (`start()` and `start({ … })` both type-check), and
+ * **required** when `startOptions` carries a mandatory field — so a
+ * value deferred to start but not pinned at construction (e.g. a
+ * `relay()` built without a `url`) must be supplied via `start({ url })`.
+ */
+export type StartFn<startOptions, startReturn> = [startOptions] extends [never]
+  ? (options?: never) => Promise<startReturn>
+  : {} extends startOptions
+    ? (options?: startOptions) => Promise<startReturn>
+    : (options: startOptions) => Promise<startReturn>
 
 /** Metadata emitted by a concrete transport. */
 export type MessageMetaOf<transport extends Any> =

@@ -18,7 +18,6 @@ const log = document.getElementById('log') as HTMLPreElement
 const wata = Wata.create({
   transports: [
     postMessage({
-      host: hostOrigin,
       target: ({ host }) => {
         // Convey our origin out of band so the host can pin it (spec §3.1).
         const url = `${host}?origin=${encodeURIComponent(location.origin)}`
@@ -30,13 +29,15 @@ const wata = Wata.create({
   ],
 })
 
-wata.onOpen(() => append('open'))
-wata.onClose((cause) => append(`close${cause ? `: ${cause.message}` : ''}`))
-wata.onError((error) => append(`error: ${error.message}`))
+const session = await wata.start({ host: hostOrigin })
+
+append('open')
+session.onClose((cause) => append(`close${cause ? `: ${cause.message}` : ''}`))
+session.onError((error) => append(`error: ${error.message}`))
 
 sendButton.addEventListener('click', async () => {
   try {
-    const { result } = await wata.send({
+    const { result } = await session.send({
       method: 'ping',
       params: [{ message: 'hello from consumer' }],
     })

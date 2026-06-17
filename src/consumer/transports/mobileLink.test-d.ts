@@ -23,27 +23,48 @@ describe('mobileLink (consumer)', () => {
     expectTypeOf(transport).toMatchTypeOf<Transport.Transport<'consumer', 'mobileLink'>>()
   })
 
-  test('feeds Wata.create as a consumer transport', () => {
+  test('feeds Wata.create as a consumer transport', async () => {
     const transport = mobileLink({
       host: 'https://wallet.example',
       openLink: () => {},
       returnUrl: 'https://app.example/urpc/cb',
     })
     const wata = Wata.create({ transports: [transport] })
+    const session = await wata.mobileLink.start()
     expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
-    expectTypeOf(wata.mobileLink.handleUrl).toEqualTypeOf<(url: string) => void>()
-    expectTypeOf(wata.mobileLink.transport.handleUrl).toEqualTypeOf<(url: string) => void>()
-    // `host` can be deferred to `start`.
+    expectTypeOf(wata.mobileLink).toEqualTypeOf<Pick<typeof wata.mobileLink, 'start'>>()
+    // handleUrl lives on the started session, not the handle.
+    expectTypeOf(wata.mobileLink).not.toHaveProperty('handleUrl')
+    expectTypeOf(session.handleUrl).toEqualTypeOf<(url: string) => void>()
+    expectTypeOf(session.transport.handleUrl).toEqualTypeOf<(url: string) => void>()
+    // `host` was pinned at construction → optional at start.
     expectTypeOf(wata.mobileLink.start)
       .parameter(0)
-      .toEqualTypeOf<MobileLink.StartOptions | undefined>()
+      .toEqualTypeOf<MobileLink.StartOptions<{ host: string }> | undefined>()
   })
 
-  test('host is optional at construction when deferred to start', () => {
+  test('start requires host when it was omitted at construction', () => {
     const transport = mobileLink({
       openLink: () => {},
       returnUrl: 'https://app.example/urpc/cb',
     })
-    expectTypeOf(transport.start).parameter(0).toEqualTypeOf<MobileLink.StartOptions | undefined>()
+    expectTypeOf(transport.start)
+      .parameter(0)
+      .toEqualTypeOf<
+        Required<Pick<MobileLink.Options, 'host'>> & Pick<MobileLink.Options, 'target'>
+      >()
+    expectTypeOf(transport.start({ host: 'https://wallet.example' })).toEqualTypeOf<Promise<void>>()
+    // @ts-expect-error host is required when it was omitted at construction
+    transport.start()
+  })
+
+  test('start options expose a unified `target` (not `scheme` / `universalLink`)', () => {
+    expectTypeOf<MobileLink.StartOptions>().toHaveProperty('host')
+    expectTypeOf<MobileLink.StartOptions>().toHaveProperty('target')
+    expectTypeOf<MobileLink.StartOptions>().not.toHaveProperty('scheme')
+    expectTypeOf<MobileLink.StartOptions>().not.toHaveProperty('universalLink')
+    expectTypeOf<MobileLink.Options>().toHaveProperty('target')
+    expectTypeOf<MobileLink.Options>().not.toHaveProperty('scheme')
+    expectTypeOf<MobileLink.Options>().not.toHaveProperty('universalLink')
   })
 })

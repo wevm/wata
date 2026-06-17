@@ -17,17 +17,19 @@ const log = document.getElementById('log') as HTMLPreElement
 let current: { id: number | string } | undefined
 
 // The consumer conveys its origin out of band on the host URL (spec §3.1).
+const consumerOrigin = new URL(location.href).searchParams.get('origin') ?? undefined
+
 const wata = Wata.create({
-  transports: [
-    postMessage({ targetOrigin: new URL(location.href).searchParams.get('origin') ?? undefined }),
-  ],
+  transports: [postMessage()],
 })
 
-wata.onOpen(() => append('open'))
-wata.onClose((cause) => append(`close${cause ? `: ${cause.message}` : ''}`))
-wata.onError((error) => append(`error: ${error.message}`))
+const session = await wata.start({ targetOrigin: consumerOrigin })
 
-wata.onRequest((event) => {
+append('open')
+session.onClose((cause) => append(`close${cause ? `: ${cause.message}` : ''}`))
+session.onError((error) => append(`error: ${error.message}`))
+
+session.onRequest((event) => {
   append(`request: ${event.method} ${JSON.stringify(event.params)}`)
   current = { id: event.id }
   received.textContent = `${event.method} ${JSON.stringify(event.params)}`
@@ -37,7 +39,7 @@ wata.onRequest((event) => {
 respondButton.addEventListener('click', async () => {
   if (!current) return
   const text = message.value || 'pong from host'
-  await wata.respond(current.id, { message: text })
+  await session.respond(current.id, { message: text })
   append(`respond: ${text}`)
   window.close()
 })

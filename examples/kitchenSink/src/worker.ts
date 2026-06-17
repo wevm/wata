@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
+import { Session } from 'wata/host'
 
-import { consumer } from './consumer.js'
-import { host } from './host.js'
+import { consumer as consumer_wata } from './consumer.js'
+import { host as host_wata } from './host.js'
 
 type ServerState =
   | { status: 'idle' }
@@ -13,6 +14,12 @@ let serverState: ServerState = { status: 'idle' }
 
 const app = new Hono()
 
+const consumer = await consumer_wata.webhookCallback.start()
+const host = await Session.compose([
+  host_wata.deviceCode.start(),
+  host_wata.webhookCallback.start(),
+])
+
 consumer.onEnvelope((envelope, meta) => {
   if (envelope.type !== 'rpc-responses') return
   if (meta.transport !== 'webhookCallback') return
@@ -22,14 +29,18 @@ consumer.onEnvelope((envelope, meta) => {
   else serverState = { result: response.result, status: 'done' }
 })
 
-app.all('/.well-known/*', async (c) => {
-  const response = await host.fetch(c.req.raw)
-  if (response.status !== 404) return response
-  return await consumer.fetch(c.req.raw)
+host.onRequest(async (event) => {
+  await event.respond({ message: 'pong from host', transport: event.transport })
 })
 
-app.all('/auth/*', (c) => host.fetch(c.req.raw))
-app.all('/consumer/callback', (c) => consumer.fetch(c.req.raw))
+app.all('/.well-known/*', async (c) => {
+  const response = await host_wata.fetch(c.req.raw)
+  if (response.status !== 404) return response
+  return await consumer_wata.fetch(c.req.raw)
+})
+
+app.all('/auth/*', (c) => host_wata.fetch(c.req.raw))
+app.all('/consumer/callback', (c) => consumer_wata.fetch(c.req.raw))
 
 app.post('/demo/server', async (c) => {
   if (serverState.status !== 'idle') return c.json(serverState)
@@ -37,7 +48,7 @@ app.post('/demo/server', async (c) => {
   serverState = { status: 'pending' }
 
   try {
-    const registration = await consumer.webhookCallback.send({
+    const registration = await consumer.send({
       method: 'ping',
       params: [{ message: 'hello from server consumer' }],
     })

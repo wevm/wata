@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { Button, ScrollView, Text, TextInput, View } from 'react-native'
-import { Wata, relay } from 'wata/host'
+import { Session, Wata, relay } from 'wata/host'
+import { useSession } from 'wata/react'
 
 // `allowPrivateNetwork` lets the host pair from a LAN pairing link
 // (`relay=http://192.168.x.x:4860`) when scanning the dev consumer.
@@ -11,34 +12,30 @@ const wata = Wata.create({
 
 export default function App() {
   const [lines, setLines] = React.useState<readonly string[]>(['ready — paste a pairing uri'])
-  const [connected, setConnected] = React.useState(false)
-  const [pending, setPending] = React.useState<readonly Wata.RequestEvent[]>([])
+  const [pending, setPending] = React.useState<readonly Session.RequestEvent[]>([])
   const [uri, setUri] = React.useState('')
 
   const append = React.useCallback((line: string) => setLines((lines) => [...lines, line]), [])
 
-  // Register the hoisted session's listeners once.
-  React.useEffect(() => {
-    const subscriptions = [
-      wata.onRequest((event) => {
-        append(`request: ${event.method} ${JSON.stringify(event.params)} — approve or deny`)
-        setPending((queue) => [...queue, event])
-      }),
-      wata.onClose((cause) => {
-        append(cause ? `closed: ${cause.message}` : 'closed')
-        setConnected(false)
-        setPending([])
-      }),
-      wata.onError((error) => append(`error: ${error.message}`)),
-    ]
-    return () => subscriptions.forEach((subscription) => subscription.abort())
-  }, [append])
-
-  function settle(event: Wata.RequestEvent) {
+  function settle(event: Session.RequestEvent) {
     setPending((queue) => queue.filter((queued) => queued !== event))
   }
 
-  async function approve(event: Wata.RequestEvent) {
+  const { session, start, status } = useSession(wata, {
+    onClose: (cause) => {
+      append(cause ? `closed: ${cause.message}` : 'closed')
+      setPending([])
+    },
+    onError: (error) => append(`error: ${error.message}`),
+    onRequest: (event) => {
+      append(`request: ${event.method} ${JSON.stringify(event.params)} — approve or deny`)
+      setPending((queue) => [...queue, event])
+    },
+  })
+
+  const connected = status === 'open'
+
+  async function approve(event: Session.RequestEvent) {
     try {
       await event.respond({ message: 'pong from mobile' })
       append(`approved: ${event.method}`)
@@ -49,7 +46,7 @@ export default function App() {
     }
   }
 
-  async function deny(event: Wata.RequestEvent) {
+  async function deny(event: Session.RequestEvent) {
     try {
       await event.reject({ code: 4001, message: 'User rejected the request' })
       append(`denied: ${event.method}`)
@@ -63,9 +60,8 @@ export default function App() {
   async function connect() {
     try {
       append('connecting…')
-      await wata.relay.start({ pairingUri: uri.trim() })
+      await start({ uri: uri.trim() })
       append('connected')
-      setConnected(true)
     } catch (error) {
       append(`${(error as Error).name}: ${(error as Error).message}`)
     }
@@ -89,14 +85,14 @@ export default function App() {
           <>
             <Button
               onPress={() => {
-                wata
-                  .notify({ method: 'accountsChanged', params: [['0xabc']] })
+                session
+                  ?.notify({ method: 'accountsChanged', params: [['0xabc']] })
                   .then(() => append('notified accountsChanged'))
                   .catch((error: Error) => append(`error: ${error.message}`))
               }}
               title="Notify accountsChanged"
             />
-            <Button onPress={() => void wata.close()} title="Disconnect" />
+            <Button onPress={() => void session?.close()} title="Disconnect" />
           </>
         )
       ) : (

@@ -36,7 +36,7 @@ import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
 import * as Nonce from '../../core/Nonce.js'
 import * as Rpc from '../../core/Rpc.js'
-import * as Session from '../../core/Session.js'
+import * as SessionKey from '../../core/SessionKey.js'
 import * as Transport from '../../core/Transport.js'
 import * as MobileLinkEnvelope from '../../internal/MobileLinkEnvelope.js'
 import * as Uri from '../../internal/Uri.js'
@@ -105,7 +105,7 @@ export function mobileLink(options: Options): MobileLink {
   type Active = {
     handshakeSent: boolean
     inbound: Nonce.decoder.ReturnType
-    keys: Session.derive.ReturnType
+    keys: SessionKey.derive.ReturnType
     outbound: Nonce.encoder.ReturnType
     publicKeyConsumer: Hex.Hex
     publicKeyHost: Hex.Hex
@@ -187,7 +187,7 @@ export function mobileLink(options: Options): MobileLink {
     }
 
     const hostEph = Crypto.randomKeypair()
-    const shared = Session.shared({
+    const shared = SessionKey.shared({
       privateKey: hostEph.x25519.privateKey,
       publicKey: publicKeyConsumer,
     })

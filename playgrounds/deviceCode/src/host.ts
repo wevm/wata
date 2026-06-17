@@ -99,7 +99,9 @@ const wata = Wata.create({
   ],
 })
 
-wata.onRequest((event) => {
+const session = await wata.start()
+
+session.onRequest((event) => {
   console.log(`[host] request: ${event.method}`, event.params)
   if (event.method === 'ping') event.respond({ at: new Date().toISOString(), ok: true })
   else if (event.method === 'echo') event.respond(event.params)

@@ -64,7 +64,9 @@ const wata = Wata.create({
   ],
 })
 
-wata.onRequest(async (event) => {
+const session = await wata.start()
+
+session.onRequest(async (event) => {
   if (event.method === 'ping') {
     await event.respond({
       at: new Date().toISOString(),

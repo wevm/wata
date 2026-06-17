@@ -31,7 +31,7 @@ if (Clack.isCancel(method)) {
   process.exit(0)
 }
 
-const wata = Wata.create({
+const session = await Wata.create({
   transports: [
     deviceCode({
       meta: {
@@ -43,9 +43,9 @@ const wata = Wata.create({
       url: `${baseUrl}/auth/device`,
     }),
   ],
-})
+}).start()
 
-wata.onPrompt(({ userCode, verificationUri, verificationUriFull }) => {
+session.onPrompt(({ userCode, verificationUri, verificationUriFull }) => {
   Clack.note(
     `${verificationUri}\nuser_code: ${userCode}` +
       (verificationUriFull ? `\nor visit: ${verificationUriFull}` : ''),
@@ -59,7 +59,7 @@ const spinner = Clack.spinner()
 spinner.start('waiting for approval...')
 
 try {
-  const response = await wata.send({ method: method as string, params: params as never })
+  const response = await session.send({ method: method as string, params: params as never })
   spinner.stop('approved')
   Clack.outro(`response: ${JSON.stringify(response.result)}`)
 } catch (cause) {

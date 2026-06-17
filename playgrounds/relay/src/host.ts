@@ -26,9 +26,9 @@ const receive = process.env.RECEIVE ?? 'sse'
 
 const rl = createInterface({ input: process.stdin, output: process.stdout })
 
-const wata = Wata.create({ transports: [relay({ receive, uri })] })
+const session = await Wata.create({ transports: [relay({ uri: uri, receive })] }).start()
 
-wata.onRequest(async (event) => {
+session.onRequest(async (event) => {
   console.log(`request: ${event.method} ${JSON.stringify(event.params)}`)
   const answer = (await rl.question('approve? (y/n) ')).trim().toLowerCase()
   if (answer === 'y' || answer === 'yes') {
@@ -39,12 +39,10 @@ wata.onRequest(async (event) => {
     console.log('denied')
   }
 })
-wata.onClose((cause) => console.log(cause ? `closed: ${cause.message}` : 'closed'))
-wata.onError((error) => console.log(`error: ${error.message}`))
+session.onClose((cause) => console.log(cause ? `closed: ${cause.message}` : 'closed'))
+session.onError((error) => console.log(`error: ${error.message}`))
 
-console.log(`host receiving over '${receive}' — connecting…`)
-await wata.start()
 console.log('connected — approve/deny inbound requests (Ctrl-C to quit)')
 
-await wata.notify({ method: 'accountsChanged', params: [['0xabc']] })
+await session.notify({ method: 'accountsChanged', params: [['0xabc']] })
 console.log('pushed accountsChanged notification')

@@ -41,17 +41,17 @@ Opens a popup at the host URL and sends a `wallet_connect` request once the hand
 import { Wata, postMessage } from 'wata'
 
 const wata = Wata.create({
-  transports: [
-    postMessage({
-      host: 'https://wallet.example',
-      target(c) {
-        return window.open(c.host, '_blank', 'popup=1')
-      },
-    }),
-  ],
+  transports: [postMessage()],
 })
 
-const { result } = await wata.send({
+const session = await wata.start({
+  host: 'https://wallet.example',
+  target(c) {
+    return window.open(c.host, '_blank', 'popup=1')
+  },
+})
+
+const { result } = await session.send({
   method: 'wallet_connect',
   params: [],
 })
@@ -68,7 +68,9 @@ const wata = Wata.create({
   transports: [postMessage()],
 })
 
-wata.onRequest(async (c) => {
+const session = await wata.start()
+
+session.onRequest(async (c) => {
   if (c.method === 'wallet_connect')
     await c.respond(['0x0000000000000000000000000000000000000001'])
 })
@@ -88,14 +90,16 @@ Requests a device code from the host, prints the verification URL and `user_code
 import { Wata, deviceCode } from 'wata'
 
 const wata = Wata.create({
-  transports: [deviceCode({ url: 'https://wallet.example/auth/device' })],
+  transports: [deviceCode()],
 })
 
-wata.onPrompt((prompt) => {
+const session = await wata.start({ url: 'https://wallet.example/auth/device' })
+
+session.onPrompt((prompt) => {
   console.log(`Visit ${prompt.verificationUri} and enter ${prompt.userCode}`)
 })
 
-const { result } = await wata.send({
+const { result } = await session.send({
   method: 'wallet_connect',
   params: [],
 })
@@ -135,8 +139,9 @@ const wata = Wata.create({
     }),
   ],
 })
+const session = await wata.start()
 
-wata.onRequest(async (c) => {
+session.onRequest(async (c) => {
   if (c.method === 'wallet_connect')
     await c.respond(['0x0000000000000000000000000000000000000001'])
 })
@@ -165,7 +170,6 @@ const wata = Wata.create({
   transports: [
     mobileWebAuth({
       callback: 'com.example.app://callback',
-      host: 'https://wallet.example',
       openAuthSession: async ({ authorizationUrl, callback }) => {
         const result = await WebBrowser.openAuthSessionAsync(authorizationUrl, callback)
         if (result.type === 'success') return result.url
@@ -175,7 +179,9 @@ const wata = Wata.create({
   ],
 })
 
-const { result } = await wata.send({
+const session = await wata.start({ host: 'https://wallet.example' })
+
+const { result } = await session.send({
   method: 'wallet_connect',
   params: [],
 })
@@ -217,7 +223,9 @@ const wata = Wata.create({
   ],
 })
 
-wata.onRequest(async (event) => {
+const session = await wata.start()
+
+session.onRequest(async (event) => {
   if (event.method === 'wallet_connect')
     await event.respond(['0x0000000000000000000000000000000000000001'])
 })
@@ -244,20 +252,21 @@ const wata = Wata.create({
   meta: { name: 'Example App' },
   transports: [
     webhookCallback({
-      host: 'https://wallet.example',
       path: '/callback',
       store: Store.memory(),
     }),
   ],
 })
 
-wata.onEnvelope((envelope, meta) => {
+const session = await wata.start({ host: 'https://wallet.example' })
+
+session.onEnvelope((envelope, meta) => {
   if (envelope.type !== 'rpc-responses') return
   console.log(envelope.payload)
   console.log(meta)
 })
 
-const registration = await wata.send({
+const registration = await session.send({
   method: 'wallet_connect',
   params: [],
 })
@@ -302,8 +311,9 @@ const wata = Wata.create({
     }),
   ],
 })
+const session = await wata.start()
 
-wata.onRequest(async (event) => {
+session.onRequest(async (event) => {
   if (event.method === 'wallet_connect')
     await event.respond(['0x0000000000000000000000000000000000000001'])
 })
@@ -317,26 +327,27 @@ Remote session between a web consumer and a mobile host, brokered by an untruste
 
 #### Consumer
 
-Starts the session, which resolves with the pairing `uri` to display, then sends once the host connects.
+Starts the session, reads the pairing `uri` from `session.prompt`, then sends once the host connects.
 
 ```ts
 import { Wata, relay } from 'wata'
 
 const wata = Wata.create({
-  transports: [relay({ url: 'https://relay.example' })],
+  transports: [relay()],
 })
+const session = await wata.start({ url: 'https://relay.example' })
 
-// `start()` resolves with the pairing prompt — render it (e.g. as a QR
-// code) for the host to scan. (Or subscribe via `wata.onPrompt`.)
-const { uri } = await wata.start()
-renderQrCode(uri)
+// Render the pairing prompt (e.g. as a QR code) for the host to scan.
+// You can also subscribe to prompt changes with `session.onPrompt(...)`.
+const prompt = session.prompt
+if (prompt) renderQrCode(prompt.uri)
 
-const { result } = await wata.send({ method: 'ping', params: [] })
+const { result } = await session.send({ method: 'ping', params: [] })
 ```
 
 #### Host
 
-Built once with listeners registered up front, then connect with the scanned/pasted pairing uri.
+Built once, then starts a session with the scanned/pasted pairing uri and registers request handlers on that session.
 
 ```ts
 import { Wata, relay } from 'wata/host'
@@ -345,10 +356,10 @@ const wata = Wata.create({
   transports: [relay({ receive: 'poll' })],
 })
 
-wata.onRequest((event) => event.respond('pong'))
-
 // Start the session with the scanned/pasted pairing uri.
-await wata.relay.start({ pairingUri })
+const session = await wata.start({ uri })
+
+session.onRequest((event) => event.respond('pong'))
 ```
 
 #### Relay server
@@ -365,7 +376,7 @@ createServer(Server.node(relay).listener).listen(8787)
 
 ### `mobileLink`
 
-Direct, ongoing same-device session between two mobile apps over OS deep links. Feed OS-routed callbacks back in via `transport.handleUrl(url)`.
+Direct, ongoing same-device session between two mobile apps over OS deep links. Feed OS-routed callbacks back in via `session.handleUrl(url)`.
 
 [See example →](./playgrounds/mobileLink)
 
@@ -382,7 +393,6 @@ const wata = Wata.create({
   meta: { name: 'Example App' },
   transports: [
     mobileLink({
-      host: 'https://wallet.example',
       async openLink(url) {
         await Linking.openURL(url)
       },
@@ -390,11 +400,12 @@ const wata = Wata.create({
     }),
   ],
 })
+const session = await wata.start({ host: 'https://wallet.example' })
 
 // Feed OS-routed callback deep links back into the transport.
-Linking.addEventListener('url', ({ url }) => wata.mobileLink.handleUrl(url))
+Linking.addEventListener('url', ({ url }) => session.handleUrl(url))
 
-const { result } = await wata.send({ method: 'wallet_connect', params: [] })
+const { result } = await session.send({ method: 'wallet_connect', params: [] })
 ```
 
 #### Host
@@ -418,14 +429,15 @@ const wata = Wata.create({
     }),
   ],
 })
+const session = await wata.start()
 
-wata.onRequest(async (event) => {
+session.onRequest(async (event) => {
   if (event.method === 'wallet_connect')
     await event.respond(['0x0000000000000000000000000000000000000001'])
 })
 
 // Feed OS-routed inbound deep links back into the transport.
-Linking.addEventListener('url', ({ url }) => wata.mobileLink.handleUrl(url))
+Linking.addEventListener('url', ({ url }) => session.handleUrl(url))
 ```
 
 ## Directory
@@ -477,23 +489,21 @@ const { items } = await response.json()
 // 2. Validate the candidate against its own host.json.
 const host = await Discovery.fetchHost(items[0].origin)
 
-// 3. Create the consumer over the validated host's advertised relay,
-//    targeting the host's `deep_link` so the pairing link opens its app.
+// 3. Create the consumer (relay URL and host deep link supplied at start).
 const wata = Wata.create({
-  transports: [
-    relay({
-      target: host.deep_link?.universal_link ?? host.deep_link?.scheme,
-      url: host.transports.relay.url,
-    }),
-  ],
+  transports: [relay()],
 })
 
-// 4. Connect — `start()` resolves with the pairing prompt to render for
-//    the host to scan.
-const { uri } = await wata.start()
-renderQrCode(uri)
+// 4. Start a session over the validated host's advertised relay, targeting
+//    the host's `deep_link` so the pairing link opens the host app, then
+//    render the prompt for the host to scan.
+const session = await wata.start({
+  target: host.deep_link?.universal_link ?? host.deep_link?.scheme,
+  url: host.transports.relay.url,
+})
+if (session.prompt) renderQrCode(session.prompt.uri)
 
-const { result } = await wata.send({ method: 'ping', params: [] })
+const { result } = await session.send({ method: 'ping', params: [] })
 ```
 
 ## License

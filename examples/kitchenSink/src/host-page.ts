@@ -4,10 +4,14 @@ const status = document.getElementById('status') as HTMLElement
 
 status.textContent = `waiting for ${host.role} request`
 
-host.onOpen(() => {
-  status.textContent = 'ready'
+const session = await host.postMessage.start()
+
+status.textContent = 'ready'
+
+session.onRequest(async (event) => {
+  await event.respond({ message: 'pong from host', transport: event.transport })
 })
 
-host.onError((error) => {
+session.onError((error) => {
   status.textContent = error.message
 })
