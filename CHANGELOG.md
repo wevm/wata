@@ -1,5 +1,71 @@
 # wata
 
+## 0.2.0
+
+### Minor Changes
+
+- f313043: Redesigned the lifecycle so `Wata.create()` returns config only and `.start()` opens the live session carrying `send` / `notify` / `onRequest` / events / transport extras.
+
+  ```diff
+   const wata = Wata.create({
+     transports: [relay({ url: 'https://relay.example' })],
+   })
+
+  -wata.onPrompt((prompt) => renderQrCode(prompt.uri))
+  -const { result } = await wata.send({ method: 'ping', params: [] })
+  +const session = await wata.start()
+  +session.onPrompt((prompt) => renderQrCode(prompt.uri))
+  +const { result } = await session.send({ method: 'ping', params: [] })
+  ```
+
+- f313043: Made `openAuthSession` deferrable to `start()` on the consumer `mobile-web-auth` transport. It is now optional at construction and can be supplied (alongside `host`) at start time, so a single hoisted `Wata.create()` can be shared between a discovery server (which only serves `consumer.json` via `wata.fetch` and never starts a session) and the app (which injects its native browser auth-session primitive at start). `start`/`send` throw `Transport.TransportError` when neither construction nor start supplies it.
+
+  ```diff
+  -const wata = Wata.create({
+  -  transports: [mobileWebAuth({ callback, host, openAuthSession })],
+  -})
+  -const session = await wata.start()
+  +const wata = Wata.create({
+  +  transports: [mobileWebAuth({ callback })],
+  +})
+  +const session = await wata.start({ host, openAuthSession })
+  ```
+
+- f313043: Added a `wata/react` entrypoint exporting `useSession`, a hook that owns a `wata` session's lifecycle — starting it, subscribing to its event surface, mirroring `prompt`/`error` into React state, and closing it on unmount — so components no longer hand-roll refs, subscriptions, or cleanup. Works for both consumer sessions (`onPrompt` / `onNotification`) and host sessions (`onRequest`). `react` is an optional peer dependency.
+
+  ```tsx
+  import { Wata, relay } from "wata";
+  import { useSession } from "wata/react";
+
+  const wata = Wata.create({ transports: [relay({ url })] });
+
+  function App() {
+    const { prompt, start, status } = useSession(wata, {
+      onNotification: (event) => console.log(event),
+    });
+
+    async function send() {
+      const session = await start();
+      await session.send({ method: "ping", params: [] });
+    }
+  }
+  ```
+
+- f313043: Made the consumer `webhook-callback` transport concurrent. Each `send()` now registers an independent `auth_req_id` intent, so multiple requests can be in flight at once; inbound webhooks are routed to the matching intent and settle independently instead of closing the transport after the first response.
+
+  - `exchange` is now `'ongoing'` (was `'single_exchange'`) — the session stays open across requests.
+  - `Registration` gained an `authReqId` field so callers can correlate and cancel a specific request.
+  - `cancel(authReqId?)` now targets a single intent when given an id, or cancels every in-flight intent when called with no argument (backward compatible).
+
+  ```diff
+  -const registration = await session.send({ method: 'wallet_connect', params: [] })
+  -// further sends threw `ClosedError`
+  +const a = await session.send({ method: 'wallet_connect', params: [] })
+  +const b = await session.send({ method: 'personal_sign', params: [] })
+  +// both intents are live; cancel one with its id
+  +await session.webhookCallback.cancel(a.authReqId)
+  ```
+
 ## 0.1.1
 
 ### Patch Changes
