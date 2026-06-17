@@ -2,14 +2,12 @@
  * `wata/host` `Wata` namespace: the host-side public surface.
  *
  * `Wata.create` here always returns a {@link Host}. To create a
- * consumer, import from `wata` instead. Shared types
- * (`SendResult`, `Listener`, `LifecycleEventMap`, `BootstrapRequiredError`)
- * live on the consumer-side `Wata` namespace at `wata`; reach
- * for them there when you need to type both sides in the same module.
- *
- * Host-only types ({@link RequestEvent}, {@link NotificationEvent},
- * {@link Host}, {@link HostEventMap}) live in this file so they don't
- * pollute the consumer namespace.
+ * consumer, import from `wata` instead. Cross-side session primitives
+ * (`Listener`, `LifecycleEventMap`, `EnvelopeMeta`, `RequestContextOf`)
+ * live in {@link "../core/Session"}; the host session surface
+ * (`RequestEvent`, host `NotificationEvent`, `HostEventMap`,
+ * `HostListeners`, the live `Session.Session` + `compose`) lives in
+ * {@link "./Session"}. This file owns the host config + `create` factory.
  */
 
 import * as Discovery from '../core/Discovery.js'
@@ -20,9 +18,10 @@ import * as Http from '../core/Http.js'
 import * as Rpc from '../core/Rpc.js'
 import * as Schema from '../core/Schema.js'
 import * as SchemaRuntime from '../core/SchemaRuntime.js'
+import type * as core_Session from '../core/Session.js'
 import * as Transport from '../core/Transport.js'
 import * as Wellknown from '../core/Wellknown.js'
-import * as Wata from '../Wata.js'
+import type * as Session from './Session.js'
 
 /** Host transport accepted by {@link create}. */
 export type HostTransport = Transport.Transport<
@@ -36,7 +35,7 @@ export type HostTransport = Transport.Transport<
  * `offX` surface. `'request'` is handled separately by
  * {@link Host.onRequest} (method overloads + return-to-answer).
  */
-const hostEventNames = ['close', 'envelope', 'error', 'notification', 'open'] as const
+const hostEventNames = ['close', 'envelope', 'error', 'notification'] as const
 
 /** Metadata delivered to host request and notification listeners. */
 export type HostEventMeta<transport extends HostTransport = HostTransport> =
@@ -45,381 +44,83 @@ export type HostEventMeta<transport extends HostTransport = HostTransport> =
     transport: transport['name']
   }
 
-/**
- * Event payload delivered to host `'request'` listeners.
- *
- * The discriminator (`method`) is **lifted to the top level** so listeners
- * can narrow `respond`'s argument and `params` together with a single
- * check (`if (event.method === 'ping') { ... }`). TypeScript does not
- * narrow through nested discriminators when one of the sibling properties
- * is a function (the contravariant parameter type collapses to an
- * intersection that is usually `never`).
- */
-export type RequestEvent<
-  method extends string = string,
-  params extends Rpc.Params = Rpc.Params,
-  result = unknown,
-  transport extends HostTransport = HostTransport,
-  context extends Rpc.RequestContext = Rpc.RequestContext,
-> = {
-  /** Optional per-request context metadata attached by the consumer. */
-  context?: context | undefined
-  /** Id of the JSON-RPC request being answered. */
-  id: Rpc.Id
-  /** Transport metadata observed while receiving the request. */
-  meta: HostEventMeta<transport>
-  /** Method name. Top-level discriminator for schema-narrowed listeners. */
-  method: method
-  /** Method params. */
-  params: params
-  /**
-   * Sugar for `wata.reject(event.id, error)`. Resolves once the error
-   * response has flushed to the transport (so popup hosts can `await`
-   * delivery before calling `window.close()`). Idempotent.
-   */
-  reject: (error: { code: number; data?: unknown; message: string }) => Promise<void>
-  /** The full JSON-RPC request envelope as parsed off the wire. */
-  request: Rpc.Request<method, params, context>
-  /**
-   * Sugar for `wata.respond(event.id, result)`. Resolves once the
-   * success response has flushed to the transport (so popup hosts can
-   * `await` delivery before calling `window.close()`). Idempotent
-   * across `event.respond` / `event.reject` / `wata.respond` /
-   * `wata.reject`.
-   */
-  respond: (result: result) => Promise<void>
-  /** SDK-facing name of the transport that delivered this request. */
-  transport: transport['name']
-}
-
-/** Event payload delivered to host `'notification'` listeners. */
-export type NotificationEvent<
-  method extends string = string,
-  params extends Rpc.Params = Rpc.Params,
-  transport extends HostTransport = HostTransport,
-> = {
-  /** Transport metadata observed while receiving the notification. */
-  meta: HostEventMeta<transport>
-  /** Method name. Top-level discriminator for schema-narrowed listeners. */
-  method: method
-  /** The full JSON-RPC notification envelope as parsed off the wire. */
-  notification: Rpc.Notification<method, params>
-  /** Notification params. */
-  params: params
-  /** SDK-facing name of the transport that delivered this notification. */
-  transport: transport['name']
-}
-
-/**
- * Distribute over the schema's method names so the `request` payload is a
- * proper discriminated union. Narrowing on `event.method` narrows
- * `event.respond`'s argument and `event.params` together.
- */
-type DistributeRequest<
-  schema extends Schema.Schema,
-  name extends string,
-  transport extends HostTransport,
-  context extends Rpc.RequestContext,
-> = transport extends HostTransport
-  ? name extends Schema.MethodName<schema>
-    ? Schema.ParamsOf<schema, name> extends infer params
-      ? params extends Rpc.Params
-        ? RequestEvent<name, params, Schema.ResultOf<schema, name>, transport, context>
-        : never
-      : never
-    : never
-  : never
-
-/** Same shape as {@link DistributeRequest}, but for notifications. */
-type DistributeNotification<
-  schema extends Schema.Schema,
-  name extends string,
-  transport extends HostTransport,
-> = transport extends HostTransport
-  ? name extends Schema.MethodName<schema>
-    ? Schema.ParamsOf<schema, name> extends infer params
-      ? params extends Rpc.Params
-        ? NotificationEvent<name, params, transport>
-        : never
-      : never
-    : never
-  : never
-
-type DistributeTransportNotification<transport extends HostTransport> =
-  transport extends HostTransport ? NotificationEvent<string, Rpc.Params, transport> : never
-
-type DistributeTransportRequest<
-  transport extends HostTransport,
-  context extends Rpc.RequestContext,
-> = transport extends HostTransport
-  ? RequestEvent<string, Rpc.Params, unknown, transport, context>
-  : never
-
-type HostRequestEventOf<
-  schema extends Schema.Schema | undefined,
-  method extends string,
-  transport extends HostTransport,
-  context extends Rpc.RequestContext,
-> = transport extends HostTransport
-  ? method extends Host.MethodName<schema>
-    ? Host.ParamsOf<schema, method> extends infer params
-      ? params extends Rpc.Params
-        ? RequestEvent<method, params, Host.ResultOf<schema, method>, transport, context>
-        : never
-      : never
-    : never
-  : never
-
-type HostRequestListener<
-  schema extends Schema.Schema | undefined,
-  method extends string,
-  transport extends HostTransport,
-  context extends Rpc.RequestContext,
-> = (
-  event: HostRequestEventOf<schema, method, transport, context>,
-) => Host.ResultOf<schema, method> | Promise<Host.ResultOf<schema, method> | void> | void
-
-type HostRequestDispatchListener<
-  schema extends Schema.Schema | undefined,
-  transports extends HostTransports,
-  context extends Rpc.RequestContext,
-> = (event: SchemaRequestEvent<schema, transports, context>) => Promise<void> | void
-
-/**
- * Helper conditional that maps a {@link Schema} method name to the typed
- * `RequestEvent` payload host listeners receive.
- */
-export type SchemaRequestEvent<
-  schema extends Schema.Schema | undefined,
-  transports extends HostTransports = HostTransports,
-  context extends Rpc.RequestContext = Rpc.RequestContext,
-> = schema extends Schema.Schema
-  ? DistributeRequest<schema, Schema.MethodName<schema>, transports[number], context>
-  : DistributeTransportRequest<transports[number], context>
-
-/** Helper conditional mapping a schema to the typed `NotificationEvent`. */
-export type SchemaNotificationEvent<
-  schema extends Schema.Schema | undefined,
-  transports extends HostTransports = HostTransports,
-> = schema extends Schema.Schema
-  ? DistributeNotification<schema, Schema.MethodName<schema>, transports[number]>
-  : DistributeTransportNotification<transports[number]>
-
-/** Host-side event map (lifecycle + request/notification dispatch). */
-export type HostEventMap<
-  schema extends Schema.Schema | undefined,
-  transports extends HostTransports = HostTransports,
-  context extends Rpc.RequestContext = Rpc.RequestContext,
-> = Wata.LifecycleEventMap<schema, context> & {
-  /** Inbound JSON-RPC notification. Fire-and-forget. */
-  notification: SchemaNotificationEvent<schema, transports>
-  /**
-   * Inbound JSON-RPC request. Broad listeners should respond via
-   * `event.respond`; only method-scoped request listeners may answer by
-   * returning a non-`undefined` result.
-   */
-  request: SchemaRequestEvent<schema, transports, context>
-}
-
-type HostOffRequest<
-  schema extends Schema.Schema | undefined,
-  transports extends HostTransports,
-  context extends Rpc.RequestContext,
-> = {
-  /** Remove a method-scoped request listener. */
-  <const method extends Host.MethodName<schema>>(
-    method: method,
-    listener: HostRequestListener<schema, method, transports[number], context>,
-  ): void
-  /** Remove a broad request listener. */
-  (listener: HostRequestDispatchListener<schema, transports, context>): void
-}
-
-type HostOnRequest<
-  schema extends Schema.Schema | undefined,
-  transports extends HostTransports,
-  context extends Rpc.RequestContext,
-> = {
-  /**
-   * Subscribe to requests for one JSON-RPC method. A non-`undefined` listener
-   * return value answers the request.
-   */
-  <const method extends Host.MethodName<schema>>(
-    method: method,
-    listener: HostRequestListener<schema, method, transports[number], context>,
-  ): AbortController
-  /**
-   * Subscribe to broad host request dispatch. Respond via `event.respond`;
-   * listener return values are ignored.
-   */
-  (listener: HostRequestDispatchListener<schema, transports, context>): AbortController
-}
-
-/**
- * Host `onX` / `offX` listener surface — one method per
- * {@link HostEventMap} event, excluding `'request'` (which has its own
- * overloaded {@link Host.onRequest}). Payloads are sourced from `map`, so
- * the per-event payload docs live on the event map; the docs here
- * describe each subscription. Every `onX` returns an `AbortController` so
- * the subscription can be cancelled (or composed with an external signal).
- * Lazy-connects the transport on first call.
- */
-export type HostListeners<map extends Record<string, unknown>> = {
-  /**
-   * Remove a previously subscribed `'close'` listener (matched by
-   * reference).
-   */
-  offClose: (listener: Wata.Listener<map['close']>) => void
-  /**
-   * Remove a previously subscribed `'envelope'` listener (matched by
-   * reference).
-   */
-  offEnvelope: (listener: Wata.Listener<map['envelope']>) => void
-  /**
-   * Remove a previously subscribed `'error'` listener (matched by
-   * reference).
-   */
-  offError: (listener: Wata.Listener<map['error']>) => void
-  /**
-   * Remove a previously subscribed `'notification'` listener (matched by
-   * reference).
-   */
-  offNotification: (listener: Wata.Listener<map['notification']>) => void
-  /**
-   * Remove a previously subscribed `'open'` listener (matched by
-   * reference).
-   */
-  offOpen: (listener: Wata.Listener<map['open']>) => void
-  /**
-   * Subscribe to the session closing, cleanly or with a cause. Fires
-   * exactly once per session.
-   */
-  onClose: (listener: Wata.Listener<map['close']>) => AbortController
-  /**
-   * Observe raw uRPC envelopes (`rpc-requests` / `rpc-responses`)
-   * crossing the wire in either direction — a read-only tap for
-   * logging/tracing. Discriminate on `envelope.type`; handle inbound
-   * requests via {@link Host.onRequest}.
-   */
-  onEnvelope: (listener: Wata.Listener<map['envelope']>) => AbortController
-  /**
-   * Subscribe to transport errors (network, parse, AEAD).
-   */
-  onError: (listener: Wata.Listener<map['error']>) => AbortController
-  /**
-   * Subscribe to inbound JSON-RPC notifications from the consumer.
-   */
-  onNotification: (listener: Wata.Listener<map['notification']>) => AbortController
-  /**
-   * Subscribe to the session opening — fired once `start()` completes.
-   */
-  onOpen: (listener: Wata.Listener<map['open']>) => AbortController
-}
-
 /** Non-empty tuple of host transports accepted by {@link create}. */
 export type HostTransports = readonly [HostTransport, ...HostTransport[]]
 
 /**
- * Per-transport handles keyed by each transport's `name`, so callers
- * can reach a specific transport directly (e.g. `wata.relay.start({
- * pairingUri })`). Surfaced on the returned {@link Host}.
+ * Per-transport handle exposed on the host config (e.g. `wata.relay`).
+ * Call {@link start} to open the {@link Session.Session} — the live object
+ * that carries `onRequest` / `respond` / `notify` and the `onX` event
+ * surface.
  */
-export type TransportsByName<transports extends HostTransports> = {
-  [transport in transports[number] as string extends transport['name']
-    ? never
-    : transport['name']]: transport
+export type HostHandle<
+  schema extends Schema.Schema | undefined,
+  transport extends HostTransport,
+  context extends Rpc.RequestContext = Rpc.RequestContext,
+> = {
+  /**
+   * Open the session for this transport and resolve with it. Idempotent
+   * while the session is active: repeat calls return the same session.
+   * Once the session closes, a fresh `start()` opens a new one.
+   *
+   * Forwards any start options the wrapped transport accepts (e.g. the
+   * relay transport's `{ uri }`). The options parameter follows
+   * {@link Transport.StartFn} — required when the transport defers a
+   * mandatory value to start, optional otherwise. Passing options to an
+   * already-started handle throws — close the session first to restart
+   * with new options.
+   */
+  start: Transport.StartFn<
+    Transport.StartOptionsOf<transport>,
+    Session.Session<schema, transport, context>
+  >
 }
 
-/** Host-side `Wata`. Returned by {@link create}. */
+/** Transport handles keyed by each transport's SDK-facing name. */
+export type HostHandleMap<
+  schema extends Schema.Schema | undefined,
+  transports extends HostTransports,
+  context extends Rpc.RequestContext = Rpc.RequestContext,
+> = {
+  [transport in transports[number] as string extends transport['name']
+    ? never
+    : transport['name']]: HostHandle<schema, transport, context>
+}
+
+/**
+ * Host-side `Wata` config. Returned by {@link create}. Defines the
+ * configuration only — no live request handlers. Every transport is
+ * exposed as a named handle (e.g. `wata.relay`) whose
+ * {@link HostHandle.start} opens the live {@link Session.Session}. A single
+ * transport additionally lifts `start` to the top level for ergonomics
+ * (`wata.start()`).
+ */
 export type Host<
   schema extends Schema.Schema | undefined = undefined,
   transports extends HostTransports = HostTransports,
   context extends Rpc.RequestContext = Rpc.RequestContext,
-> = TransportsByName<transports> &
-  HostListeners<Omit<HostEventMap<schema, transports, context>, 'request'>> & {
-    /** Close the session. Idempotent. Emits `'close'`. */
-    close: (cause?: Error) => Promise<void>
-    /**
-     * Web-standard fetch handler forwarded from the transport when
-     * present. HTTP-shaped transports (`deviceCode`, `webhookCallback`,
-     * …) expose the standard {@link Http.Server} signature that drops
-     * onto Cloudflare Workers, Bun, Deno, Vercel Edge, etc. Non-HTTP
-     * transports (`postMessage`, `loopback`, …) leave it `undefined`.
-     */
-    fetch: Http.HandlersForTransports<transports>['fetch']
-    /**
-     * Send a typed JSON-RPC notification from the host to the consumer.
-     * Auto-starts transports that support host-origin notifications.
-     */
-    notify: <const method extends Host.MethodName<schema>>(
-      options: Host.NotifyOptions<schema, method>,
-    ) => Promise<void>
-    /** Remove a previously subscribed request listener. */
-    offRequest: HostOffRequest<schema, transports, context>
-    /**
-     * Subscribe to inbound JSON-RPC requests. Returns an `AbortController`
-     * so the subscription can be cancelled (or composed with an external
-     * signal).
-     *
-     * Pass a method name first (`onRequest('ping', listener)`) to scope to
-     * one method — that listener answers by *returning* a result. A broad
-     * `onRequest(listener)` sees every method; respond via `event.respond`
-     * (return values are ignored).
-     *
-     * Lazy-connects the transport on first call, so most hosts never need
-     * to call {@link Host.start} explicitly.
-     */
-    onRequest: HostOnRequest<schema, transports, context>
-    /**
-     * Settle a still-pending inbound request by id with a JSON-RPC error.
-     * Mirror of {@link Host.respond}. Resolves once the error response
-     * has flushed to the transport.
-     *
-     * @param id - Id of the pending request to settle.
-     * @param error - JSON-RPC error envelope (`code` + `message`, optional `data`).
-     */
-    reject: (id: Rpc.Id, error: reject.Error) => Promise<void>
-    /**
-     * Settle a still-pending inbound request by id with a JSON-RPC `result`.
-     * Resolves once the success response has flushed to the transport, so
-     * popup hosts can `await` delivery before calling `window.close()`.
-     *
-     * Store `event.id` from a `'request'` listener for UI flows where
-     * the response is gathered asynchronously (approval dialogs, late
-     * confirmations, etc.). No need for per-request closures or to
-     * return a Promise from the listener.
-     *
-     * Throws {@link UnknownRequestError} if no request with that id is
-     * currently pending (already responded, never received, or the
-     * wata is closed).
-     *
-     * Throws {@link AmbiguousRequestError} if more than one transport has
-     * the same pending id. In multi-transport hosts, prefer
-     * `event.respond(...)` / `event.reject(...)` inside the request event
-     * when duplicate ids are possible.
-     *
-     * @param id - Id of the pending request to settle.
-     * @param result - Success `result` payload to send.
-     */
-    respond: <result = unknown>(id: Rpc.Id, result: result) => Promise<void>
-    /** Side of the protocol this wata speaks for. */
-    role: 'host'
-    /** Optional method-registry schema flowed through `'request'` / `'notification'` events. */
-    schema: schema
-    /**
-     * Explicitly bring the session up. Starts the transport and resolves
-     * once it is ready to send and receive frames. Emits `'open'` on success.
-     *
-     * Optional: {@link Host.on}, {@link Host.notify}, {@link Host.respond},
-     * and {@link Host.reject} trigger `start` internally on first use,
-     * so most hosts can skip it.
-     * Reach for it when a UI wants to surface the connecting state before
-     * any request lands, or when start-time errors should reject up-front.
-     */
-    start: () => Promise<void>
-    /** Configured transports, in user-supplied order. */
-    transports: transports
-  }
+> = HostHandleMap<schema, transports, context> & {
+  /** Close every started session. Idempotent. */
+  close: (cause?: Error) => Promise<void>
+  /**
+   * Web-standard fetch handler forwarded from the transport when
+   * present. HTTP-shaped transports (`deviceCode`, `webhookCallback`,
+   * …) expose the standard {@link Http.Server} signature that drops
+   * onto Cloudflare Workers, Bun, Deno, Vercel Edge, etc. Non-HTTP
+   * transports (`postMessage`, `loopback`, …) leave it `undefined`.
+   * Inbound traffic only reaches listeners once the relevant transport's
+   * session has been opened with {@link HostHandle.start}.
+   */
+  fetch: Http.HandlersForTransports<transports>['fetch']
+  /** Side of the protocol this wata speaks for. */
+  role: 'host'
+  /** Optional method-registry schema flowed through `'request'` / `'notification'` events. */
+  schema: schema
+  /** Configured transports, in user-supplied order. */
+  transports: transports
+} & (transports extends readonly [infer transport extends HostTransport]
+    ? Pick<HostHandle<schema, transport, context>, 'start'>
+    : {})
 
 /** Helper types for the host-side {@link Host} API. */
 export declare namespace Host {
@@ -472,38 +173,44 @@ export declare namespace reject {
 /**
  * Create a host-side {@link Host} `Wata` around one or more transports.
  *
+ * `create` returns config only; call `start()` to open the live
+ * {@link Session.Session} that carries `onRequest` / `respond` / `notify` and
+ * the event surface. A single-transport config lifts `start` to the top
+ * level (`wata.start()`); multi-transport configs expose a handle per
+ * transport (`wata.<name>.start()`).
+ *
  * @example
  * Synchronous answer from inside the listener.
  * ```ts
  * import { Wata, postMessage } from 'wata/host'
  *
- * const wata = Wata.create({
+ * const session = await Wata.create({
  *   transports: [postMessage()],
- * })
+ * }).start()
  *
- * wata.onRequest(async (event) => {
+ * session.onRequest(async (event) => {
  *   if (event.method === 'ping') await event.respond({ ok: true })
  * })
  * ```
  *
  * @example
- * Late answer by id (UI / approval flows). `wata.on` lazy-connects
- * the transport on first call, so an explicit `start()` is optional.
+ * Late answer by id (UI / approval flows). Store `event.id` and settle it
+ * later with `session.respond(id, ...)`.
  * ```ts
  * import { Wata, postMessage } from 'wata/host'
  *
- * const wata = Wata.create({
+ * const session = await Wata.create({
  *   transports: [postMessage()],
- * })
+ * }).start()
  *
  * let id: string | number | undefined
  *
- * wata.onRequest((event) => {
+ * session.onRequest((event) => {
  *   id = event.id
  * })
  *
  * // Later, when the user clicks "approve":
- * if (id !== undefined) await wata.respond(id, { ok: true })
+ * if (id !== undefined) await session.respond(id, { ok: true })
  * ```
  */
 export function create<
@@ -512,7 +219,7 @@ export function create<
   const context extends Schema.Context | undefined = undefined,
 >(
   options: create.Options<schema, transports, context>,
-): Host<schema, transports, Wata.RequestContextOf<context>> {
+): Host<schema, transports, core_Session.RequestContextOf<context>> {
   const transports = options.transports as transports
   const schema = options.schema as schema
   const context = options.context as context
@@ -533,14 +240,160 @@ export function create<
   // from one app-wide config.
   for (const transport of transports) transport.bind?.({ baseUrl, identity, meta })
 
-  const emitter = Events.create<HostEventMap<schema, transports, Wata.RequestContextOf<context>>>()
+  const handles = transports.map((transport) => createHostHandle({ context, schema, transport }))
+
+  const routed = Http.composeRouted(transports.filter(isHttpServer))
+
+  // When `meta` + `baseUrl` are both set, wrap routed transport fetch so
+  // GET `/.well-known/urpc/host.json`
+  // serves the auto-built document and every other request falls
+  // through to the underlying transport routes. Transports without
+  // `.fetch` can still publish a well-known (the wrapper exposes
+  // its own `.fetch` even when nothing else is mounted).
+  let httpFetch = routed?.fetch
+  if (meta && baseUrl && identity) {
+    const document = Wellknown.buildHostDocument({
+      baseUrl,
+      meta,
+      publicKey: identity.publicKey,
+      transports: collectTransports(transports, baseUrl),
+    })
+    const wrapped = Wellknown.wrapFetch({
+      base: routed ? { fetch: routed.fetch } : undefined,
+      document,
+      wellknownPath: Wellknown.hostPath,
+    })
+    httpFetch = wrapped.fetch
+  }
+
+  // Surface each transport's handle by name (e.g. `wata.relay`) so callers
+  // open a specific session with `wata.<name>.start()`.
+  const byName: Record<string, unknown> = {}
+  transports.forEach((transport, index) => {
+    byName[transport.name] = handles[index]
+  })
+
+  const host = {
+    async close(cause?: Error) {
+      await Promise.all(handles.map((handle) => handle.close(cause)))
+    },
+    fetch: httpFetch as Host<schema, transports, core_Session.RequestContextOf<context>>['fetch'],
+    role: 'host' as const,
+    schema,
+    transports,
+    ...byName,
+    // Single-transport sugar: lift `start` so `wata.start()` opens the
+    // lone session without reaching through `wata.<name>`.
+    ...(handles.length === 1 ? { start: handles[0]!.start } : {}),
+  }
+  return host as unknown as Host<schema, transports, core_Session.RequestContextOf<context>>
+}
+
+/**
+ * Per-transport handle backing `wata.<name>`. Lazily creates and opens a
+ * {@link Session.Session} on {@link HostHandle.start}, caches it while active,
+ * and invalidates the cache when the session closes so a fresh `start()`
+ * opens a new session.
+ */
+function createHostHandle<
+  const schema extends Schema.Schema | undefined,
+  const transport extends HostTransport,
+  const context extends Schema.Context | undefined,
+>(parameters: {
+  context: context
+  schema: schema
+  transport: transport
+}): HostHandle<schema, transport, core_Session.RequestContextOf<context>> & {
+  close: (cause?: Error) => Promise<void>
+} {
+  const { context, schema, transport } = parameters
+  type HostSession = Session.Session<schema, transport, core_Session.RequestContextOf<context>>
+  let active: HostSession | undefined
+  let startPromise: Promise<HostSession> | undefined
+
+  return {
+    async close(cause) {
+      await active?.close(cause)
+    },
+    start(options?: Transport.StartOptionsOf<transport>) {
+      if (active) {
+        if (options !== undefined)
+          throw new Errors.BaseError(
+            `transport \`${transport.name}\` is already started; close the session before restarting with new options`,
+          )
+        return Promise.resolve(active)
+      }
+      if (startPromise) return startPromise
+      startPromise = (async () => {
+        const { session, start } = createHostSession({ context, schema, transport })
+        // Drop the cached session on close so the next `start()` is fresh.
+        session.onClose(() => {
+          active = undefined
+        })
+        // Cache eagerly so `handle.close()` can tear down a pending start
+        // (e.g. a relay host blocked on pairing). A failed start emits no
+        // `close`, so clear the cache here to avoid stranding a dead session.
+        active = session
+        try {
+          await start(options)
+        } catch (error) {
+          active = undefined
+          throw error
+        }
+        return session
+      })().finally(() => {
+        startPromise = undefined
+      })
+      return startPromise
+    },
+  }
+}
+
+function transportExtras<transport extends HostTransport>(
+  transport: transport,
+): Transport.Extras<transport> {
+  const baseKeys = new Set<string>(Transport.baseKeys)
+  return Object.fromEntries(
+    Object.entries(transport).filter(([key]) => !baseKeys.has(key)),
+  ) as Transport.Extras<transport>
+}
+
+/**
+ * Build a single live {@link Session.Session} around one host transport. All
+ * request/notification dispatch, pending tracking, and response helpers
+ * are scoped to this transport — there is no cross-transport fan-out, so
+ * a pending id is always unambiguous.
+ */
+function createHostSession<
+  const schema extends Schema.Schema | undefined,
+  const transport extends HostTransport,
+  const context extends Schema.Context | undefined,
+>(parameters: {
+  context: context
+  schema: schema
+  transport: transport
+}): {
+  session: Session.Session<schema, transport, core_Session.RequestContextOf<context>>
+  start: (options?: Transport.StartOptionsOf<transport>) => Promise<void>
+} {
+  const { context, schema, transport } = parameters
+
+  const emitter =
+    Events.create<
+      Session.HostEventMap<schema, readonly [transport], core_Session.RequestContextOf<context>>
+    >()
+
   // User-supplied `request` listeners, in registration order. The
   // `request` dispatch loop iterates these directly so it can capture
   // each listener's return value (and thrown error) for the
   // first-non-undefined-wins resolution semantics. Tracked here rather
   // than via `emitter.on('request', ...)` because the wrapper swallows
   // listener errors and never surfaces return values back to the caller.
-  type RequestPayload = HostEventMap<schema, transports, Wata.RequestContextOf<context>>['request']
+  type RequestPayload = Session.HostEventMap<
+    schema,
+    readonly [transport],
+    core_Session.RequestContextOf<context>
+  >['request']
   type RequestListener = (payload: RequestPayload) => unknown
   type RequestListenerEntry = {
     listener: RequestListener
@@ -567,34 +420,22 @@ export function create<
       if (entry.source === source && entry.method === method) requestListeners.delete(entry)
   }
 
-  type Runtime = {
-    phase: 'pre-key' | 'keyed'
-    started: boolean
-    startPromise: Promise<void> | undefined
-    transport: HostTransport
-  }
-  const runtimes: Runtime[] = transports.map((transport) => ({
-    phase: 'pre-key',
-    started: false,
-    startPromise: undefined,
-    transport,
-  }))
-  const invalid_context = Symbol('invalid context')
-  const pending = new Map<string, PendingRequest>()
+  type State = { phase: 'pre-key' | 'keyed'; started: boolean }
+  const state: State = { phase: 'pre-key', started: false }
   let startPromise: Promise<void> | undefined
+  const invalid_context = Symbol('invalid context')
+  const pending = new Map<Rpc.Id, Rpc.Request>()
 
   /**
-   * Returns the in-flight send Promise so callers that need to know
-   * the response actually flushed (popup hosts closing the window,
-   * worker hosts terminating, etc.) can `await` it. Resolves with
-   * `false` when no pending request matched `id`.
+   * Returns the in-flight send Promise so callers that need to know the
+   * response actually flushed (popup hosts closing the window, worker
+   * hosts terminating, etc.) can `await` it. Resolves with `false` when
+   * no pending request matched `id`.
    */
-  function settle(transport: HostTransport, id: Rpc.Id, response: Rpc.Response): Promise<boolean> {
-    const key = pendingKey(transport, id)
-    const entry = pending.get(key)
-    if (!entry) return Promise.resolve(false)
-    pending.delete(key)
-    return sendResponses(transport, [response]).then(() => true)
+  function settle(id: Rpc.Id, response: Rpc.Response): Promise<boolean> {
+    if (!pending.has(id)) return Promise.resolve(false)
+    pending.delete(id)
+    return sendResponses([response]).then(() => true)
   }
 
   function success(id: Rpc.Id, method: string, result: unknown): Rpc.Success {
@@ -602,15 +443,10 @@ export function create<
     return Rpc.success({ id, result: value })
   }
 
-  function settleInternalError(
-    transport: HostTransport,
-    id: Rpc.Id,
-    cause: unknown,
-  ): Promise<boolean> {
+  function settleInternalError(id: Rpc.Id, cause: unknown): Promise<boolean> {
     const error = cause instanceof Error ? cause : new Errors.BaseError(String(cause))
     emitter.emit('error', error)
     return settle(
-      transport,
       id,
       Rpc.error({
         code: -32603,
@@ -621,86 +457,41 @@ export function create<
     )
   }
 
-  function settleSuccess(
-    transport: HostTransport,
-    id: Rpc.Id,
-    method: string,
-    result: unknown,
-  ): Promise<boolean> {
-    const response = success(id, method, result)
-    return settle(transport, id, response)
-  }
-
-  function resolvePending(id: Rpc.Id): PendingRequest | undefined {
-    const matches = Array.from(pending.values()).filter((entry) => entry.request.id === id)
-    if (matches.length === 0) return undefined
-    if (matches.length > 1)
-      throw new AmbiguousRequestError(
-        id,
-        matches.map((entry) => entry.transport.name),
-      )
-    return matches[0]
-  }
-
-  function clearPending(transport: HostTransport): void {
-    for (const [key, entry] of pending) if (entry.transport === transport) pending.delete(key)
+  function settleSuccess(id: Rpc.Id, method: string, result: unknown): Promise<boolean> {
+    return settle(id, success(id, method, result))
   }
 
   async function respond(id: Rpc.Id, result: unknown): Promise<void> {
-    const entry = resolvePending(id)
-    const ok = entry
-      ? await settle(entry.transport, id, success(id, entry.request.method, result))
-      : false
+    const request = pending.get(id)
+    const ok = request ? await settle(id, success(id, request.method, result)) : false
     if (!ok) throw new UnknownRequestError(id)
   }
 
   async function reject(id: Rpc.Id, error: reject.Error): Promise<void> {
     const { code, data, message } = error
-    const entry = resolvePending(id)
-    const ok = entry
-      ? await settle(entry.transport, id, Rpc.error({ code, data, id, message }))
-      : false
+    const ok = pending.has(id) ? await settle(id, Rpc.error({ code, data, id, message })) : false
     if (!ok) throw new UnknownRequestError(id)
   }
 
-  function startRuntime(runtime: Runtime): Promise<void> {
-    if (runtime.started) return Promise.resolve()
-    if (!runtime.startPromise) {
-      runtime.startPromise = runtime.transport
-        .start()
-        .then(() => {
-          runtime.started = true
-        })
-        .finally(() => {
-          runtime.startPromise = undefined
-        })
-    }
-    return runtime.startPromise
-  }
-
-  async function start(): Promise<void> {
+  async function start(options?: Transport.StartOptionsOf<transport>): Promise<void> {
+    if (state.started) return
     if (startPromise) return startPromise
-    if (runtimes.every((runtime) => runtime.started)) return
-    startPromise = Promise.all(runtimes.map(startRuntime))
-      .then(() => {
-        emitter.emit('open', undefined)
-      })
-      .finally(() => {
+    startPromise = (async (): Promise<void> => {
+      try {
+        await (
+          transport.start as (options?: Transport.StartOptionsOf<transport>) => Promise<unknown>
+        )(options)
+        state.started = true
+      } finally {
         startPromise = undefined
-      })
+      }
+    })()
     return startPromise
   }
 
-  function lazyConnect(): void {
-    void start().catch((error: Error) => emitter.emit('error', error))
-  }
-
-  async function sendResponses(
-    transport: HostTransport,
-    responses: ReadonlyArray<Rpc.Response>,
-  ): Promise<void> {
+  async function sendResponses(responses: ReadonlyArray<Rpc.Response>): Promise<void> {
     const envelope = Envelope.rpcResponses(responses)
-    emitEnvelope(transport, envelope, 'outgoing')
+    emitEnvelope(envelope, 'outgoing')
     try {
       await transport.send(envelope)
     } catch {
@@ -710,19 +501,20 @@ export function create<
   }
 
   function emitEnvelope(
-    transport: HostTransport,
     envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' | 'rpc-responses' }>,
-    direction: Wata.EnvelopeMeta['direction'],
+    direction: core_Session.EnvelopeMeta['direction'],
   ): void {
     emitter.emit(
       'envelope',
-      envelope as unknown as Wata.ObservedEnvelope<schema, Wata.RequestContextOf<context>>,
+      envelope as unknown as core_Session.ObservedEnvelope<
+        schema,
+        core_Session.RequestContextOf<context>
+      >,
       { direction, transport: transport.name },
     )
   }
 
   async function dispatchRequest(
-    runtime: Runtime,
     request: Rpc.Request,
     metadata?: Transport.MessageMeta | undefined,
   ) {
@@ -733,9 +525,9 @@ export function create<
           context
             ? Schema.validate(context, request.context)
             : Schema.validate(Rpc.schema.requestContext, request.context)
-        ) as Wata.RequestContextOf<context>
+        ) as core_Session.RequestContextOf<context>
       } catch (cause) {
-        await sendResponses(runtime.transport, [
+        await sendResponses([
           Rpc.error({
             code: -32600,
             data: (cause as Error).message,
@@ -758,7 +550,7 @@ export function create<
       try {
         SchemaRuntime.validateParamsForMethod(schema, request_value.method, request_value.params)
       } catch (cause) {
-        await sendResponses(runtime.transport, [
+        await sendResponses([
           Rpc.error({
             code: -32602,
             data: (cause as Error).message,
@@ -777,7 +569,7 @@ export function create<
     // No matching listener has any chance of answering this request. Fall
     // through to JSON-RPC `method not found` so the consumer doesn't hang.
     if (snapshot.length === 0) {
-      await sendResponses(runtime.transport, [
+      await sendResponses([
         Rpc.error({
           code: -32601,
           data: request_value.method,
@@ -789,21 +581,19 @@ export function create<
     }
 
     // Track the request so `event.respond` / `event.reject` and the
-    // top-level `wata.respond` / `wata.reject` can all settle
-    // by id. The entry stays in `pending` until a listener answers
-    // (now or later) or the wata closes.
-    const key = pendingKey(runtime.transport, request_value.id)
-    pending.set(key, { request: request_value, transport: runtime.transport })
+    // session's `respond` / `reject` can all settle by id. The entry stays
+    // in `pending` until a listener answers (now or later) or the session
+    // closes.
+    pending.set(request_value.id, request_value)
 
     const payload = {
       context: context_value,
       id: request_value.id,
-      meta: hostEventMeta(runtime.transport, metadata),
+      meta: hostEventMeta(transport, metadata),
       method: request_value.method,
       params: request_value.params,
       reject: (rpcError: { code: number; data?: unknown; message: string }) =>
         settle(
-          runtime.transport,
           request_value.id,
           Rpc.error({
             code: rpcError.code,
@@ -815,21 +605,21 @@ export function create<
       request: request_value,
       respond: async (result: unknown) => {
         try {
-          await settleSuccess(runtime.transport, request_value.id, request_value.method, result)
+          await settleSuccess(request_value.id, request_value.method, result)
         } catch (cause) {
-          await settleInternalError(runtime.transport, request_value.id, cause)
+          await settleInternalError(request_value.id, cause)
           throw cause
         }
       },
-      transport: runtime.transport.name,
-    } as HostEventMap<schema, transports, Wata.RequestContextOf<context>>['request']
+      transport: transport.name,
+    } as RequestPayload
 
     // Iterate the user-registered listeners directly so we can capture
     // each one's outcome (return value or thrown error). Snapshot first
     // because a listener may unsubscribe siblings during dispatch.
     let firstError: Error | undefined
     for (const entry of snapshot) {
-      if (!pending.has(key)) break
+      if (!pending.has(request_value.id)) break
       let value: unknown
       try {
         value = entry.listener(payload)
@@ -841,9 +631,9 @@ export function create<
         const resolved = await Promise.resolve(value)
         if (entry.method !== undefined && resolved !== undefined) {
           try {
-            await settleSuccess(runtime.transport, request_value.id, request_value.method, resolved)
+            await settleSuccess(request_value.id, request_value.method, resolved)
           } catch (cause) {
-            await settleInternalError(runtime.transport, request_value.id, cause)
+            await settleInternalError(request_value.id, cause)
           }
           break
         }
@@ -852,10 +642,9 @@ export function create<
       }
     }
 
-    if (pending.has(key) && firstError) {
+    if (pending.has(request_value.id) && firstError) {
       if (firstError instanceof Rpc.RpcError)
         await settle(
-          runtime.transport,
           request_value.id,
           Rpc.error({
             code: firstError.code,
@@ -866,7 +655,6 @@ export function create<
         )
       else
         await settle(
-          runtime.transport,
           request_value.id,
           Rpc.error({
             code: -32603,
@@ -877,13 +665,12 @@ export function create<
         )
     }
 
-    // Otherwise: the request stays pending. A listener acknowledged it
-    // by being registered, so the host trusts the application to settle
-    // later via `wata.respond(id, ...)` / `wata.reject(id, ...)`.
+    // Otherwise: the request stays pending. A listener acknowledged it by
+    // being registered, so the host trusts the application to settle later
+    // via `session.respond(id, ...)` / `session.reject(id, ...)`.
   }
 
   function dispatchNotification(
-    runtime: Runtime,
     message: Rpc.Notification,
     metadata?: Transport.MessageMeta | undefined,
   ) {
@@ -896,16 +683,24 @@ export function create<
       }
     }
     const payload = {
-      meta: hostEventMeta(runtime.transport, metadata),
+      meta: hostEventMeta(transport, metadata),
       method: message.method,
       notification: message,
       params: message.params,
-      transport: runtime.transport.name,
-    } as HostEventMap<schema, transports, Wata.RequestContextOf<context>>['notification']
+      transport: transport.name,
+    } as Session.HostEventMap<
+      schema,
+      readonly [transport],
+      core_Session.RequestContextOf<context>
+    >['notification']
     emitter.emit(
       'notification',
       ...([payload] as Events.EventArgs<
-        HostEventMap<schema, transports, Wata.RequestContextOf<context>>['notification']
+        Session.HostEventMap<
+          schema,
+          readonly [transport],
+          core_Session.RequestContextOf<context>
+        >['notification']
       >),
     )
   }
@@ -913,17 +708,17 @@ export function create<
   /**
    * Spec §7 mode-discipline rejection. Sends the peer an unsolicited
    * JSON-RPC `-32600` error (`id: null`, since we have no request to
-   * correlate against), tears the transport down, and surfaces the
-   * cause to local listeners.
+   * correlate against), tears the transport down, and surfaces the cause
+   * to local listeners.
    */
-  function rejectModeViolation(runtime: Runtime, reason: string): void {
+  function rejectModeViolation(reason: string): void {
     const error = new Errors.ProtocolError(reason)
     void (async () => {
-      await sendResponses(runtime.transport, [
+      await sendResponses([
         Rpc.error({ code: -32600, data: reason, id: null, message: 'invalid request' }),
       ])
       try {
-        await runtime.transport.close(error)
+        await transport.close(error)
       } catch {
         // Surface via the local `error` event regardless.
       }
@@ -931,98 +726,65 @@ export function create<
     })()
   }
 
-  for (const runtime of runtimes) {
-    runtime.transport.on('message', async (envelope, metadata) => {
-      if (runtime.phase === 'pre-key' && envelope.type === 'encrypted') {
-        rejectModeViolation(runtime, 'encrypted envelope received before key derivation')
-        return
+  transport.on('message', async (envelope, metadata) => {
+    if (state.phase === 'pre-key' && envelope.type === 'encrypted') {
+      rejectModeViolation('encrypted envelope received before key derivation')
+      return
+    }
+    if (state.phase === 'keyed' && envelope.type !== 'encrypted') {
+      rejectModeViolation('plaintext envelope received after key derivation')
+      return
+    }
+    if (envelope.type === 'rpc-requests') {
+      emitEnvelope(envelope, 'incoming')
+      for (const message of envelope.payload) {
+        if ('id' in message) await dispatchRequest(message, metadata)
+        else dispatchNotification(message, metadata)
       }
-      if (runtime.phase === 'keyed' && envelope.type !== 'encrypted') {
-        rejectModeViolation(runtime, 'plaintext envelope received after key derivation')
-        return
-      }
-      if (envelope.type === 'rpc-requests') {
-        emitEnvelope(runtime.transport, envelope, 'incoming')
-        for (const message of envelope.payload) {
-          if ('id' in message) await dispatchRequest(runtime, message, metadata)
-          else dispatchNotification(runtime, message, metadata)
-        }
-      }
-    })
+    }
+  })
 
-    runtime.transport.on('close', (cause) => {
-      if (!runtime.started) return
-      runtime.started = false
-      clearPending(runtime.transport)
-      emitter.emit('close', cause)
-    })
+  transport.on('close', (cause) => {
+    if (!state.started) return
+    state.started = false
+    pending.clear()
+    emitter.emit('close', cause)
+  })
 
-    runtime.transport.on('error', (error) => {
-      emitter.emit('error', error)
-    })
-  }
-
-  const routed = Http.composeRouted(transports.filter(isHttpServer))
+  transport.on('error', (error) => {
+    emitter.emit('error', error)
+  })
 
   async function notify(
     options: Host.NotifyOptions<schema, Host.MethodName<schema>>,
   ): Promise<void> {
-    const targets = runtimes.filter((runtime) => runtime.transport.capabilities.notifications.host)
-    if (targets.length === 0)
-      throw new Transport.UnsupportedError('no configured transport supports host notifications')
+    if (!transport.capabilities.notifications.host)
+      throw new Transport.UnsupportedError(
+        `transport \`${transport.name}\` does not support host notifications`,
+      )
+    if (!state.started) await start()
     if (schema) SchemaRuntime.validateParamsForMethod(schema, options.method, options.params)
     const envelope = Envelope.rpcRequests([
       Rpc.notification({ method: options.method, params: options.params }),
     ])
-    await Promise.all(
-      targets.map(async (runtime) => {
-        await startRuntime(runtime)
-        emitEnvelope(runtime.transport, envelope, 'outgoing')
-        await runtime.transport.send(envelope)
-      }),
-    )
+    emitEnvelope(envelope, 'outgoing')
+    await transport.send(envelope)
   }
 
-  // When `meta` + `baseUrl` are both set, wrap routed transport fetch so
-  // GET `/.well-known/urpc/host.json`
-  // serves the auto-built document and every other request falls
-  // through to the underlying transport routes. Transports without
-  // `.fetch` can still publish a well-known (the wrapper exposes
-  // its own `.fetch` even when nothing else is mounted).
-  let httpFetch = routed?.fetch
-  if (meta && baseUrl && identity) {
-    const document = Wellknown.buildHostDocument({
-      baseUrl,
-      meta,
-      publicKey: identity.publicKey,
-      transports: collectTransports(transports, baseUrl),
-    })
-    const wrapped = Wellknown.wrapFetch({
-      base: routed ? { fetch: routed.fetch } : undefined,
-      document,
-      wellknownPath: Wellknown.hostPath,
-    })
-    httpFetch = wrapped.fetch
-  }
-
-  // Surface each transport by its `name` (e.g. `wata.relay`) so callers
-  // can reach a single transport's controls directly. Spread first so
-  // the explicit `Host` members below always win on any name clash.
-  const byName = Object.fromEntries(
-    transports.map((transport) => [transport.name, transport]),
-  ) as TransportsByName<transports>
-
-  return {
-    ...byName,
+  const subscribers = Events.subscribers(emitter, hostEventNames)
+  const session: Session.Session<schema, transport, core_Session.RequestContextOf<context>> = {
+    // Hoist transport-specific extras (e.g. `mobileLink`'s `handleUrl`)
+    // first so the wrapped session members below always win on any clash.
+    ...transportExtras(transport),
+    ...subscribers,
     async close(cause) {
+      if (!state.started && !startPromise) return
+      state.started = false
       pending.clear()
-      for (const runtime of runtimes) runtime.started = false
-      await Promise.all(transports.map((transport) => transport.close(cause)))
+      await transport.close(cause)
       emitter.emit('close', cause)
     },
-    fetch: httpFetch as Host<schema, transports, Wata.RequestContextOf<context>>['fetch'],
     notify,
-    ...Events.subscribers(emitter, hostEventNames, { onSubscribe: lazyConnect }),
     offRequest(methodOrListener: string | object, listener?: unknown) {
       const isMethod = typeof methodOrListener === 'string'
       removeRequestListener(
@@ -1046,16 +808,15 @@ export function create<
         },
         { once: true },
       )
-      lazyConnect()
       return controller
     },
     reject,
     respond,
     role: 'host',
     schema,
-    start,
-    transports,
+    transport,
   }
+  return { session, start }
 }
 
 export declare namespace create {
@@ -1106,11 +867,6 @@ export declare namespace create {
   }
 }
 
-type PendingRequest = {
-  request: Rpc.Request
-  transport: HostTransport
-}
-
 function hostEventMeta(
   transport: HostTransport,
   metadata?: Transport.MessageMeta | undefined,
@@ -1150,10 +906,6 @@ export function collectTransports(
   return documentTransports
 }
 
-function pendingKey(transport: HostTransport, id: Rpc.Id): string {
-  return JSON.stringify([transport.name, id])
-}
-
 function isHttpServer<transport extends HostTransport>(
   transport: transport,
 ): transport is transport & Http.RoutedServer {
@@ -1162,24 +914,9 @@ function isHttpServer<transport extends HostTransport>(
 }
 
 /**
- * Thrown by {@link Host.respond} / {@link Host.reject} when more than one
- * transport has a pending request with the supplied id. Use the request
- * event's `respond` / `reject` helpers to target the delivering transport.
- */
-export class AmbiguousRequestError extends Errors.BaseError {
-  override name = 'Wata.AmbiguousRequestError'
-
-  constructor(id: Rpc.Id, transports: readonly string[]) {
-    super(`multiple pending requests with id \`${String(id)}\``, {
-      details: `matching transports: ${transports.join(', ')}`,
-    })
-  }
-}
-
-/**
- * Thrown by {@link Host.respond} / {@link Host.reject} when no inbound
- * request with the supplied id is currently pending. Means the request
- * was already settled, never received, or the wata has closed.
+ * Thrown by {@link Session.Session.respond} / {@link Session.Session.reject} when
+ * no inbound request with the supplied id is currently pending. Means the
+ * request was already settled, never received, or the session has closed.
  */
 export class UnknownRequestError extends Errors.BaseError {
   override name = 'Wata.UnknownRequestError'

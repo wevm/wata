@@ -57,7 +57,9 @@ const wata = Wata.create({
   ],
 })
 
-wata.onRequest(async (event) => {
+const session = await wata.start()
+
+session.onRequest(async (event) => {
   console.log(`request: ${event.method}`, event.params)
   await event.respond({ message: 'pong from host' })
 })

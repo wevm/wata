@@ -35,7 +35,9 @@ const host = HostWata.create({
   ],
 })
 
-host.onRequest(async (event) => {
+const hostSession = await host.start()
+
+hostSession.onRequest(async (event) => {
   if (event.method === 'ping')
     await event.respond({ message: 'pong from host', transport: event.transport })
 })
@@ -60,13 +62,15 @@ const consumer = Wata.create({
   ],
 })
 
+const session = await consumer.start()
+
 const button = document.getElementById('send') as HTMLButtonElement
 const log = document.getElementById('log') as HTMLPreElement
 
 button.addEventListener('click', async () => {
   log.textContent = 'waiting...\n'
   try {
-    const response = await consumer.send({ method: 'ping', params: [] })
+    const response = await session.send({ method: 'ping', params: [] })
     log.textContent += `${JSON.stringify(response.result, undefined, 2)}\n`
   } catch (cause) {
     log.textContent += `${(cause as Error).name}: ${(cause as Error).message}\n`

@@ -4,6 +4,7 @@
 // helpers, and host-side transport factories.
 
 export * as Wata from './Wata.js'
+export * as Session from './Session.js'
 export * as Discovery from '../core/Discovery.js'
 export * as Identity from '../identity.js'
 export * as Store from '../core/Store.js'

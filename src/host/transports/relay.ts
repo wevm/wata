@@ -9,7 +9,7 @@
  *
  * The pairing uri can arrive at construction (`relay({ uri })`, pinned
  * and validated eagerly) or asynchronously at start time
- * (`wata.relay.start({ pairingUri })`), so a single hoisted
+ * (`wata.relay.start({ uri })`), so a single hoisted
  * `Wata.create({ transports: [relay()] })` can be paired once a link is
  * scanned. The pairing queue lives inside the transport — no external
  * source object to wire up.
@@ -18,7 +18,7 @@
  * out-of-band `pairing_secret` with the `hello` message's `host_proof`,
  * and resolves once the consumer's encrypted `ready` frame confirms
  * both sides derived the same keys — `await wata.relay.start({
- * pairingUri })` means "connected". From then on `rpc-requests` /
+ * uri })` means "connected". From then on `rpc-requests` /
  * `rpc-responses` envelopes flow sealed end-to-end; the relay only ever
  * sees ciphertext.
  *
@@ -28,13 +28,13 @@
  *
  * const wata = Wata.create({ transports: [relay()] })
  *
- * wata.onRequest(async (event) => {
+ * // `uri` delivered by QR scan / deep link:
+ * // urpc://?version=1&consumer_pubkey=...&pairing_secret=...&relay=...
+ * const session = await wata.relay.start({ uri }) // resolves once keyed
+ *
+ * session.onRequest(async (event) => {
  *   if (event.method === 'wallet_connect') await event.respond({ accounts })
  * })
- *
- * // `pairingUri` delivered by QR scan / deep link:
- * // urpc://?version=1&consumer_pubkey=...&pairing_secret=...&relay=...
- * await wata.relay.start({ pairingUri }) // resolves once the session is keyed
  * ```
  */
 
@@ -44,7 +44,7 @@ import * as Crypto from '../../core/Crypto.js'
 import * as Envelope from '../../core/Envelope.js'
 import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
-import * as Session from '../../core/Session.js'
+import * as SessionKey from '../../core/SessionKey.js'
 import * as Transport from '../../core/Transport.js'
 import * as Relay from '../../internal/Relay.js'
 
@@ -94,7 +94,7 @@ export type Options = {
    * fails fast.
    *
    * Omit it to supply the link at start time instead via
-   * `wata.relay.start({ pairingUri })`, so a single hoisted
+   * `wata.relay.start({ uri })`, so a single hoisted
    * `Wata.create({ transports: [relay()] })` can be paired once a link
    * is scanned.
    */
@@ -151,7 +151,7 @@ export function relay(options: Options = {}): relay.ReturnType {
 
   // Internal pairing queue. The uri can arrive at construction (pinned
   // + validated eagerly below) or at start time via
-  // `start({ pairingUri })`; either way it flows through `publishPairing`
+  // `start({ uri })`; either way it flows through `publishPairing`
   // and is awaited by `nextPairing` once `start()` runs. Keeping the
   // queue inside the transport means callers never wire up an external
   // pairing source.
@@ -195,8 +195,8 @@ export function relay(options: Options = {}): relay.ReturnType {
     })
   }
 
-  // Pin + validate a construction-time uri eagerly so scan-routing
-  // fails fast; it is queued for the first `start()` to consume.
+  // Pin + validate a construction-time pairing uri eagerly so
+  // scan-routing fails fast; it is queued for the first `start()` to consume.
   if (typeof uri === 'string') publishPairing(uri)
 
   const emitter = Events.create<Transport.EventMap>()
@@ -339,8 +339,8 @@ export function relay(options: Options = {}): relay.ReturnType {
     emitter.emit('message', inner)
   }
 
-  async function start(options: relay.StartOptions = {}): Promise<void> {
-    if (options.pairingUri !== undefined) publishPairing(options.pairingUri)
+  async function start(options: Pick<Options, 'uri'> = {}): Promise<void> {
+    if (options.uri !== undefined) publishPairing(options.uri)
     if (state.started) return
     if (startPromise) return startPromise
     startPromise = (async () => {
@@ -349,7 +349,7 @@ export function relay(options: Options = {}): relay.ReturnType {
       try {
         const parsed = parseUri(await nextPairing(controller.signal), { allowPrivateNetwork })
         const keypair = Crypto.randomKeypair()
-        const sharedSecret = Session.shared({
+        const sharedSecret = SessionKey.shared({
           privateKey: keypair.x25519.privateKey,
           publicKey: parsed.consumerPublicKey,
         })
@@ -359,7 +359,7 @@ export function relay(options: Options = {}): relay.ReturnType {
           pairingSecret: parsed.pairingSecret,
           sharedSecret,
         })
-        const keys = Session.derive({
+        const keys = SessionKey.derive({
           peer: { publicKey: parsed.consumerPublicKey },
           role: 'host',
           self: keypair.x25519,
@@ -477,18 +477,15 @@ export class PairingExpiredError<
 }
 
 export declare namespace relay {
-  /** Options for the relay transport's {@link Transport.Transport.start | start}. */
-  type StartOptions = {
-    /**
-     * Pairing link delivered by the consumer (QR scan, deep link),
-     * supplied at start time. Validated when published, throwing
-     * {@link InvalidUriError} on malformed links. Equivalent to passing
-     * {@link Options.uri} at construction; reach for it on a hoisted
-     * `Wata.create({ transports: [relay()] })` once a link is scanned:
-     * `await wata.relay.start({ pairingUri })`.
-     */
-    pairingUri?: string | undefined
-  }
+  /**
+   * Options for the relay transport's {@link Transport.Transport.start | start},
+   * derived from the deferrable {@link Options.uri} so its docs live in
+   * one place. `uri` stays optional here: a host `start()` with no uri
+   * subscribes the relay slot and waits for the pairing link to arrive
+   * (delivered by a later scan via `start({ uri })`), so unlike the
+   * consumer `url` it is never required up front.
+   */
+  type StartOptions = Pick<Options, 'uri'>
 
   /**
    * Return type of {@link relay}. A standard host `relay` transport

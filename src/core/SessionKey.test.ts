@@ -1,16 +1,16 @@
 import { Bytes, Hex } from 'ox'
 import { describe, expect, test } from 'vp/test'
-import { Crypto, Errors, Kdf, Session } from 'wata'
+import { Crypto, Errors, Kdf, SessionKey } from 'wata'
 
 describe('shared', () => {
   test('two peers compute the same secret (X25519 ECDH)', () => {
     const a = Crypto.randomKeypair()
     const b = Crypto.randomKeypair()
-    const ab = Session.shared({
+    const ab = SessionKey.shared({
       privateKey: a.x25519.privateKey,
       publicKey: b.x25519.publicKey,
     })
-    const ba = Session.shared({
+    const ba = SessionKey.shared({
       privateKey: b.x25519.privateKey,
       publicKey: a.x25519.publicKey,
     })
@@ -21,7 +21,7 @@ describe('shared', () => {
   test('rejects an all-zero / low-order peer key with ProtocolError', () => {
     const self = Crypto.randomKeypair()
     expect(() =>
-      Session.shared({
+      SessionKey.shared({
         privateKey: self.x25519.privateKey,
         publicKey: `0x${'00'.repeat(32)}`,
       }),
@@ -33,8 +33,8 @@ describe('buildInfo', () => {
   test('layout = "urpc/v1/" || transport_id || "/" || direction || pubkey_host || transport_context', () => {
     const publicKey_host = `0x${'aa'.repeat(32)}` as const
     const transportContext = '0xdeadbeef' as const
-    const info = Session.buildInfo({
-      direction: Session.direction.c2h,
+    const info = SessionKey.buildInfo({
+      direction: SessionKey.direction.c2h,
       publicKey_host,
       transportContext,
       transportId: 'relay',
@@ -48,8 +48,8 @@ describe('buildInfo', () => {
 
   test('omits transport_context when undefined', () => {
     const publicKey_host = `0x${'bb'.repeat(32)}` as const
-    const info = Session.buildInfo({
-      direction: Session.direction.h2c,
+    const info = SessionKey.buildInfo({
+      direction: SessionKey.direction.h2c,
       publicKey_host,
       transportId: 'mobile-link',
     })
@@ -62,14 +62,14 @@ describe('derive', () => {
     const consumer = Crypto.randomKeypair()
     const host = Crypto.randomKeypair()
 
-    const fromConsumer = Session.derive({
+    const fromConsumer = SessionKey.derive({
       peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
       transportContext: '0x1234',
       transportId: 'relay',
     })
-    const fromHost = Session.derive({
+    const fromHost = SessionKey.derive({
       peer: { publicKey: consumer.x25519.publicKey },
       role: 'host',
       self: host.x25519,
@@ -88,14 +88,14 @@ describe('derive', () => {
     const consumer = Crypto.randomKeypair()
     const host = Crypto.randomKeypair()
 
-    const a = Session.derive({
+    const a = SessionKey.derive({
       peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
       transportContext: '0xaaaa',
       transportId: 'relay',
     })
-    const b = Session.derive({
+    const b = SessionKey.derive({
       peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
@@ -111,13 +111,13 @@ describe('derive', () => {
     const consumer = Crypto.randomKeypair()
     const host = Crypto.randomKeypair()
 
-    const a = Session.derive({
+    const a = SessionKey.derive({
       peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
       transportId: 'relay',
     })
-    const b = Session.derive({
+    const b = SessionKey.derive({
       peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
@@ -131,22 +131,22 @@ describe('derive', () => {
   test('matches a hand-computed HKDF-SHA256 round-trip for c2h', () => {
     const consumer = Crypto.randomKeypair()
     const host = Crypto.randomKeypair()
-    const sharedSecret = Session.shared({
+    const sharedSecret = SessionKey.shared({
       privateKey: consumer.x25519.privateKey,
       publicKey: host.x25519.publicKey,
     })
     const expected = Kdf.derive({
       ikm: sharedSecret,
-      info: Session.buildInfo({
-        direction: Session.direction.c2h,
+      info: SessionKey.buildInfo({
+        direction: SessionKey.direction.c2h,
         publicKey_host: host.x25519.publicKey,
         transportContext: '0xfeedface',
         transportId: 'relay',
       }),
-      length: Session.keySize,
+      length: SessionKey.keySize,
       salt: consumer.x25519.publicKey,
     })
-    const derived = Session.derive({
+    const derived = SessionKey.derive({
       peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
@@ -159,13 +159,13 @@ describe('derive', () => {
   test('accepts `Bytes.Bytes` inputs alongside hex', () => {
     const consumer = Crypto.randomKeypair()
     const host = Crypto.randomKeypair()
-    const fromHex = Session.derive({
+    const fromHex = SessionKey.derive({
       peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
       transportId: 'relay',
     })
-    const fromBytes = Session.derive({
+    const fromBytes = SessionKey.derive({
       peer: { publicKey: Bytes.from(host.x25519.publicKey) },
       role: 'consumer',
       self: {

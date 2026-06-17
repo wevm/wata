@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Button, Input, Tag } from 'regen-ui'
-import { Wata, postMessage } from 'wata/host'
+import { Session, Wata, postMessage } from 'wata/host'
 
 import * as Log from './Log.js'
 import './styles.css'
@@ -28,13 +28,14 @@ const stateIntent = {
 type State = keyof typeof stateIntent
 
 type Pending = { id: number | string; method: string; params: unknown }
+type HostSession = Session.Session<undefined, ReturnType<typeof postMessage<Window>>>
 
 function App() {
   const [state, setState] = useState<State>('idle')
   const [pending, setPending] = useState<readonly Pending[]>([])
   const [pongs, setPongs] = useState<Record<string, string>>({})
   const log = Log.useLog()
-  const wataRef = useRef<Wata.Host | undefined>(undefined)
+  const sessionRef = useRef<HostSession | undefined>(undefined)
   const startedRef = useRef(false)
 
   useEffect(() => {
@@ -47,50 +48,56 @@ function App() {
       return
     }
 
-    const wata = Wata.create({
-      transports: [
-        postMessage<Window>({
-          // The consumer conveys its origin out of band (spec §3.1); pin it.
-          targetOrigin: peer.origin,
-          target: () => peer.window,
-        }),
-      ],
-    })
-    wataRef.current = wata
-
-    wata.onOpen(() => {
+    const start = async () => {
+      const session = await Wata.create({
+        transports: [
+          postMessage<Window>({
+            // The consumer conveys its origin out of band (spec §3.1); pin it.
+            target: () => peer.window,
+            targetOrigin: peer.origin,
+          }),
+        ],
+      }).start()
+      sessionRef.current = session
       setState('open')
       log.push({ intent: 'positive', label: 'open' })
-    })
-    wata.onClose((cause) => {
-      setState('closed')
-      log.push({ intent: 'neutral', label: 'close', detail: cause })
-    })
-    wata.onError((error) => {
-      setState('error')
-      log.push({ intent: 'negative', label: 'error', detail: error })
-    })
-    wata.onNotification((event) => {
-      log.push({ intent: 'accent', label: 'notification', detail: event.params })
-    })
-    wata.onRequest((event) => {
-      log.push({
-        intent: 'accent',
-        label: 'request',
-        requestId: event.id,
-        detail: event.params,
+      session.onClose((cause) => {
+        setState('closed')
+        log.push({ intent: 'neutral', label: 'close', detail: cause })
       })
-      setPending((prev) => [...prev, { id: event.id, method: event.method, params: event.params }])
+      session.onError((error) => {
+        setState('error')
+        log.push({ intent: 'negative', label: 'error', detail: error })
+      })
+      session.onNotification((event) => {
+        log.push({ intent: 'accent', label: 'notification', detail: event.params })
+      })
+      session.onRequest((event) => {
+        log.push({
+          detail: event.params,
+          intent: 'accent',
+          label: 'request',
+          requestId: event.id,
+        })
+        setPending((prev) => [
+          ...prev,
+          { id: event.id, method: event.method, params: event.params },
+        ])
+      })
+    }
+    void start().catch((error) => {
+      setState('error')
+      log.push({ intent: 'negative', label: 'start threw', detail: error })
     })
   }, [log])
 
   const respond = useCallback(
     (item: Pending) => {
-      const wata = wataRef.current
-      if (!wata) return
+      const session = sessionRef.current
+      if (!session) return
       const message = pongs[String(item.id)] || 'pong from host'
       const result = { message }
-      wata.respond(item.id, result)
+      session.respond(item.id, result)
       log.push({
         intent: 'positive',
         label: 'respond',
@@ -109,11 +116,11 @@ function App() {
 
   const reject = useCallback(
     (item: Pending) => {
-      const wata = wataRef.current
-      if (!wata) return
+      const session = sessionRef.current
+      if (!session) return
       const message = pongs[String(item.id)] || 'rejected by host'
       const error = { code: -32000, message }
-      wata.reject(item.id, error)
+      session.reject(item.id, error)
       log.push({
         intent: 'negative',
         label: 'reject',

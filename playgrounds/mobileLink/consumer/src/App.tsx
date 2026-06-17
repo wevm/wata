@@ -28,35 +28,43 @@ const consumer = Wata.create({
   ],
 })
 
+type Session = Awaited<ReturnType<typeof consumer.mobileLink.start>>
+
 export default function App() {
   const [log, setLog] = React.useState('ready')
+  const sessionRef = React.useRef<Session | undefined>(undefined)
+  const startedRef = React.useRef<Promise<Session> | undefined>(undefined)
+
+  function start() {
+    if (!startedRef.current)
+      startedRef.current = consumer.mobileLink
+        .start({ host: hostOrigin, scheme: hostScheme })
+        .then((session) => {
+          sessionRef.current = session
+          session.onClose((cause) => setLog(`closed${cause ? `: ${cause.message}` : ''}`))
+          session.onError((cause) => setLog(`error: ${cause.name}: ${cause.message}`))
+          return session
+        })
+    return startedRef.current
+  }
 
   React.useEffect(() => {
     const handle = (url: string) => {
-      if (isMobileLinkCallback(url)) consumer.mobileLink.handleUrl(url)
+      if (isMobileLinkCallback(url)) void sessionRef.current?.handleUrl(url)
     }
     const onUrl = Linking.addEventListener('url', ({ url }) => handle(url))
     void Linking.getInitialURL().then((url) => {
       if (url) handle(url)
     })
-    const onError = consumer.onError((cause) => setLog(`error: ${cause.name}: ${cause.message}`))
-    const onClose = consumer.onClose((cause) =>
-      setLog(`closed${cause ? `: ${cause.message}` : ''}`),
-    )
     return () => {
       onUrl.remove()
-      onError.abort()
-      onClose.abort()
     }
   }, [])
 
   function send(method: string, params: readonly unknown[]) {
     setLog(`sending ${method}, waiting for the wallet...`)
-    // Supply the chosen host at start time. `start` is idempotent, so
-    // calling it before every send is safe.
-    consumer.mobileLink
-      .start({ host: hostOrigin, scheme: hostScheme })
-      .then(() => consumer.send({ method, params }))
+    start()
+      .then((session) => session.send({ method, params }))
       .then((response) => setLog(JSON.stringify(response.result, undefined, 2)))
       .catch((cause: Error) => setLog(`${cause.name}: ${cause.message}`))
   }

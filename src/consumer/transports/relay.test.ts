@@ -29,4 +29,27 @@ describe('relay', () => {
     `,
     )
   })
+
+  test('throws when no url is supplied at construction or start', async () => {
+    const transport = relay()
+    // The type forbids `start()` here (url is required when omitted at
+    // construction); this guards the runtime fallback for untyped callers.
+    // @ts-expect-error url is required at start when omitted at construction
+    await expect(transport.start()).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Transport.TransportError: relay url must be supplied to \`relay({ url })\` or \`start({ url })\`]`,
+    )
+  })
+
+  test('accepts a url supplied at start, overriding construction', async () => {
+    // A start-time url is validated like a construction-time one.
+    const transport = relay()
+    await expect(
+      transport.start({ url: 'https://relay.example/?x=1' }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `
+      [ProtocolError: relay must not contain a query or fragment
+      Details: received https://relay.example/?x=1]
+    `,
+    )
+  })
 })

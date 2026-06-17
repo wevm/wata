@@ -8,4 +8,12 @@ const consumer = Wata.create({
   transports: [mobileLink({ returnUrl: consumerReturnUrl })],
 })
 
-export default { fetch: consumer.fetch }
+const started = consumer.mobileLink.start()
+const fetch = consumer.fetch as never as typeof globalThis.fetch
+
+export default {
+  async fetch(request: Request) {
+    await started
+    return await fetch(request)
+  },
+}

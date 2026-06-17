@@ -18,23 +18,23 @@ import { Wata, relay } from 'wata'
 const receive = process.env.RECEIVE ?? 'sse'
 const url = process.env.RELAY_URL ?? 'http://localhost:4860'
 
-const wata = Wata.create({
+const session = await Wata.create({
   transports: [relay({ receive, url })],
-})
+}).start()
 
-wata.onPrompt(({ uri }) => {
+session.onPrompt(({ uri }) => {
   console.log('pair the host with:')
   console.log(`  pnpm dev:host '${uri}'`)
 })
-wata.onNotification((event) =>
+session.onNotification((event) =>
   console.log(`notification: ${event.method} ${JSON.stringify(event.params)}`),
 )
-wata.onClose((cause) => console.log(cause ? `closed: ${cause.message}` : 'closed'))
-wata.onError((error) => console.log(`error: ${error.message}`))
+session.onClose((cause) => console.log(cause ? `closed: ${cause.message}` : 'closed'))
+session.onError((error) => console.log(`error: ${error.message}`))
 
 console.log(`consumer receiving over '${receive}' — sending ping…`)
 try {
-  const { result } = await wata.send({ method: 'ping', params: [{ from: 'consumer' }] })
+  const { result } = await session.send({ method: 'ping', params: [{ from: 'consumer' }] })
   console.log(`result: ${JSON.stringify(result)}`)
 } catch (error) {
   // The host can deny the request — surface the rejection instead of crashing.

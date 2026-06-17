@@ -11,7 +11,14 @@ Usage:
 Requires \`pnpm dev\` in another terminal on http://localhost:5173.
 `)
 else {
-  const { result } = await consumer.deviceCode.send({
+  const session = await consumer.deviceCode.start()
+
+  session.onPrompt((prompt) => {
+    console.log(`open ${prompt.verificationUriFull}`)
+    console.log(`user_code: ${prompt.userCode}`)
+  })
+
+  const { result } = await session.send({
     method: 'ping',
     params: [{ message: 'hello from CLI consumer' }],
   })

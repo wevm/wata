@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Transport, Wata, mobileWebAuth } from 'wata'
+import { MobileWebAuth, Session, Transport, Wata, mobileWebAuth } from 'wata'
 
 describe('mobileWebAuth (consumer)', () => {
   test('returns a single-exchange consumer-role transport', () => {
@@ -30,5 +30,48 @@ describe('mobileWebAuth (consumer)', () => {
     })
     const wata = Wata.create({ transports: [transport] })
     expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
+  })
+
+  test('start requires host when it was omitted at construction', () => {
+    const transport = mobileWebAuth({
+      callback: 'com.example.app:/auth',
+      openAuthSession: () => undefined,
+    })
+    expectTypeOf(transport.start)
+      .parameter(0)
+      .toEqualTypeOf<
+        Required<Pick<MobileWebAuth.Options, 'host'>> & Pick<MobileWebAuth.Options, 'authUrl'>
+      >()
+    expectTypeOf(transport.start({ host: 'https://wallet.example' })).toEqualTypeOf<Promise<void>>()
+    // @ts-expect-error host is required when it was omitted at construction
+    transport.start()
+    // @ts-expect-error host is required when it was omitted at construction
+    transport.start({ authUrl: 'https://wallet.example/auth/mobile' })
+  })
+
+  test('start makes host optional when it was pinned at construction', () => {
+    const transport = mobileWebAuth({
+      callback: 'com.example.app:/auth',
+      host: 'https://wallet.example',
+      openAuthSession: () => undefined,
+    })
+    expectTypeOf(transport.start)
+      .parameter(0)
+      .toEqualTypeOf<MobileWebAuth.StartOptions<{ host: string }> | undefined>()
+    expectTypeOf(transport.start()).toEqualTypeOf<Promise<void>>()
+    expectTypeOf(transport.start({ host: 'https://other.example' })).toEqualTypeOf<Promise<void>>()
+  })
+
+  test('forces host at `wata.start` when the transport was built without one', () => {
+    const wata = Wata.create({
+      transports: [
+        mobileWebAuth({ callback: 'com.example.app:/auth', openAuthSession: () => undefined }),
+      ],
+    })
+    expectTypeOf(wata.start({ host: 'https://wallet.example' })).toEqualTypeOf<
+      Promise<Session.Session<undefined, (typeof wata.transports)[0]>>
+    >()
+    // @ts-expect-error host is required when the transport was built without one
+    wata.start()
   })
 })

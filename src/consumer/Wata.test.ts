@@ -14,6 +14,7 @@ import {
   webhookCallback,
 } from 'wata'
 import {
+  Session,
   Wata as HostWata,
   deviceCode as hostDeviceCode,
   webhookCallback as hostWebhookCallback,
@@ -44,17 +45,17 @@ const context = z.object({
   chainId: z.number(),
 })
 
-function pair() {
+async function pair() {
   const { consumer: cTransport, host: hTransport } = loopback()
-  const consumer = Wata.create({ schema, transports: [cTransport] })
-  const host = HostWata.create({ schema, transports: [hTransport] })
+  const consumer = await Wata.create({ schema, transports: [cTransport] }).start()
+  const host = await HostWata.create({ schema, transports: [hTransport] }).start()
   return { consumer, host }
 }
 
-function pair_open() {
+async function pair_open() {
   const { consumer: cTransport, host: hTransport } = loopback()
-  const consumer = Wata.create({ schema: open_schema, transports: [cTransport] })
-  const host = HostWata.create({ schema: open_schema, transports: [hTransport] })
+  const consumer = await Wata.create({ schema: open_schema, transports: [cTransport] }).start()
+  const host = await HostWata.create({ schema: open_schema, transports: [hTransport] }).start()
   return { consumer, host }
 }
 
@@ -110,20 +111,24 @@ async function waitFor(predicate: () => boolean, timeout = 1000): Promise<void> 
 }
 
 describe('create', () => {
-  test('wata Wata.create returns a consumer', () => {
+  test('wata Wata.create returns a consumer config whose start() resolves a session', async () => {
     const { consumer } = loopback()
     const wata = Wata.create({ transports: [consumer] })
     expect(wata.role).toMatchInlineSnapshot(`"consumer"`)
     expect(typeof wata.start).toMatchInlineSnapshot(`"function"`)
-    expect(typeof wata.send).toMatchInlineSnapshot(`"function"`)
+    expect('send' in wata).toMatchInlineSnapshot(`false`)
+    const session = await wata.start()
+    expect(typeof session.send).toMatchInlineSnapshot(`"function"`)
   })
 
-  test('wata/host Wata.create returns a host', () => {
+  test('wata/host Wata.create returns a host config whose start() resolves a session', async () => {
     const { host } = loopback()
     const wata = HostWata.create({ transports: [host] })
     expect(wata.role).toMatchInlineSnapshot(`"host"`)
     expect(typeof wata.start).toMatchInlineSnapshot(`"function"`)
-    expect(typeof wata.onRequest).toMatchInlineSnapshot(`"function"`)
+    expect('onRequest' in wata).toMatchInlineSnapshot(`false`)
+    const session = await wata.start()
+    expect(typeof session.onRequest).toMatchInlineSnapshot(`"function"`)
   })
 
   test('multiple consumer transports expose named child sessions', async () => {
@@ -137,14 +142,21 @@ describe('create', () => {
     })
     const events: string[] = []
 
-    host.onRequest((event) => {
+    const deviceHost = await host.deviceCode.start()
+    const webhookHost = await host.webhookCallback.start()
+    deviceHost.onRequest((event) => {
       events.push(event.transport)
-      if (event.transport === 'deviceCode') return event.respond({ via: 'device' })
+      return event.respond({ via: 'device' })
+    })
+    webhookHost.onRequest((event) => {
+      events.push(event.transport)
       return event.respond({ via: 'webhook' })
     })
 
-    const fromDevice = await consumer.deviceCode.send({ method: 'ping', params: [] })
-    const fromWebhook = await consumer.webhookCallback.send({ method: 'ping', params: [] })
+    const deviceConsumer = await consumer.deviceCode.start()
+    const webhookConsumer = await consumer.webhookCallback.start()
+    const fromDevice = await deviceConsumer.send({ method: 'ping', params: [] })
+    const fromWebhook = await webhookConsumer.send({ method: 'ping', params: [] })
 
     expect('send' in consumer).toMatchInlineSnapshot(`false`)
     expect({ events, fromDevice, fromWebhook }).toMatchInlineSnapshot(`
@@ -172,6 +184,55 @@ describe('create', () => {
     await host.close()
   })
 
+  test('Session.compose answers requests across composed host sessions with one handler', async () => {
+    const device = namedPair('deviceCode')
+    const webhook = namedPair('webhookCallback')
+    const consumer = Wata.create({
+      transports: [device.consumer, webhook.consumer],
+    })
+    const host = HostWata.create({
+      transports: [device.host, webhook.host],
+    })
+    const events: string[] = []
+
+    const session = await Session.compose([host.deviceCode.start(), host.webhookCallback.start()])
+    session.onRequest((event) => {
+      events.push(event.transport)
+      return event.respond({ via: event.transport })
+    })
+
+    const deviceConsumer = await consumer.deviceCode.start()
+    const webhookConsumer = await consumer.webhookCallback.start()
+    const fromDevice = await deviceConsumer.send({ method: 'ping', params: [] })
+    const fromWebhook = await webhookConsumer.send({ method: 'ping', params: [] })
+
+    expect(session.role).toMatchInlineSnapshot(`"host"`)
+    expect(session.sessions.length).toMatchInlineSnapshot(`2`)
+    expect({ events, fromDevice, fromWebhook }).toMatchInlineSnapshot(`
+      {
+        "events": [
+          "deviceCode",
+          "webhookCallback",
+        ],
+        "fromDevice": {
+          "id": 1,
+          "result": {
+            "via": "deviceCode",
+          },
+        },
+        "fromWebhook": {
+          "id": 1,
+          "result": {
+            "via": "webhookCallback",
+          },
+        },
+      }
+    `)
+
+    await consumer.close()
+    await session.close()
+  })
+
   test('rejects duplicate transport names', () => {
     const a = namedPair('same')
     const b = namedPair('same')
@@ -184,27 +245,9 @@ describe('create', () => {
   })
 })
 
-describe('start', () => {
-  test('emits `open` on both sides', async () => {
-    const { consumer, host } = pair()
-    const consumerOpens: void[] = []
-    const hostOpens: void[] = []
-    consumer.onOpen(() => consumerOpens.push(undefined))
-    host.onOpen(() => hostOpens.push(undefined))
-
-    await consumer.start()
-    await host.start()
-
-    expect(consumerOpens.length).toMatchInlineSnapshot(`1`)
-    expect(hostOpens.length).toMatchInlineSnapshot(`1`)
-  })
-})
-
 describe('send', () => {
   test('round-trips a typed result via host respond()', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
@@ -222,7 +265,7 @@ describe('send', () => {
   })
 
   test('emits rpc-responses with transport metadata', async () => {
-    const { consumer, host } = pair()
+    const { consumer, host } = await pair()
     const events: Array<{ direction: string; results: unknown[]; transport: string }> = []
     consumer.onEnvelope((envelope, meta) => {
       if (envelope.type !== 'rpc-responses') return
@@ -256,7 +299,7 @@ describe('send', () => {
   })
 
   test('emits consumer rpc-requests with transport metadata', async () => {
-    const { consumer, host } = pair()
+    const { consumer, host } = await pair()
     const events: Array<{ direction: string; methods: string[]; transport: string }> = []
     consumer.onEnvelope((envelope, meta) => {
       if (envelope.type !== 'rpc-requests') return
@@ -286,7 +329,7 @@ describe('send', () => {
   })
 
   test('emits host rpc-requests with transport metadata', async () => {
-    const { consumer, host } = pair()
+    const { consumer, host } = await pair()
     const events: Array<{ direction: string; methods: string[]; transport: string }> = []
     host.onEnvelope((envelope, meta) => {
       if (envelope.type !== 'rpc-requests') return
@@ -316,7 +359,7 @@ describe('send', () => {
   })
 
   test('passes request context to host listeners and rpc request events', async () => {
-    const { consumer, host } = pair()
+    const { consumer, host } = await pair()
     const events: Array<{ context: unknown; context_request: unknown }> = []
     const requests: unknown[] = []
     host.onEnvelope((envelope) => {
@@ -368,7 +411,7 @@ describe('send', () => {
   })
 
   test('validates default request context reserved keys', async () => {
-    const { consumer, host } = pair()
+    const { consumer, host } = await pair()
     host.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
@@ -388,8 +431,8 @@ describe('send', () => {
 
   test('validates request context against the Wata context schema', async () => {
     const { consumer: cTransport, host: hTransport } = loopback()
-    const consumer = Wata.create({ context, transports: [cTransport], schema })
-    const host = HostWata.create({ context, transports: [hTransport], schema })
+    const consumer = await Wata.create({ context, transports: [cTransport], schema }).start()
+    const host = await HostWata.create({ context, transports: [hTransport], schema }).start()
     const seen: unknown[] = []
     host.onRequest((event) => {
       seen.push(event.context)
@@ -432,7 +475,7 @@ describe('send', () => {
   })
 
   test('emits host rpc-responses with transport metadata', async () => {
-    const { consumer, host } = pair()
+    const { consumer, host } = await pair()
     const events: Array<{ direction: string; results: unknown[]; transport: string }> = []
     host.onEnvelope((envelope, meta) => {
       if (envelope.type !== 'rpc-responses') return
@@ -466,7 +509,7 @@ describe('send', () => {
   })
 
   test('adds metadata to host request and notification events', async () => {
-    const { consumer, host } = pair()
+    const { consumer, host } = await pair()
     const events: Array<{ kind: string; meta: HostWata.HostEventMeta }> = []
 
     host.onNotification((event) => {
@@ -500,9 +543,7 @@ describe('send', () => {
   })
 
   test('first non-undefined listener return wins', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     host.onRequest(() => {})
     host.onRequest('add', ({ params }) => params[0] + params[1])
@@ -512,9 +553,7 @@ describe('send', () => {
   })
 
   test('rejects with Rpc.RpcError when host calls reject()', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     host.onRequest(({ reject }) => {
       reject({ code: -32000, message: 'denied' })
@@ -526,9 +565,7 @@ describe('send', () => {
   })
 
   test('responds with method-not-found when no listener is registered for `request`', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer } = await pair()
 
     await expect(
       consumer.send({ method: 'ping', params: [] }),
@@ -536,9 +573,7 @@ describe('send', () => {
   })
 
   test('accepts unknown methods through an open schema fallback', async () => {
-    const { consumer, host } = pair_open()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair_open()
 
     host.onRequest('wallet_connect', () => ({ accounts: ['0xabc'] }))
 
@@ -560,9 +595,7 @@ describe('send', () => {
   })
 
   test('method-scoped request listeners ignore nonmatching methods', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     host.onRequest('ping', () => ({ ok: true as const }))
 
@@ -580,9 +613,7 @@ describe('send', () => {
   })
 
   test('broad request listener return values are ignored', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     host.onRequest((() => ({ ok: false })) as never)
     host.onRequest('ping', () => ({ ok: true as const }))
@@ -598,9 +629,7 @@ describe('send', () => {
   })
 
   test('listener that returns undefined leaves the request pending for late settlement', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     let captured: { id: number | string } | undefined
     host.onRequest((event) => {
@@ -627,9 +656,7 @@ describe('send', () => {
   })
 
   test('wata.respond settles the matching pending request by id', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     const ids: (number | string)[] = []
     host.onRequest((event) => {
@@ -654,9 +681,7 @@ describe('send', () => {
   })
 
   test('wata.reject settles the matching pending request by id', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     let captured: { id: number | string } | undefined
     host.onRequest((event) => {
@@ -673,15 +698,14 @@ describe('send', () => {
   })
 
   test('wata.respond throws Wata.UnknownRequestError for unknown ids', async () => {
-    const { host } = pair()
-    await host.start()
+    const { host } = await pair()
 
     await expect(host.respond(999, 'nope')).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Wata.UnknownRequestError: no pending request with id \`999\`]`,
     )
   })
 
-  test('wata.respond throws Wata.AmbiguousRequestError for duplicate pending ids across transports', async () => {
+  test('per-transport sessions own their pending ids independently', async () => {
     const alpha = namedPair('alpha')
     const beta = namedPair('beta')
     const consumer = Wata.create({
@@ -690,31 +714,46 @@ describe('send', () => {
     const host = HostWata.create({
       transports: [alpha.host, beta.host],
     })
-    const events: string[] = []
 
-    host.onRequest((event) => {
-      events.push(event.transport)
+    const alphaHost = await host.alpha.start()
+    const betaHost = await host.beta.start()
+    let alphaId: number | string | undefined
+    let betaId: number | string | undefined
+    alphaHost.onRequest((event) => {
+      alphaId = event.id
+    })
+    betaHost.onRequest((event) => {
+      betaId = event.id
     })
 
-    const a = consumer.alpha.send({ id: 1, method: 'ping', params: [] }).catch(() => undefined)
-    const b = consumer.beta.send({ id: 1, method: 'ping', params: [] }).catch(() => undefined)
+    const alphaConsumer = await consumer.alpha.start()
+    const betaConsumer = await consumer.beta.start()
+    const a = alphaConsumer.send({ id: 1, method: 'ping', params: [] })
+    const b = betaConsumer.send({ id: 1, method: 'ping', params: [] })
 
-    await waitFor(() => events.length === 2)
+    await waitFor(() => alphaId !== undefined && betaId !== undefined)
 
-    await expect(host.respond(1, { ok: true })).rejects.toThrowErrorMatchingInlineSnapshot(`
-      [Wata.AmbiguousRequestError: multiple pending requests with id \`1\`
-      Details: matching transports: alpha, beta]
+    // Same id `1` on each session, but each session settles only its own.
+    await alphaHost.respond(1, { ok: true })
+    await betaHost.respond(1, { other: true })
+
+    expect({ a: (await a).result, b: (await b).result }).toMatchInlineSnapshot(`
+      {
+        "a": {
+          "ok": true,
+        },
+        "b": {
+          "other": true,
+        },
+      }
     `)
 
     await consumer.close()
     await host.close()
-    await Promise.all([a, b])
   })
 
   test('wata.respond is a no-op double-call once event.respond settled', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     let captured: { id: number | string } | undefined
     host.onRequest((event) => {
@@ -739,7 +778,7 @@ describe('send', () => {
   })
 
   test('lazy-starts on first send when start() was never called', async () => {
-    const { consumer, host } = pair()
+    const { consumer, host } = await pair()
     // No `consumer.start()` and no `host.start()` — both should
     // self-start as soon as they're used.
     host.onRequest((event) => {
@@ -754,8 +793,8 @@ describe('send', () => {
     `)
   })
 
-  test('lazy-starts on first notify when start() was never called', async () => {
-    const { consumer, host } = pair()
+  test('delivers a notify over a started session', async () => {
+    const { consumer, host } = await pair()
     const seen: string[] = []
     host.onNotification(({ method }) => {
       seen.push(method)
@@ -770,9 +809,7 @@ describe('send', () => {
   })
 
   test('rejects pending requests with Transport.ClosedError on close', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     // Host never responds to this request — close should reject the pending promise.
     const inflight = consumer.send({ method: 'ping', params: [] })
@@ -786,9 +823,7 @@ describe('send', () => {
   })
 
   test('schema validation rejects bad params before sending', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer } = await pair()
 
     await expect(
       // @ts-expect-error intentionally wrong params
@@ -802,9 +837,7 @@ describe('send', () => {
   })
 
   test('open schema validates known params before falling back', async () => {
-    const { consumer, host } = pair_open()
-    await consumer.start()
-    await host.start()
+    const { consumer } = await pair_open()
 
     await expect(
       // @ts-expect-error intentionally wrong params
@@ -818,9 +851,7 @@ describe('send', () => {
   })
 
   test('host validates known method-scoped listener return results before sending', async () => {
-    const { consumer, host } = pair_open()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair_open()
 
     // @ts-expect-error intentionally wrong result
     host.onRequest('ping', () => ({ ok: false }))
@@ -831,9 +862,7 @@ describe('send', () => {
   })
 
   test('event.respond validation failures settle the request with an internal error', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     let failure: unknown
     host.onRequest((event) => {
@@ -854,9 +883,7 @@ describe('send', () => {
   })
 
   test('wata.respond validates the result against the pending method', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     let captured: { id: number | string } | undefined
     host.onRequest((event) => {
@@ -887,9 +914,7 @@ describe('send', () => {
 
 describe('notify', () => {
   test('delivers a typed notification to host listeners', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     const seen: Rpc.Notification[] = []
     host.onNotification(({ notification }) => {
@@ -910,9 +935,9 @@ describe('notify', () => {
   })
 
   test('rejects when the transport does not support standalone consumer notifications', async () => {
-    const consumer = Wata.create({
+    const consumer = await Wata.create({
       transports: [deviceCode({ url: 'https://wallet.example/auth/device' })],
-    })
+    }).start()
 
     await expect(
       consumer.notify({ method: 'ping', params: [] }),
@@ -924,9 +949,7 @@ describe('notify', () => {
 
 describe('host notify', () => {
   test('delivers a typed notification to consumer listeners', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     const seen: Rpc.Notification[] = []
     consumer.onNotification(({ notification }) => {
@@ -945,22 +968,22 @@ describe('host notify', () => {
     `)
   })
 
-  test('rejects when no transport supports host notifications', async () => {
-    const host = HostWata.create({ transports: [httpTransport({ name: 'http', routes: ['/'] })] })
+  test('rejects when the transport does not support host notifications', async () => {
+    const host = await HostWata.create({
+      transports: [httpTransport({ name: 'http', routes: ['/'] })],
+    }).start()
 
     await expect(
       host.notify({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Transport.UnsupportedError: no configured transport supports host notifications]`,
+      `[Transport.UnsupportedError: transport \`http\` does not support host notifications]`,
     )
   })
 })
 
 describe('close', () => {
   test('emits `close` exactly once on both sides', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     let consumerCloses = 0
     let hostCloses = 0
@@ -974,9 +997,7 @@ describe('close', () => {
   })
 
   test('subsequent send() lazy re-opens the transport (and rejects when the underlying transport is terminal)', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer } = await pair()
     await consumer.close()
     // `send()` after a soft close lazy-calls `start()` again. The loopback
     // transport happens to be terminal-on-close, so the underlying
@@ -991,9 +1012,7 @@ describe('close', () => {
 
 describe('on', () => {
   test('returned AbortController unsubscribes the listener', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     let count = 0
     const controller = host.onNotification(() => {
@@ -1007,9 +1026,7 @@ describe('on', () => {
   })
 
   test('off removes a previously subscribed listener', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     let count = 0
     const listener = () => {
@@ -1024,9 +1041,7 @@ describe('on', () => {
   })
 
   test('method-scoped request AbortController unsubscribes the listener', async () => {
-    const { consumer, host } = pair()
-    await consumer.start()
-    await host.start()
+    const { consumer, host } = await pair()
 
     const controller = host.onRequest('ping', () => ({ ok: true as const }))
     expect(await consumer.send({ method: 'ping', params: [] })).toMatchInlineSnapshot(`
@@ -1048,9 +1063,8 @@ describe('on', () => {
 describe('mode discipline', () => {
   test('host rejects a pre-key encrypted frame with -32600 and tears down', async () => {
     const { consumer: cTransport, host: hTransport } = loopback()
-    const host = HostWata.create({ transports: [hTransport] })
     await cTransport.start()
-    await host.start()
+    const host = await HostWata.create({ transports: [hTransport] }).start()
 
     const inbound: unknown[] = []
     cTransport.on('message', (envelope) => inbound.push(envelope))
@@ -1098,9 +1112,8 @@ describe('mode discipline', () => {
 
   test('consumer rejects a pre-key encrypted frame with -32600 and tears down', async () => {
     const { consumer: cTransport, host: hTransport } = loopback()
-    const consumer = Wata.create({ transports: [cTransport] })
-    await consumer.start()
     await hTransport.start()
+    const consumer = await Wata.create({ transports: [cTransport] }).start()
 
     const inbound: unknown[] = []
     hTransport.on('message', (envelope) => inbound.push(envelope))
@@ -1440,7 +1453,8 @@ describe('baseUrl + meta auto-publishing', () => {
       transports: [consumer],
     })
 
-    const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
+    const session = await wata.deviceCode.start()
+    const sendPromise = session.send({ method: 'ping', params: [] }).catch(() => undefined)
     // Give the register POST a chance to settle.
     const start = Date.now()
     while (!registerBody) {
@@ -1544,7 +1558,8 @@ describe('baseUrl + meta auto-publishing', () => {
       transports: [consumer],
     })
 
-    const sendPromise = wata.send({ method: 'ping', params: [] }).catch(() => undefined)
+    const session = await wata.deviceCode.start()
+    const sendPromise = session.send({ method: 'ping', params: [] }).catch(() => undefined)
     const start = Date.now()
     while (!registerBody) {
       if (Date.now() - start > 2000) throw new Error('timed out waiting for /register')

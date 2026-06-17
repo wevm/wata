@@ -8,9 +8,11 @@ const append = (line: string) => {
   log.textContent += `${line}\n`
 }
 
+const session = await consumer.postMessage.start()
+
 webButton.addEventListener('click', async () => {
   try {
-    const { result } = await consumer.postMessage.send({
+    const { result } = await session.send({
       method: 'ping',
       params: [{ message: 'hello from web consumer' }],
     })

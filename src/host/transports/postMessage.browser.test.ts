@@ -107,15 +107,60 @@ describe('postMessage (host)', () => {
       }
     `)
   })
+
+  test('defers `targetOrigin` to `start({ targetOrigin })`, pinning inbound events', async () => {
+    const source = Object.assign(new EventTarget(), { postMessage() {} }) as unknown as Window &
+      EventTarget
+    const handle = {
+      addEventListener: source.addEventListener.bind(source),
+      postMessage() {},
+      removeEventListener: source.removeEventListener.bind(source),
+    } as unknown as Window
+    // No `targetOrigin` at construction — supplied at start.
+    const host = await HostWata.create({
+      transports: [postMessage({ source, target: () => handle })],
+    }).start({ targetOrigin: 'https://app.example' })
+
+    const seen: Array<string | undefined> = []
+    host.onNotification((event) => seen.push(event.meta.origin))
+
+    // Wrong origin — dropped.
+    source.dispatchEvent(
+      new MessageEvent('message', {
+        data: protocol.withId(
+          Envelope.rpcRequests([Rpc.notification({ method: 'noisy', params: [] })]),
+        ),
+        origin: 'https://attacker.example',
+      }),
+    )
+    // Pinned origin — delivered.
+    source.dispatchEvent(
+      new MessageEvent('message', {
+        data: protocol.withId(
+          Envelope.rpcRequests([Rpc.notification({ method: 'trusted', params: [] })]),
+        ),
+        origin: 'https://app.example',
+      }),
+    )
+
+    await waitFor(() => seen.length === 1)
+    expect(seen).toMatchInlineSnapshot(`
+      [
+        "https://app.example",
+      ]
+    `)
+
+    await host.close()
+  })
 })
 
 /**
- * End-to-end coverage for the host-side `Wata.respond` / `Wata.reject`
- * API over real `postMessage` (`MessageChannel` peers). Mirrors
+ * End-to-end coverage for the host-side session `respond` / `reject` API over
+ * real `postMessage` (`MessageChannel` peers). Mirrors
  * `src/Wata.test.ts` but on the wire, and exercises the
  * "no listener at all → method not found" fallthrough too.
  */
-describe('Wata.respond / Wata.reject (postMessage)', () => {
+describe('session.respond / session.reject (postMessage)', () => {
   function pair() {
     const { port1, port2 } = new MessageChannel()
     const consumer = Wata.create({ transports: [postMessage_consumer({ target: () => port1 })] })
@@ -123,20 +168,19 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
     return { consumer, host }
   }
 
-  test('wata.respond settles a pending request by id (lazy connect)', async () => {
-    // Both sides skip the explicit `start()` — `on(...)`
-    // and `send(...)` should self-start the transports.
+  test('respond settles a pending request by id', async () => {
     const { consumer, host } = pair()
+    const [consumer_session, host_session] = await Promise.all([consumer.start(), host.start()])
 
     let captured: { id: number | string } | undefined
-    host.onRequest((event) => {
+    host_session.onRequest((event) => {
       captured = { id: event.id }
     })
 
-    const inflight = consumer.send({ method: 'ping', params: [] })
+    const inflight = consumer_session.send({ method: 'ping', params: [] })
     // Wait until the host has actually received the request frame.
     await waitFor(() => captured !== undefined)
-    host.respond(captured!.id, { ok: true })
+    host_session.respond(captured!.id, { ok: true })
 
     expect((await inflight).result).toMatchInlineSnapshot(`
       {
@@ -144,49 +188,59 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
       }
     `)
 
-    await consumer.close()
+    await consumer_session.close()
+    await host_session.close()
   })
 
-  test('wata.reject sends a JSON-RPC error response by id', async () => {
+  test('reject sends a JSON-RPC error response by id', async () => {
     const { consumer, host } = pair()
-    await Promise.all([consumer.start(), host.start()])
+    const [consumer_session, host_session] = await Promise.all([consumer.start(), host.start()])
 
     let captured: { id: number | string } | undefined
-    host.onRequest((event) => {
+    host_session.onRequest((event) => {
       captured = { id: event.id }
     })
 
-    const inflight = consumer.send({ method: 'ping', params: [] })
+    const inflight = consumer_session.send({ method: 'ping', params: [] })
     await waitFor(() => captured !== undefined)
 
-    host.reject(captured!.id, { code: -32000, message: 'denied' })
+    host_session.reject(captured!.id, { code: -32000, message: 'denied' })
 
     await expect(inflight).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: denied]`)
 
-    await consumer.close()
+    await consumer_session.close()
+    await host_session.close()
   })
 
   test('no listener at all → method not found', async () => {
     const { consumer, host } = pair()
-    await Promise.all([consumer.start(), host.start()])
+    const [consumer_session, host_session] = await Promise.all([consumer.start(), host.start()])
 
     await expect(
-      consumer.send({ method: 'ping', params: [] }),
+      consumer_session.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: method not found]`)
 
-    await consumer.close()
+    await consumer_session.close()
+    await host_session.close()
   })
 
-  test('wata.notify delivers a host notification when host started first', async () => {
+  test('notify delivers a host notification when host started first', async () => {
     const { consumer, host } = pair()
     const seen: Rpc.Notification[] = []
-    consumer.onNotification(({ notification }) => {
+    const consumer_session = await consumer.start()
+    consumer_session.onNotification(({ notification }) => {
       seen.push(notification)
     })
 
-    const sent = host.notify({ method: 'dialog.mode.switch', params: [{ mode: 'popup' }] })
-    await consumer.start()
+    const host_session = await host.start()
+    const sent = host_session.notify({ method: 'dialog.mode.switch', params: [{ mode: 'popup' }] })
     await sent
+
+    // The consumer establishes the channel on its first outbound frame — until
+    // then the host's notification stays buffered. Once connected, the queued
+    // notification flushes to the consumer.
+    await consumer_session.notify({ method: 'ready', params: [] })
+
     await waitFor(() => seen.length === 1)
 
     expect(seen).toMatchInlineSnapshot(`
@@ -203,7 +257,8 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
       ]
     `)
 
-    await consumer.close()
+    await consumer_session.close()
+    await host_session.close()
   })
 
   test('re-announced hello flushes a host notification when the host missed the first hello', async () => {
@@ -237,17 +292,23 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
     const host = HostWata.create({ transports: [postMessage({ target: () => toConsumer.port2 })] })
 
     const seen: Rpc.Notification[] = []
-    consumer.onNotification(({ notification }) => seen.push(notification))
+    const consumer_session = await consumer.start()
+    consumer_session.onNotification(({ notification }) => seen.push(notification))
 
-    await Promise.all([consumer.start(), host.start()])
+    // The consumer establishes the channel on its first outbound frame; this
+    // produces the hello the relay drops, so the host "misses" it.
+    await consumer_session.notify({ method: 'connect', params: [] })
+
+    const host_session = await host.start()
     // Buffered until the re-announced hello makes the host ready.
-    await host.notify({ method: 'accountsChanged', params: [] })
+    await host_session.notify({ method: 'accountsChanged', params: [] })
 
     await waitFor(() => seen.length === 1)
     expect(droppedHello).toBe(true)
     expect(seen[0]?.method).toMatchInlineSnapshot(`"accountsChanged"`)
 
-    await consumer.close()
+    await consumer_session.close()
+    await host_session.close()
   })
 
   test('passes MessageEvent origin through host request and notification metadata', async () => {
@@ -258,11 +319,11 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
       postMessage() {},
       removeEventListener: source.removeEventListener.bind(source),
     } as unknown as Window
-    const host = HostWata.create({
+    const host = await HostWata.create({
       transports: [
         postMessage({ source, target: () => handle, targetOrigin: 'https://app.example' }),
       ],
-    })
+    }).start()
     const events: Array<{ kind: string; origin: string | undefined; transport: string }> = []
 
     host.onNotification((event) => {
@@ -281,8 +342,6 @@ describe('Wata.respond / Wata.reject (postMessage)', () => {
       if (event.method === 'ping') return event.respond({ ok: true })
       return undefined
     })
-    await host.start()
-
     source.dispatchEvent(
       new MessageEvent('message', {
         data: protocol.withId(

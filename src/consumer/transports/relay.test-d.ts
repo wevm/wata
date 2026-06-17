@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Relay, Transport, Wata, relay } from 'wata'
+import { Relay, Session, Transport, Wata, relay } from 'wata'
 
 describe('relay (consumer)', () => {
   test('returns an ongoing consumer-role transport', () => {
@@ -14,11 +14,31 @@ describe('relay (consumer)', () => {
     expectTypeOf<Relay.Options>().not.toHaveProperty('onPrompt')
   })
 
-  test('start accepts an optional target and resolves with the prompt', () => {
+  test('start requires url when it was omitted at construction', () => {
+    const transport = relay()
+    // url was not pinned at construction → required at start.
+    expectTypeOf(transport.start)
+      .parameter(0)
+      .toEqualTypeOf<Required<Pick<Relay.Options, 'url'>> & Pick<Relay.Options, 'target'>>()
+    expectTypeOf(transport.start({ url: 'https://relay.example' })).toEqualTypeOf<
+      Promise<Relay.Prompt>
+    >()
+    // @ts-expect-error url is required when it was omitted at construction
+    transport.start()
+    // @ts-expect-error url is required when it was omitted at construction
+    transport.start({ target: 'example-wallet' })
+  })
+
+  test('start makes url optional when it was pinned at construction', () => {
     const transport = relay({ url: 'https://relay.example' })
-    expectTypeOf(transport.start).parameter(0).toEqualTypeOf<Relay.StartOptions | undefined>()
+    expectTypeOf(transport.start)
+      .parameter(0)
+      .toEqualTypeOf<Relay.StartOptions<{ url: string }> | undefined>()
     expectTypeOf(transport.start()).toEqualTypeOf<Promise<Relay.Prompt>>()
     expectTypeOf(transport.start({ target: 'example-wallet' })).toEqualTypeOf<
+      Promise<Relay.Prompt>
+    >()
+    expectTypeOf(transport.start({ url: 'https://other.example' })).toEqualTypeOf<
       Promise<Relay.Prompt>
     >()
   })
@@ -29,10 +49,14 @@ describe('relay (consumer)', () => {
     expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
   })
 
-  test('forwards the target through a single-transport `wata.start` and resolves with the prompt', () => {
+  test('forwards the target through a single-transport `wata.start` and resolves with the session', () => {
     const wata = Wata.create({ transports: [relay({ url: 'https://relay.example' })] })
-    expectTypeOf(wata.start({ target: 'example-wallet' })).toEqualTypeOf<Promise<Relay.Prompt>>()
-    expectTypeOf(wata.start()).toEqualTypeOf<Promise<Relay.Prompt>>()
+    expectTypeOf(wata.start({ target: 'example-wallet' })).toEqualTypeOf<
+      Promise<Session.Session<undefined, (typeof wata.transports)[0]>>
+    >()
+    expectTypeOf(wata.start()).toEqualTypeOf<
+      Promise<Session.Session<undefined, (typeof wata.transports)[0]>>
+    >()
   })
 
   test('surfaces the relay transport by name on a multi-transport consumer', () => {
@@ -42,15 +66,30 @@ describe('relay (consumer)', () => {
         relay({ url: 'https://other.example' }),
       ],
     })
-    expectTypeOf(wata.relay.start).parameter(0).toEqualTypeOf<Relay.StartOptions | undefined>()
+    expectTypeOf(wata.relay.start)
+      .parameter(0)
+      .toEqualTypeOf<Relay.StartOptions<{ url: string }> | undefined>()
     expectTypeOf(wata.relay.start({ target: 'example-wallet' })).toEqualTypeOf<
-      Promise<Relay.Prompt>
+      Promise<Session.Session<undefined, (typeof wata.transports)[number]>>
     >()
   })
 
-  test('surfaces the relay prompt payload on the consumer `prompt` event', () => {
+  test('forces url at `wata.start` when the relay was built without one', () => {
+    const wata = Wata.create({ transports: [relay()] })
+    expectTypeOf(wata.start({ url: 'https://relay.example' })).toEqualTypeOf<
+      Promise<Session.Session<undefined, (typeof wata.transports)[0]>>
+    >()
+    // @ts-expect-error url is required when the relay was built without one
+    wata.start()
+  })
+
+  test('surfaces the relay prompt payload on the consumer session `prompt` event', async () => {
     const wata = Wata.create({ transports: [relay({ url: 'https://relay.example' })] })
-    wata.onPrompt((prompt) => {
+    const session = await wata.start()
+    expectTypeOf(session.prompt).toEqualTypeOf<
+      (Relay.Prompt & { transport: 'relay' }) | undefined
+    >()
+    session.onPrompt((prompt) => {
       expectTypeOf(prompt.transport).toEqualTypeOf<'relay'>()
       expectTypeOf(prompt.expiresAt).toEqualTypeOf<number>()
       expectTypeOf(prompt.uri).toEqualTypeOf<string>()

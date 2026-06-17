@@ -9,262 +9,29 @@
  * Consumer : Host` conditional, which gives editors and type-error
  * messages the right shape immediately.
  *
- * Shared types (lifecycle event map, listener signature, send result) live
- * in this file and are re-exported verbatim from
- * {@link "./host/Wata"} so user code can reach them from either side.
+ * Session-surface types (lifecycle event map, listener signature, send
+ * result, envelope tap) live in {@link "./core/Session"} so they sit with
+ * the session they describe; this file owns the config + `create` factory.
  *
  * Consumers can opt into typed JSON-RPC methods through `schema`, app
  * metadata/discovery through `baseUrl` + `meta`, and transport-specific
  * HTTP handlers through the wrapped transport.
  */
 
-import * as Discovery from './core/Discovery.js'
-import * as Envelope from './core/Envelope.js'
-import * as Errors from './core/Errors.js'
-import * as Events from './core/Events.js'
-import * as Http from './core/Http.js'
-import * as Rpc from './core/Rpc.js'
-import * as Schema from './core/Schema.js'
-import * as SchemaRuntime from './core/SchemaRuntime.js'
-import * as Transport from './core/Transport.js'
-import * as Wellknown from './core/Wellknown.js'
-
-/**
- * Result of a single {@link Consumer.send} call. We return `{ id, result }`
- * (rather than the bare `result`) so callers can correlate with logs and
- * batch/trace tooling without losing the JSON-RPC identity.
- */
-export type SendResult<result> = {
-  /** Id of the JSON-RPC request that produced this response. */
-  id: Rpc.Id
-  /** Decoded `result` payload from the host's success response. */
-  result: result
-}
-
-/** Listener supplied to a consumer `onX` subscriber method. */
-export type Listener<payload> = Events.Listener<payload>
+import * as Discovery from '../core/Discovery.js'
+import * as Envelope from '../core/Envelope.js'
+import * as Errors from '../core/Errors.js'
+import * as Events from '../core/Events.js'
+import * as Http from '../core/Http.js'
+import * as Rpc from '../core/Rpc.js'
+import * as Schema from '../core/Schema.js'
+import * as SchemaRuntime from '../core/SchemaRuntime.js'
+import * as Transport from '../core/Transport.js'
+import * as Wellknown from '../core/Wellknown.js'
+import type * as Session from './Session.js'
 
 /** Consumer event names, used to derive the `onX` / `offX` surface. */
-const consumerEventNames = ['close', 'envelope', 'error', 'notification', 'open', 'prompt'] as const
-
-/** Direction + transport metadata for an observed {@link ObservedEnvelope}. */
-export type EnvelopeMeta = {
-  /** Direction relative to the local `Wata` instance. */
-  direction: 'incoming' | 'outgoing'
-  /** SDK-facing transport name that carried this envelope. */
-  transport: string
-}
-
-type RpcRequestMessageOf<
-  schema extends Schema.Schema | undefined,
-  context extends Rpc.RequestContext,
-> = schema extends Schema.Schema
-  ? {
-      [method in Schema.MethodName<schema>]:
-        | Rpc.Notification<method, Rpc.Params & Schema.ParamsOf<schema, method>>
-        | Rpc.Request<method, Rpc.Params & Schema.ParamsOf<schema, method>, context>
-    }[Schema.MethodName<schema>]
-  : Rpc.Request<string, Rpc.Params, context> | Rpc.Notification
-
-type RpcResponseMessageOf<schema extends Schema.Schema | undefined> = Rpc.Response<
-  RpcResponseResultOf<schema>
->
-
-type RpcResponseResultOf<schema extends Schema.Schema | undefined> = schema extends Schema.Schema
-  ? {
-      [method in Schema.MethodName<schema>]: Schema.ResultOf<schema, method>
-    }[Schema.MethodName<schema>]
-  : unknown
-
-/** Decoded payload of an observed `rpc-requests` envelope. */
-export type RpcRequestsPayload<
-  schema extends Schema.Schema | undefined = undefined,
-  context extends Rpc.RequestContext = Rpc.RequestContext,
-> = readonly RpcRequestMessageOf<schema, context>[]
-
-/** Decoded payload of an observed `rpc-responses` envelope. */
-export type RpcResponsesPayload<schema extends Schema.Schema | undefined = undefined> =
-  readonly RpcResponseMessageOf<schema>[]
-
-/**
- * A uRPC envelope surfaced through the `'envelope'` observability tap:
- * either an `rpc-requests` or `rpc-responses` envelope, with its decoded
- * payload. Discriminate on `type` to narrow `payload`. Handshake /
- * transport frames (`hello`, `ready`, `encrypted`) are never surfaced.
- */
-export type ObservedEnvelope<
-  schema extends Schema.Schema | undefined = undefined,
-  context extends Rpc.RequestContext = Rpc.RequestContext,
-> =
-  | {
-      /** JSON-RPC request / notification payloads carried by the envelope. */
-      payload: RpcRequestsPayload<schema, context>
-      /** Envelope type discriminator. */
-      type: 'rpc-requests'
-    }
-  | {
-      /** JSON-RPC response payloads carried by the envelope. */
-      payload: RpcResponsesPayload<schema>
-      /** Envelope type discriminator. */
-      type: 'rpc-responses'
-    }
-
-/** Event payload delivered to consumer `'notification'` listeners. */
-export type NotificationEvent<
-  method extends string = string,
-  params extends Rpc.Params = Rpc.Params,
-> = {
-  /** Method name. Top-level discriminator for schema-narrowed listeners. */
-  method: method
-  /** The full JSON-RPC notification envelope as parsed off the wire. */
-  notification: Rpc.Notification<method, params>
-  /** Notification params. */
-  params: params
-  /** SDK-facing name of the transport that delivered this notification. */
-  transport: string
-}
-
-/** Distribute notification payloads over schema method names. */
-type DistributeNotification<schema extends Schema.Schema, name extends string> =
-  name extends Schema.MethodName<schema>
-    ? Schema.ParamsOf<schema, name> extends infer params
-      ? params extends Rpc.Params
-        ? NotificationEvent<name, params>
-        : never
-      : never
-    : never
-
-/** Helper conditional mapping a schema to a typed consumer notification event. */
-export type SchemaNotificationEvent<schema extends Schema.Schema | undefined> =
-  schema extends Schema.Schema
-    ? DistributeNotification<schema, Schema.MethodName<schema>>
-    : NotificationEvent
-
-/** Lifecycle events emitted on every `Wata` (consumer + host). */
-export type LifecycleEventMap<
-  schema extends Schema.Schema | undefined = undefined,
-  context extends Rpc.RequestContext = Rpc.RequestContext,
-> = {
-  /** Emitted exactly once when the session closes, cleanly or with cause. */
-  close: Error | undefined
-  /**
-   * Observed uRPC envelope crossing the wire (read-only tap), in either
-   * direction. Fires for `rpc-requests` and `rpc-responses` envelopes
-   * only; discriminate on `envelope.type` to narrow the payload.
-   */
-  envelope: [
-    /** The observed envelope with its decoded payload. */
-    envelope: ObservedEnvelope<schema, context>,
-    /** Direction and transport metadata for the envelope. */
-    meta: EnvelopeMeta,
-  ]
-  /** Emitted when the transport surfaces an error (network, parse, AEAD). */
-  error: Error
-  /** Emitted after `start()` completes (both consumer and host). */
-  open: void
-}
-
-/** Consumer-side event map. */
-export type ConsumerEventMap<
-  schema extends Schema.Schema | undefined = undefined,
-  context extends Rpc.RequestContext = Rpc.RequestContext,
-  prompt extends object = never,
-> = LifecycleEventMap<schema, context> & {
-  /** Inbound JSON-RPC notification from the host. */
-  notification: SchemaNotificationEvent<schema>
-  /**
-   * User-facing pairing/verification prompt produced by an out-of-band
-   * transport (e.g. `relay`, `deviceCode`) during startup. Discriminated
-   * by {@link ConsumerPromptEvent transport}, so listeners narrow to the
-   * exact payload of the transport that produced it.
-   */
-  prompt: prompt
-}
-
-/**
- * Consumer `'prompt'` payload derived from a transport: the transport's
- * own {@link "./core/Transport".PromptOf prompt} shape tagged with its
- * SDK-facing `transport` name. Transports that never pair out-of-band
- * contribute `never`, so they drop out of the union.
- */
-export type ConsumerPromptEvent<transport extends Transport.Any> = transport extends unknown
-  ? [Transport.PromptOf<transport>] extends [never]
-    ? never
-    : Transport.PromptOf<transport> & {
-        /** SDK-facing name of the transport that produced the prompt. */
-        transport: transport['name']
-      }
-  : never
-
-/**
- * Consumer `onX` / `offX` listener surface — one method per
- * {@link ConsumerEventMap} event. Shared by {@link ConsumerSession} and
- * {@link ConsumerBase}. Payloads are sourced from `map`, so the per-event
- * payload docs live on the event map; the docs here describe each
- * subscription. Every `onX` returns an `AbortController` so the
- * subscription can be cancelled (or composed with an external signal).
- */
-export type ConsumerListeners<map extends Record<string, unknown>> = {
-  /**
-   * Remove a previously subscribed `'close'` listener (matched by
-   * reference).
-   */
-  offClose: (listener: Listener<map['close']>) => void
-  /**
-   * Remove a previously subscribed `'envelope'` listener (matched by
-   * reference).
-   */
-  offEnvelope: (listener: Listener<map['envelope']>) => void
-  /**
-   * Remove a previously subscribed `'error'` listener (matched by
-   * reference).
-   */
-  offError: (listener: Listener<map['error']>) => void
-  /**
-   * Remove a previously subscribed `'notification'` listener (matched by
-   * reference).
-   */
-  offNotification: (listener: Listener<map['notification']>) => void
-  /**
-   * Remove a previously subscribed `'open'` listener (matched by
-   * reference).
-   */
-  offOpen: (listener: Listener<map['open']>) => void
-  /**
-   * Remove a previously subscribed `'prompt'` listener (matched by
-   * reference).
-   */
-  offPrompt: (listener: Listener<map['prompt']>) => void
-  /**
-   * Subscribe to the session closing, cleanly or with a cause. Fires
-   * exactly once per session.
-   */
-  onClose: (listener: Listener<map['close']>) => AbortController
-  /**
-   * Observe raw uRPC envelopes (`rpc-requests` / `rpc-responses`)
-   * crossing the wire in either direction — a read-only tap for
-   * logging/tracing. Discriminate on `envelope.type`; use `send` /
-   * `notify` to issue traffic.
-   */
-  onEnvelope: (listener: Listener<map['envelope']>) => AbortController
-  /**
-   * Subscribe to transport errors (network, parse, AEAD).
-   */
-  onError: (listener: Listener<map['error']>) => AbortController
-  /**
-   * Subscribe to inbound JSON-RPC notifications from the host.
-   */
-  onNotification: (listener: Listener<map['notification']>) => AbortController
-  /**
-   * Subscribe to the session opening — fired once `start()` completes.
-   */
-  onOpen: (listener: Listener<map['open']>) => AbortController
-  /**
-   * Subscribe to user-facing pairing/verification prompts produced by an
-   * out-of-band transport (e.g. `relay`, `deviceCode`) during startup.
-   */
-  onPrompt: (listener: Listener<map['prompt']>) => AbortController
-}
+const consumerEventNames = ['close', 'envelope', 'error', 'notification', 'prompt'] as const
 
 /** Non-empty tuple of consumer transports accepted by {@link create}. */
 export type ConsumerTransports = readonly [
@@ -275,90 +42,18 @@ export type ConsumerTransports = readonly [
 /** Default single-transport tuple used by the broad {@link Consumer} type. */
 export type SingleConsumerTransports = readonly [Transport.Transport<'consumer', string>]
 
-/**
- * Session core shared by the consumer's named accessor
- * ({@link ConsumerSession}) and the single-transport top-level surface.
- * Holds the wrapped lifecycle methods; transport-specific extras are
- * layered on by {@link ConsumerSession}.
- */
-type ConsumerSessionCore<
-  schema extends Schema.Schema | undefined,
-  transport extends Transport.Any<'consumer'>,
-  context extends Rpc.RequestContext = Rpc.RequestContext,
-> = ConsumerListeners<ConsumerEventMap<schema, context, ConsumerPromptEvent<transport>>> & {
-  /** Close the session. Idempotent. Emits `'close'`. */
-  close: (cause?: Error) => Promise<void>
-  /**
-   * Send a typed JSON-RPC notification (no response expected).
-   * Auto-starts this transport on first use.
-   */
-  notify: <const method extends Consumer.MethodName<schema>>(
-    options: Consumer.NotifyOptions<schema, method>,
-  ) => Promise<void>
-  /** Side of the protocol this wata speaks for. */
-  role: 'consumer'
-  /** Optional method-registry schema flowed through `send` / `notify`. */
-  schema: schema
-  /**
-   * Send a typed JSON-RPC request over this transport. Auto-starts on
-   * first use. Ongoing transports resolve with the host's `result`.
-   * Out-of-band transports may resolve with registration metadata and emit
-   * the eventual host result through `'rpc-responses'`.
-   */
-  send: <const method extends Consumer.MethodName<schema>>(
-    options: Consumer.SendOptions<schema, method, context>,
-  ) => Promise<Consumer.SendReturn<schema, transport, method>>
-  /**
-   * Explicitly bring the session up. Starts the transport and resolves
-   * once it is ready to send and receive frames. Emits `'open'` on success.
-   *
-   * Optional: {@link Consumer.send} and {@link Consumer.notify} call
-   * `start` internally on first use, so most callers can skip it.
-   * Reach for it when the open wata should overlap other work, or
-   * when a UI wants to surface the connecting state before any traffic.
-   *
-   * Forwards any start options the wrapped transport accepts (e.g. the
-   * relay transport's `{ target }`) and resolves with whatever the
-   * transport surfaces on open (e.g. the relay transport's pairing
-   * {@link Transport.PromptOf | prompt}, so callers can render the
-   * pairing link without subscribing to `'prompt'`).
-   */
-  start: (
-    options?: Transport.StartOptionsOf<transport>,
-  ) => Promise<Transport.StartReturnOf<transport>>
-  /** The wrapped transport. */
-  transport: transport
-}
-
-/**
- * Transport-specific consumer session exposed on `wata.<transportName>`.
- * Carries the session's wrapped lifecycle surface plus any
- * transport-specific {@link Transport.Extras extras} (e.g. the
- * `mobileLink` transport's `handleUrl`), hoisted up so callers reach
- * them directly as `wata.<name>.handleUrl(...)` — mirroring the host,
- * where the named accessor *is* the transport. Extras that would collide
- * with a session member are dropped so the wrapped surface always wins.
- */
-export type ConsumerSession<
-  schema extends Schema.Schema | undefined,
-  transport extends Transport.Any<'consumer'>,
-  context extends Rpc.RequestContext = Rpc.RequestContext,
-> = ConsumerSessionCore<schema, transport, context> &
-  Omit<Transport.Extras<transport>, keyof ConsumerSessionCore<schema, transport, context>>
-
-/** Consumer surface shared by single and multi-transport instances. */
+/** Consumer config surface shared by single and multi-transport instances. */
 export type ConsumerBase<
   schema extends Schema.Schema | undefined,
   transports extends ConsumerTransports,
-  context extends Rpc.RequestContext = Rpc.RequestContext,
-> = ConsumerListeners<
-  ConsumerEventMap<schema, context, ConsumerPromptEvent<transports[number]>>
-> & {
-  /** Close all configured transports. Idempotent. */
+> = {
+  /** Close every started session. Idempotent. */
   close: (cause?: Error) => Promise<void>
   /**
    * Composite web-standard fetch handler. Present when any configured
    * transport exposes HTTP routes or when discovery is auto-published.
+   * Inbound traffic only reaches listeners once the relevant transport's
+   * session has been opened with {@link ConsumerHandle.start}.
    */
   fetch: Http.HandlersForTransports<transports>['fetch']
   /** Side of the protocol this wata speaks for. */
@@ -369,37 +64,62 @@ export type ConsumerBase<
   transports: transports
 }
 
-/** Child sessions keyed by each transport's SDK-facing name. */
-export type ConsumerChildMap<
+/**
+ * Per-transport handle exposed on the consumer config (e.g. `wata.relay`).
+ * Call {@link start} to open the {@link Session.Session} — the live object
+ * that carries `send` / `notify` and the `onX` event surface.
+ */
+export type ConsumerHandle<
+  schema extends Schema.Schema | undefined,
+  transport extends Transport.Any<'consumer'>,
+  context extends Rpc.RequestContext = Rpc.RequestContext,
+> = {
+  /**
+   * Open the session for this transport and resolve with it. Idempotent
+   * while the session is active: repeat calls return the same session.
+   * Once the session closes, a fresh `start()` opens a new one.
+   *
+   * Forwards any start options the wrapped transport accepts (e.g. the
+   * relay transport's `{ target, url }`). The options parameter follows
+   * {@link Transport.StartFn} — required when the transport defers a
+   * mandatory value to start (e.g. a `relay()` built without a `url`),
+   * optional otherwise. Passing options to an already-started handle
+   * throws — close the session first to restart with new options.
+   */
+  start: Transport.StartFn<
+    Transport.StartOptionsOf<transport>,
+    Session.Session<schema, transport, context>
+  >
+}
+
+/** Transport handles keyed by each transport's SDK-facing name. */
+export type ConsumerHandleMap<
   schema extends Schema.Schema | undefined,
   transports extends ConsumerTransports,
   context extends Rpc.RequestContext = Rpc.RequestContext,
 > = {
   [transport in transports[number] as string extends transport['name']
     ? never
-    : transport['name']]: ConsumerSession<schema, transport, context>
+    : transport['name']]: ConsumerHandle<schema, transport, context>
 }
 
 /**
- * Consumer-side `Wata`. Returned by {@link create}. Every transport is
- * exposed as a named child session (e.g. `wata.webhookCallback.send`,
- * `wata.mobileLink.handleUrl`), mirroring the host. A single transport
- * additionally lifts its `send` / `notify` / `start` / `close` surface
- * to the top level for ergonomics.
+ * Consumer-side `Wata` config. Returned by {@link create}. Defines the
+ * configuration only — no live event handlers or `send`. Every transport
+ * is exposed as a named handle (e.g. `wata.relay`, `wata.mobileLink`)
+ * whose {@link ConsumerHandle.start} opens the live {@link Session.Session}.
+ * A single transport additionally lifts `start` to the top level for
+ * ergonomics (`wata.start()`).
  */
 export type Consumer<
   schema extends Schema.Schema | undefined = undefined,
   transports extends ConsumerTransports = SingleConsumerTransports,
   context extends Rpc.RequestContext = Rpc.RequestContext,
-> = ConsumerBase<schema, transports, context> &
-  ConsumerChildMap<schema, transports, context> &
+> = ConsumerBase<schema, transports> &
+  ConsumerHandleMap<schema, transports, context> &
   (transports extends readonly [infer transport extends Transport.Any<'consumer'>]
-    ? ConsumerSession<schema, transport, context>
+    ? Pick<ConsumerHandle<schema, transport, context>, 'start'>
     : {})
-
-/** Request context value inferred from an optional Wata-wide context schema. */
-export type RequestContextOf<context extends Schema.Context | undefined> =
-  context extends Schema.Context ? Schema.ContextOf<context> : Rpc.RequestContext
 
 export declare namespace Consumer {
   /** Method names known to a consumer (any string when no schema supplied). */
@@ -433,7 +153,7 @@ export declare namespace Consumer {
     transport extends Transport.Any<'consumer'>,
     method extends string,
   > = [Transport.SendValue<transport>] extends [void]
-    ? SendResult<ResultOf<schema, method>>
+    ? Session.SendResult<ResultOf<schema, method>>
     : Transport.SendValue<transport>
 
   /** Options for {@link Consumer.send}. */
@@ -464,6 +184,11 @@ export declare namespace Consumer {
 /**
  * Create a consumer-side {@link Consumer} `Wata` around one or more transports.
  *
+ * `create` returns config only; call `start()` to open the live session
+ * that carries `send` / `notify` and the event surface. A single-transport
+ * config lifts `start` to the top level (`wata.start()`); multi-transport
+ * configs expose a handle per transport (`wata.<name>.start()`).
+ *
  * @example
  * ```ts
  * import { Wata, loopback } from 'wata'
@@ -471,13 +196,13 @@ export declare namespace Consumer {
  *
  * const { consumer, host } = loopback()
  *
- * const hostWata = HostWata.create({ transports: [host] })
- * hostWata.onRequest(async (event) => {
+ * const hostSession = await HostWata.create({ transports: [host] }).start()
+ * hostSession.onRequest(async (event) => {
  *   if (event.method === 'ping') await event.respond({ ok: true })
  * })
  *
- * const wata = Wata.create({ transports: [consumer] })
- * const { result } = await wata.send({ method: 'ping', params: [] })
+ * const session = await Wata.create({ transports: [consumer] }).start()
+ * const { result } = await session.send({ method: 'ping', params: [] })
  * ```
  */
 export function create<
@@ -486,7 +211,7 @@ export function create<
   const context extends Schema.Context | undefined = undefined,
 >(
   options: create.Options<schema, transports, context>,
-): Consumer<schema, transports, RequestContextOf<context>> {
+): Consumer<schema, transports, Session.RequestContextOf<context>> {
   const transports = options.transports as transports
   const schema = options.schema as schema
   const context = options.context as context
@@ -503,8 +228,8 @@ export function create<
   // one app-level `Wata.create` call.
   for (const transport of transports) transport.bind?.({ baseUrl, identity, meta })
 
-  const sessions = transports.map((transport) =>
-    createConsumerSession({ context, schema, transport }),
+  const handles = transports.map((transport) =>
+    createConsumerHandle({ context, schema, transport }),
   )
   const routed = Http.composeRouted(transports.filter(isHttpServer))
   let httpFetch = routed?.fetch
@@ -525,45 +250,79 @@ export function create<
     httpFetch = wrapped.fetch
   }
 
-  if (sessions.length === 1) {
-    const session = sessions[0]!
-    const consumer = {
-      ...session,
-      fetch: httpFetch as Consumer<schema, transports, RequestContextOf<context>>['fetch'],
-      transports,
-    }
-    // Surface the transport by name (e.g. `wata.mobileLink`) so the
-    // accessor matches multi-transport mode and the host side.
-    Object.assign(consumer, { [session.transport.name]: session })
-    return consumer as unknown as Consumer<schema, transports, RequestContextOf<context>>
-  }
+  // Surface each transport's handle by name (e.g. `wata.relay`) so callers
+  // open a specific session with `wata.<name>.start()`.
+  const byName: Record<string, unknown> = {}
+  transports.forEach((transport, index) => {
+    byName[transport.name] = handles[index]
+  })
 
-  const emitter =
-    Events.create<
-      ConsumerEventMap<schema, RequestContextOf<context>, ConsumerPromptEvent<transports[number]>>
-    >()
-  // The aggregate prompt payload is generic over `transports`, so loosen
-  // the local emit to forward each session's already-tagged payload.
-  const emitPrompt = emitter.emit as (type: 'prompt', payload: object) => boolean
-  for (const session of sessions) {
-    session.onError((error) => emitter.emit('error', error))
-    session.onNotification((...payload) => emitter.emit('notification', ...payload))
-    session.onPrompt((prompt) => emitPrompt('prompt', prompt as object))
-    session.onEnvelope((envelope, meta) => emitter.emit('envelope', envelope, meta))
-  }
   const consumer = {
     async close(cause?: Error) {
-      await Promise.all(sessions.map((session) => session.close(cause)))
-      emitter.emit('close', cause)
+      await Promise.all(handles.map((handle) => handle.close(cause)))
     },
-    fetch: httpFetch as Consumer<schema, transports, RequestContextOf<context>>['fetch'],
-    ...Events.subscribers(emitter, consumerEventNames),
+    fetch: httpFetch as Consumer<schema, transports, Session.RequestContextOf<context>>['fetch'],
     role: 'consumer' as const,
     schema,
     transports,
+    ...byName,
+    // Single-transport sugar: lift `start` so `wata.start()` opens the
+    // lone session without reaching through `wata.<name>`.
+    ...(handles.length === 1 ? { start: handles[0]!.start } : {}),
   }
-  for (const session of sessions) Object.assign(consumer, { [session.transport.name]: session })
-  return consumer as unknown as Consumer<schema, transports, RequestContextOf<context>>
+  return consumer as unknown as Consumer<schema, transports, Session.RequestContextOf<context>>
+}
+
+/**
+ * Per-transport handle backing `wata.<name>`. Lazily creates and opens a
+ * {@link Session.Session} on {@link ConsumerHandle.start}, caches it while
+ * active, and invalidates the cache when the session closes so a fresh
+ * `start()` opens a new session.
+ */
+function createConsumerHandle<
+  const schema extends Schema.Schema | undefined,
+  const transport extends Transport.Any<'consumer'>,
+  const context extends Schema.Context | undefined,
+>(parameters: {
+  context: context
+  schema: schema
+  transport: transport
+}): ConsumerHandle<schema, transport, Session.RequestContextOf<context>> & {
+  close: (cause?: Error) => Promise<void>
+} {
+  const { context, schema, transport } = parameters
+  type ConsumerSession = Session.Session<schema, transport, Session.RequestContextOf<context>>
+  let active: ConsumerSession | undefined
+  let startPromise: Promise<ConsumerSession> | undefined
+
+  return {
+    async close(cause) {
+      await active?.close(cause)
+    },
+    start(options?: Transport.StartOptionsOf<transport>) {
+      if (active) {
+        if (options !== undefined)
+          throw new Errors.BaseError(
+            `transport \`${transport.name}\` is already started; close the session before restarting with new options`,
+          )
+        return Promise.resolve(active)
+      }
+      if (startPromise) return startPromise
+      startPromise = (async () => {
+        const { session, start } = createConsumerSession({ context, schema, transport })
+        // Drop the cached session on close so the next `start()` is fresh.
+        session.onClose(() => {
+          active = undefined
+        })
+        await start(options)
+        active = session
+        return session
+      })().finally(() => {
+        startPromise = undefined
+      })
+      return startPromise
+    },
+  }
 }
 
 function createConsumerSession<
@@ -574,12 +333,19 @@ function createConsumerSession<
   context: context
   schema: schema
   transport: transport
-}): ConsumerSession<schema, transport, RequestContextOf<context>> {
+}): {
+  session: Session.Session<schema, transport, Session.RequestContextOf<context>>
+  start: (options?: Transport.StartOptionsOf<transport>) => Promise<void>
+} {
   const { context, schema, transport } = parameters
 
   const emitter =
     Events.create<
-      ConsumerEventMap<schema, RequestContextOf<context>, ConsumerPromptEvent<transport>>
+      Session.ConsumerEventMap<
+        schema,
+        Session.RequestContextOf<context>,
+        Session.ConsumerPromptEvent<transport>
+      >
     >()
   const pending = new Map<Rpc.Id, Pending>()
   const methodById = new Map<Rpc.Id, string>()
@@ -599,8 +365,12 @@ function createConsumerSession<
     phase: 'pre-key',
     started: false,
   }
-  let startPromise: Promise<Transport.StartReturnOf<transport>> | undefined
-  let startReturn: Transport.StartReturnOf<transport> | undefined
+  let startPromise: Promise<void> | undefined
+  // Most-recent pairing prompt, captured from the transport's `'prompt'`
+  // event during `start()`. Exposed as `session.prompt` and replayed to
+  // late `onPrompt` subscribers (the event fires before the session
+  // handle is handed back to the caller).
+  let lastPrompt: Session.ConsumerPromptEvent<transport> | undefined
   let nextId = 1
 
   function rejectPending(cause: Error) {
@@ -682,22 +452,22 @@ function createConsumerSession<
       notification: message,
       params: message.params,
       transport: transport.name,
-    } as ConsumerEventMap<schema, RequestContextOf<context>>['notification']
+    } as Session.ConsumerEventMap<schema, Session.RequestContextOf<context>>['notification']
     emitter.emit(
       'notification',
       ...([payload] as Events.EventArgs<
-        ConsumerEventMap<schema, RequestContextOf<context>>['notification']
+        Session.ConsumerEventMap<schema, Session.RequestContextOf<context>>['notification']
       >),
     )
   }
 
   function emitEnvelope(
     envelope: Extract<Envelope.Envelope, { type: 'rpc-requests' | 'rpc-responses' }>,
-    direction: EnvelopeMeta['direction'],
+    direction: Session.EnvelopeMeta['direction'],
   ): void {
     emitter.emit(
       'envelope',
-      envelope as unknown as ObservedEnvelope<schema, RequestContextOf<context>>,
+      envelope as unknown as Session.ObservedEnvelope<schema, Session.RequestContextOf<context>>,
       { direction, transport: transport.name },
     )
   }
@@ -783,23 +553,22 @@ function createConsumerSession<
   // to `never`), so loosen the local emit to forward the tagged payload.
   const emitPrompt = emitter.emit as (type: 'prompt', payload: object) => boolean
   transport.on('prompt', (prompt) => {
-    emitPrompt('prompt', { ...(prompt as object), transport: transport.name })
+    lastPrompt = {
+      ...(prompt as object),
+      transport: transport.name,
+    } as Session.ConsumerPromptEvent<transport>
+    emitPrompt('prompt', lastPrompt as object)
   })
 
-  async function start(
-    options?: Transport.StartOptionsOf<transport>,
-  ): Promise<Transport.StartReturnOf<transport>> {
-    if (state.started) return startReturn as Transport.StartReturnOf<transport>
+  async function start(options?: Transport.StartOptionsOf<transport>): Promise<void> {
+    if (state.started) return
     if (startPromise) return startPromise
-    startPromise = (async (): Promise<Transport.StartReturnOf<transport>> => {
+    startPromise = (async (): Promise<void> => {
       try {
-        const result = (await (
+        await (
           transport.start as (options?: Transport.StartOptionsOf<transport>) => Promise<unknown>
-        )(options)) as Transport.StartReturnOf<transport>
-        startReturn = result
+        )(options)
         state.started = true
-        emitter.emit('open', undefined)
-        return result
       } finally {
         startPromise = undefined
       }
@@ -807,10 +576,14 @@ function createConsumerSession<
     return startPromise
   }
 
-  return {
+  const subscribers = Events.subscribers(emitter, consumerEventNames)
+  const session: Session.Session<schema, transport, Session.RequestContextOf<context>> = {
     // Hoist transport-specific extras (e.g. `mobileLink`'s `handleUrl`)
     // first so the wrapped session members below always win on any clash.
     ...transportExtras(transport),
+    // Spread the generated `onX` / `offX` surface before the explicit
+    // members so the `onPrompt` override below wins.
+    ...subscribers,
     async close(cause) {
       if (!state.started) return
       state.started = false
@@ -831,7 +604,16 @@ function createConsumerSession<
       emitEnvelope(envelope, 'outgoing')
       await transport.send(envelope)
     },
-    ...Events.subscribers(emitter, consumerEventNames),
+    onPrompt(listener) {
+      // Replay the current prompt to late subscribers — it was produced
+      // during `start()`, before this session was handed to the caller.
+      if (lastPrompt !== undefined)
+        (listener as (payload: Session.ConsumerPromptEvent<transport>) => unknown)(lastPrompt)
+      return subscribers.onPrompt(listener)
+    },
+    get prompt() {
+      return lastPrompt
+    },
     role: 'consumer',
     schema,
     async send(opts) {
@@ -846,7 +628,7 @@ function createConsumerSession<
             ? Schema.validate(context, opts.context)
             : Schema.validate(Rpc.schema.requestContext, opts.context)
 
-      const deferred = new Promise<SendResult<unknown>>((resolve, reject) => {
+      const deferred = new Promise<Session.SendResult<unknown>>((resolve, reject) => {
         pending.set(id, { reject, resolve })
       })
       methodById.set(id, opts.method)
@@ -874,9 +656,9 @@ function createConsumerSession<
 
       return (await deferred) as Consumer.SendReturn<schema, transport, typeof opts.method>
     },
-    start,
     transport,
   }
+  return { session, start }
 }
 
 export declare namespace create {
@@ -976,5 +758,5 @@ function isHttpServer<transport extends Transport.Any>(
 
 type Pending = {
   reject: (error: Error) => void
-  resolve: (result: SendResult<unknown>) => void
+  resolve: (result: Session.SendResult<unknown>) => void
 }

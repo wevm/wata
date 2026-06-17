@@ -15,7 +15,7 @@ const hostOrigin = 'http://localhost:5182'
 const sendButton = document.getElementById('send') as HTMLButtonElement
 const log = document.getElementById('log') as HTMLPreElement
 
-const wata = Wata.create({
+const session = await Wata.create({
   transports: [
     postMessage({
       host: hostOrigin,
@@ -28,15 +28,15 @@ const wata = Wata.create({
       },
     }),
   ],
-})
+}).start()
 
-wata.onOpen(() => append('open'))
-wata.onClose((cause) => append(`close${cause ? `: ${cause.message}` : ''}`))
-wata.onError((error) => append(`error: ${error.message}`))
+append('open')
+session.onClose((cause) => append(`close${cause ? `: ${cause.message}` : ''}`))
+session.onError((error) => append(`error: ${error.message}`))
 
 sendButton.addEventListener('click', async () => {
   try {
-    const { result } = await wata.send({
+    const { result } = await session.send({
       method: 'ping',
       params: [{ message: 'hello from consumer' }],
     })

@@ -36,7 +36,13 @@ export default function App() {
         onPress={() => {
           setLog('waiting for approval...')
           void consumer
-            .send({ method: 'ping', params: [] })
+            .start()
+            .then((session) =>
+              session.send({
+                method: 'ping',
+                params: [],
+              }),
+            )
             .then((response) => setLog(JSON.stringify(response.result, undefined, 2)))
             .catch((cause: Error) => setLog(`${cause.name}: ${cause.message}`))
         }}

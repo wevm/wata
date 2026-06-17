@@ -14,11 +14,11 @@
  * ```ts
  * import { Wata, postMessage } from 'wata/host'
  *
- * const wata = Wata.create({
+ * const session = await Wata.create({
  *   transports: [postMessage({ targetOrigin: 'https://app.example' })],
- * })
+ * }).start()
  *
- * wata.onRequest(async (event) => {
+ * session.onRequest(async (event) => {
  *   if (event.method === 'ping') await event.respond({ ok: true })
  * })
  * ```
@@ -79,9 +79,24 @@ export type Options<target extends ConsumerPostMessage.Target = Window> = {
    * `targetOrigin` rejects the session (its sends throw
    * {@link PostMessage.TargetOriginRequiredError}). Ignored for
    * `MessagePort` targets, which carry no origin.
+   *
+   * Optional: when the consumer origin isn't known at construction time,
+   * defer it to `start({ targetOrigin })`.
    */
   targetOrigin?: string | undefined
 }
+
+/**
+ * Options for the host `postMessage` transport's
+ * {@link Transport.Transport.start | start}, derived from the deferrable
+ * subset of {@link Options} (`close`, `target`, `targetOrigin`) so their
+ * docs live in one place. Each is an optional per-session override of the
+ * construction value.
+ */
+export type StartOptions<target extends ConsumerPostMessage.Target = Window> = Pick<
+  Options<target>,
+  'close' | 'target' | 'targetOrigin'
+>
 
 /** Metadata emitted by Window-backed host-side postMessage transports. */
 export type OriginMessageMeta = ConsumerPostMessage.OriginMessageMeta
@@ -100,27 +115,30 @@ export type OriginMessageMeta = ConsumerPostMessage.OriginMessageMeta
  */
 export function postMessage<const target extends ConsumerPostMessage.Target = Window>(
   options: Options<target> = {} as Options<target>,
-): Transport.Transport<'host', 'postMessage', { meta: ConsumerPostMessage.MessageMeta<target> }> {
-  const target_resolved =
-    options.target ??
-    ((() => {
-      const peer = window.opener ?? (window.parent !== window ? window.parent : undefined)
-      if (!peer)
-        throw new NoPeerError(
-          'no `window.opener` or `window.parent` — open this page from a consumer or pass an explicit `target`',
-        )
-      return peer as unknown as target
-    }) as () => target | Promise<target>)
+): Transport.Transport<
+  'host',
+  'postMessage',
+  { meta: ConsumerPostMessage.MessageMeta<target>; startOptions: StartOptions<target> }
+> {
+  const { close, source, target, targetOrigin } = options
+  const defaultTarget = (() => {
+    const peer = window.opener ?? (window.parent !== window ? window.parent : undefined)
+    if (!peer)
+      throw new NoPeerError(
+        'no `window.opener` or `window.parent` — open this page from a consumer or pass an explicit `target`',
+      )
+    return peer as unknown as target
+  }) as () => target | Promise<target>
 
   return ConsumerPostMessage.createSide({
-    options: {
-      close: options.close,
-      source: options.source,
-      target: target_resolved,
-      targetOrigin: options.targetOrigin,
-    },
     handshake: { expect: protocol.consumerHello.type, send: protocol.hostReady },
+    resolve: (start?: StartOptions<target>) => ({
+      close: start?.close ?? close,
+      target: start?.target ?? target ?? defaultTarget,
+      targetOrigin: start?.targetOrigin ?? targetOrigin,
+    }),
     role: 'host',
+    source,
   })
 }
 

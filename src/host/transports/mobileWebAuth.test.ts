@@ -35,6 +35,11 @@ function pair(
     authorizationRequest?: ((url: URL) => void) | undefined
     callbackResult?: ((url: URL) => void) | undefined
     callbackUrls?: readonly string[] | undefined
+    /**
+     * Omit `host` at construction so the test supplies it at start
+     * (`start({ host })`) instead. Exercises the deferred-host path.
+     */
+    deferHost?: boolean | undefined
   } = {},
 ) {
   let authorizationUrl: string | undefined
@@ -53,7 +58,8 @@ function pair(
   })
   const consumer = mobileWebAuth({
     callback,
-    host: hostDocument(),
+    // Pin the host unless the test opts into deferring it to `start({ host })`.
+    host: options.deferHost ? (undefined as never) : hostDocument(),
     openAuthSession: async (session) => {
       const authorization = new URL(session.authorizationUrl)
       options.authorizationRequest?.(authorization)
@@ -373,12 +379,13 @@ Details: state: expected at least 128 bits of base64url entropy]`,
       meta: { name: 'App' },
       transports: [consumer],
     })
-    const hostWata = HostWata.create({ transports: [host] })
+    const hostWata = await HostWata.create({ transports: [host] }).start()
     hostWata.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
+    const session = await wata.start()
 
-    const { result } = await wata.send({ method: 'ping', params: [] })
+    const { result } = await session.send({ method: 'ping', params: [] })
     const url = new URL(authorizationUrl()!)
 
     expect({
@@ -400,6 +407,38 @@ Details: state: expected at least 128 bits of base64url entropy]`,
     `)
   })
 
+  test('host deferred to `start({ host })` drives the auth exchange', async () => {
+    const { authorizationUrl, consumer, host } = pair({ deferHost: true })
+    const wata = Wata.create({
+      baseUrl: consumerOrigin,
+      meta: { name: 'App' },
+      transports: [consumer],
+    })
+    const hostWata = await HostWata.create({ transports: [host] }).start()
+    hostWata.onRequest((event) => {
+      if (event.method === 'ping') event.respond({ ok: true })
+    })
+    const session = await wata.start({ host: hostDocument() })
+
+    const { result } = await session.send({ method: 'ping', params: [] })
+    expect(new URL(authorizationUrl()!).searchParams.get('callback')).toBe('com.example.app:/auth')
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "ok": true,
+      }
+    `)
+  })
+
+  test('`start()` throws when host is supplied at neither construction nor start', async () => {
+    const consumer = mobileWebAuth({ callback, openAuthSession: () => undefined })
+    // The type forbids `start()` here (host is required when omitted at
+    // construction); this guards the runtime fallback for untyped callers.
+    // @ts-expect-error host is required at start when omitted at construction
+    await expect(consumer.start()).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Transport.TransportError: mobile-web-auth host must be supplied to \`mobileWebAuth({ host })\` or \`start({ host })\`]`,
+    )
+  })
+
   test('host renders a browser error instead of redirecting before callback verification', async () => {
     const { authResponse, consumer, host } = pair({ callbackUrls: ['com.example.other:/auth'] })
     const wata = Wata.create({
@@ -407,10 +446,11 @@ Details: state: expected at least 128 bits of base64url entropy]`,
       meta: { name: 'App' },
       transports: [consumer],
     })
-    HostWata.create({ transports: [host] })
+    await HostWata.create({ transports: [host] }).start()
+    const session = await wata.start()
 
     await expect(
-      wata.send({ method: 'ping', params: [] }),
+      session.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Rpc.RpcError: User cancelled the mobile-web-auth session.]`,
     )
@@ -444,10 +484,11 @@ Details: state: expected at least 128 bits of base64url entropy]`,
       meta: { name: 'App' },
       transports: [consumer],
     })
-    HostWata.create({ transports: [host] })
+    await HostWata.create({ transports: [host] }).start()
+    const session = await wata.start()
 
     await expect(
-      wata.send({ method: 'ping', params: [] }),
+      session.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Rpc.RpcError: User cancelled the mobile-web-auth session.]`,
     )
@@ -476,10 +517,11 @@ Details: state: expected at least 128 bits of base64url entropy]`,
       meta: { name: 'App' },
       transports: [consumer],
     })
-    HostWata.create({ transports: [host] })
+    await HostWata.create({ transports: [host] }).start()
+    const session = await wata.start()
 
     await expect(
-      wata.send({ method: 'ping', params: [] }),
+      session.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: User denied the request.]`)
     expect(new URL(authorizationUrl!).searchParams.get('callback')).toMatchInlineSnapshot(
       `"com.example.app:/auth"`,
@@ -524,12 +566,13 @@ Details: state: expected at least 128 bits of base64url entropy]`,
       meta: { name: 'App' },
       transports: [consumer],
     })
-    const hostWata = HostWata.create({ transports: [host] })
+    const hostWata = await HostWata.create({ transports: [host] }).start()
     hostWata.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
+    const session = await wata.start()
 
-    const { result } = await wata.send({ method: 'ping', params: [] })
+    const { result } = await session.send({ method: 'ping', params: [] })
 
     expect({
       renderedStateLength: renderedState ? Base64.toBytes(renderedState).length : undefined,
@@ -555,10 +598,11 @@ Details: state: expected at least 128 bits of base64url entropy]`,
       meta: { name: 'App' },
       transports: [consumer],
     })
-    HostWata.create({ transports: [host] })
+    await HostWata.create({ transports: [host] }).start()
+    const session = await wata.start()
 
     await expect(
-      wata.send({ method: 'ping', params: [] }),
+      session.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Rpc.RpcError: User cancelled the mobile-web-auth session.]`,
     )
@@ -581,13 +625,14 @@ Details: state: expected at least 128 bits of base64url entropy]`,
       meta: { name: 'App' },
       transports: [consumer],
     })
-    const hostWata = HostWata.create({ transports: [host] })
+    const hostWata = await HostWata.create({ transports: [host] }).start()
     hostWata.onRequest((event) => {
       if (event.method === 'ping') event.respond({ ok: true })
     })
+    const session = await wata.start()
 
     await expect(
-      wata.send({ method: 'ping', params: [] }),
+      session.send({ method: 'ping', params: [] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(`[Rpc.RpcError: Mobile-web-auth state mismatch.]`)
   })
 
@@ -604,12 +649,13 @@ Details: state: expected at least 128 bits of base64url entropy]`,
         meta: { name: 'App' },
         transports: [consumer],
       })
-      const hostWata = HostWata.create({ transports: [host] })
+      const hostWata = await HostWata.create({ transports: [host] }).start()
       hostWata.onRequest((event) => {
         if (event.method === 'ping') event.respond({ ok: true })
       })
+      const session = await wata.start()
 
-      await wata.send({ method: 'ping', params: [] }).catch((cause) => {
+      await session.send({ method: 'ping', params: [] }).catch((cause) => {
         results.push(`${key}: ${String(cause)}`)
       })
     }

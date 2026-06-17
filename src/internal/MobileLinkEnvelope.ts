@@ -15,7 +15,7 @@ import * as Aad from '../core/Aad.js'
 import * as Aead from '../core/Aead.js'
 import * as Crypto from '../core/Crypto.js'
 import * as Envelope from '../core/Envelope.js'
-import * as Session from '../core/Session.js'
+import * as SessionKey from '../core/SessionKey.js'
 import type * as Transport from '../core/Transport.js'
 
 /** uRPC `mobile-link` transport identifier mixed into the HKDF `info`. */
@@ -108,8 +108,8 @@ export declare namespace verifyIdentity {
  * Derive the per-direction AEAD keys for a mobile-link session, binding
  * them to the host's long-term `identity_pubkey` via `transportContext`.
  */
-export function deriveKeys(options: deriveKeys.Options): Session.derive.ReturnType {
-  return Session.derive({
+export function deriveKeys(options: deriveKeys.Options): SessionKey.derive.ReturnType {
+  return SessionKey.derive({
     peer: { publicKey: options.peerPublicKey },
     role: options.role,
     self: options.self,

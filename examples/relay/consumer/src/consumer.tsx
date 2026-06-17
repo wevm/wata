@@ -13,6 +13,7 @@
  */
 
 import QRCode from 'qrcode'
+import * as React from 'react'
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Wata, relay } from 'wata'
@@ -34,35 +35,49 @@ type Prompt = {
 function App() {
   const [lines, setLines] = useState<readonly string[]>([])
   const [prompt, setPrompt] = useState<Prompt | undefined>(undefined)
+  const session = React.useRef<Awaited<ReturnType<typeof wata.start>> | undefined>(undefined)
 
   function append(line: string) {
     setLines((lines) => [...lines, line])
   }
 
-  useEffect(() => {
+  useEffect(
+    () => () => {
+      void session.current?.close()
+    },
+    [],
+  )
+
+  async function start() {
+    if (session.current) return session.current
+    const next = await wata.start()
+    session.current = next
     const subscriptions = [
-      wata.onPrompt(async ({ uri }) => {
+      next.onPrompt(async ({ uri }) => {
         const qr = await QRCode.toDataURL(uri, { margin: 1, width: 240 })
         setPrompt({ qr, uri })
       }),
-      wata.onNotification((event) =>
+      next.onNotification((event) =>
         append(`notification: ${event.method} ${JSON.stringify(event.params)}`),
       ),
-      wata.onClose((cause) => {
+      next.onClose((cause) => {
         setPrompt(undefined)
+        session.current = undefined
         append(cause ? `closed: ${cause.message}` : 'closed')
       }),
-      wata.onError((error) => append(`error: ${error.message}`)),
+      next.onError((error) => append(`error: ${error.message}`)),
     ]
-    return () => {
+    next.onClose(() => {
       for (const subscription of subscriptions) subscription.abort()
-    }
-  }, [])
+    })
+    return next
+  }
 
   async function send() {
     append('sending ping…')
     try {
-      const { result } = await wata.send({ method: 'ping', params: [{ from: 'web' }] })
+      const next = await start()
+      const { result } = await next.send({ method: 'ping', params: [{ from: 'web' }] })
       setPrompt(undefined)
       append(`result: ${JSON.stringify(result)}`)
     } catch (error) {

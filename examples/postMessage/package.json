@@ -4,18 +4,18 @@
   "type": "module",
   "scripts": {
     "build": "pnpm /^build:/",
-    "build:consumer": "vp build consumer",
-    "build:host": "vp build host",
+    "build:consumer": "vite build consumer",
+    "build:host": "vite build host",
     "check:types": "tsc",
     "dev": "pnpm /^dev:/",
-    "dev:consumer": "vp dev consumer",
-    "dev:host": "vp dev host"
+    "dev:consumer": "vite consumer",
+    "dev:host": "vite host"
   },
   "dependencies": {
     "wata": "latest"
   },
   "devDependencies": {
     "typescript": "latest",
-    "vp": "latest"
+    "vite": "latest"
   }
 }

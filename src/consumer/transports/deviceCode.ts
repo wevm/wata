@@ -23,15 +23,15 @@
  * ```ts
  * import { Wata, deviceCode } from 'wata'
  *
- * const wata = Wata.create({
+ * const session = await Wata.create({
  *   transports: [deviceCode({ url: 'https://wallet.example/auth/device' })],
- * })
+ * }).start()
  *
- * wata.onPrompt(({ userCode, verificationUri }) => {
+ * session.onPrompt(({ userCode, verificationUri }) => {
  *   console.log(`Visit ${verificationUri} and enter ${userCode}`)
  * })
  *
- * const { result } = await wata.send({ method: 'ping', params: [] })
+ * const { result } = await session.send({ method: 'ping', params: [] })
  * ```
  */
 
@@ -104,9 +104,33 @@ export type Options = {
    * Base URL of the host's device-code endpoints. The transport derives
    * `${url}/register` and `${url}/token` from it. Strips a trailing
    * slash automatically.
+   *
+   * Omit it to supply the endpoint at start time instead via
+   * `wata.deviceCode.start({ url })`, so a single hoisted
+   * `Wata.create({ transports: [deviceCode()] })` can be pointed at a
+   * host chosen out of band. `start` throws
+   * {@link Transport.TransportError} when neither construction nor start
+   * supplies a url.
    */
-  url: string
+  url?: string | undefined
 }
+
+/**
+ * Options for the device-code transport's
+ * {@link Transport.Transport.start | start}, derived from the deferrable
+ * subset of {@link Options} so their docs live in one place.
+ * Parameterized by the construction {@link Options}: a per-session `url`
+ * is **required** here only when it was not supplied at construction
+ * (`deviceCode()`); once `deviceCode({ url })` pins it, every field is an
+ * optional per-session override (`consumerUrl` / `meta` /
+ * `pollingInterval` / `pollingTimeout` win over their construction
+ * values).
+ */
+export type StartOptions<options = Options> = Transport.StartOptions<
+  options,
+  Options,
+  { optional: 'consumerUrl' | 'meta' | 'pollingInterval' | 'pollingTimeout'; required: 'url' }
+>
 
 /**
  * Create a consumer-side `device-code` transport.
@@ -118,18 +142,14 @@ export type Options = {
  * const transport = deviceCode({ url: 'https://wallet.example/auth/device' })
  * ```
  */
-export function deviceCode(
-  options: Options,
-): Transport.Transport<'consumer', 'deviceCode', { prompt: Prompt }> {
-  const {
-    fetch: fetchImpl = globalThis.fetch.bind(globalThis),
-    pollingInterval,
-    pollingTimeout = 30_000,
-    url,
-  } = options
-  const baseUrl = url.endsWith('/') ? url.slice(0, -1) : url
-  const registerUrl = `${baseUrl}/register`
-  const tokenUrl = `${baseUrl}/token`
+export function deviceCode<options extends Options>(
+  options: options = {} as options,
+): Transport.Transport<
+  'consumer',
+  'deviceCode',
+  { prompt: Prompt; startOptions: StartOptions<options> }
+> {
+  const { fetch: fetchImpl = globalThis.fetch.bind(globalThis) } = options
 
   // Constructor-level `meta` / `consumerUrl` are sticky. `bind()`
   // (from a wrapping `Wata.create({ baseUrl, meta })`) only fills in
@@ -139,11 +159,31 @@ export function deviceCode(
   const consumerUrl_ctor = options.consumerUrl
   let consumerUrl_bound: string | undefined
 
+  // Per-session start-time overrides, captured when `start()` runs and
+  // read by the `send()`-driven exchange. Start values win over
+  // construction (and over `bind()` for `meta` / `consumerUrl`).
+  let start_options: Pick<
+    Options,
+    'consumerUrl' | 'meta' | 'pollingInterval' | 'pollingTimeout' | 'url'
+  > = {}
+
+  /**
+   * Resolve and normalize the host base URL from start ?? construction,
+   * throwing when neither supplies one. Trailing slash stripped.
+   */
+  function resolveBaseUrl(): string {
+    const url = start_options.url ?? options.url
+    if (!url)
+      throw new Transport.TransportError(
+        'device-code url must be supplied to `deviceCode({ url })` or `start({ url })`',
+      )
+    return url.endsWith('/') ? url.slice(0, -1) : url
+  }
   function resolveMeta(): Discovery.Meta | undefined {
-    return meta_ctor ?? meta_bound
+    return start_options.meta ?? meta_ctor ?? meta_bound
   }
   function resolveConsumerUrl(): string | undefined {
-    return consumerUrl_ctor ?? consumerUrl_bound
+    return start_options.consumerUrl ?? consumerUrl_ctor ?? consumerUrl_bound
   }
 
   const emitter = Events.create<Transport.EventMap<Transport.NoMessageMeta, Prompt>>()
@@ -172,6 +212,8 @@ export function deviceCode(
     deviceCodeValue: string,
     codeVerifier: string,
     initialInterval: number,
+    tokenUrl: string,
+    pollingTimeout: number,
   ): Promise<Envelope.Envelope> {
     // RFC 8628 §3.5 — `interval` may grow over the life of the
     // exchange (`slow_down` adds ≥5s each time). Track consecutive
@@ -270,6 +312,11 @@ export function deviceCode(
     const codeVerifier = generateCodeVerifier()
     const codeChallenge = pkceChallenge(codeVerifier)
 
+    const baseUrl = resolveBaseUrl()
+    const registerUrl = `${baseUrl}/register`
+    const tokenUrl = `${baseUrl}/token`
+    const pollingInterval = start_options.pollingInterval ?? options.pollingInterval
+    const pollingTimeout = start_options.pollingTimeout ?? options.pollingTimeout ?? 30_000
     const meta = resolveMeta()
     const consumerUrl = resolveConsumerUrl()
 
@@ -351,7 +398,27 @@ export function deviceCode(
     }
     emitter.emit('prompt', prompt)
 
-    return await pollForResponse(prompt.deviceCode, codeVerifier, interval)
+    return await pollForResponse(
+      prompt.deviceCode,
+      codeVerifier,
+      interval,
+      tokenUrl,
+      pollingTimeout,
+    )
+  }
+
+  async function start(
+    options: Pick<
+      Options,
+      'consumerUrl' | 'meta' | 'pollingInterval' | 'pollingTimeout' | 'url'
+    > = {},
+  ): Promise<void> {
+    if (state.closed) throw new Transport.ClosedError('device-code transport already closed')
+    start_options = options
+    // Fail fast: surface a missing url at `start()` rather than waiting
+    // for the first `send()` to fire the register request.
+    resolveBaseUrl()
+    state.started = true
   }
 
   return {
@@ -383,7 +450,7 @@ export function deviceCode(
         throw new Transport.TransportError(
           'device-code is single-exchange; a previous send is still in flight',
         )
-      if (!state.started) state.started = true
+      if (!state.started) await start()
       state.inFlight = true
 
       // Run the register + poll exchange asynchronously. `send()` returns
@@ -398,10 +465,7 @@ export function deviceCode(
         (cause) => settle(undefined, cause as Error),
       )
     },
-    async start() {
-      if (state.closed) throw new Transport.ClosedError('device-code transport already closed')
-      state.started = true
-    },
+    start,
   }
 }
 

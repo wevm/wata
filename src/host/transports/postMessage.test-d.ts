@@ -11,7 +11,11 @@ describe('postMessage (host)', () => {
       targetOrigin: 'https://app.example',
     })
     expectTypeOf(transport).toEqualTypeOf<
-      Transport.Transport<'host', 'postMessage', { meta: PostMessage.OriginMessageMeta }>
+      Transport.Transport<
+        'host',
+        'postMessage',
+        { meta: PostMessage.OriginMessageMeta; startOptions: PostMessage.StartOptions<Window> }
+      >
     >()
     expectTypeOf(transport.role).toEqualTypeOf<'host'>()
   })
@@ -28,7 +32,21 @@ describe('postMessage (host)', () => {
   test('MessagePort targets allow targetOrigin to be omitted', () => {
     const transport = postMessage({ target: () => portHandle })
     expectTypeOf(transport).toEqualTypeOf<
-      Transport.Transport<'host', 'postMessage', { meta: Transport.NoMessageMeta }>
+      Transport.Transport<
+        'host',
+        'postMessage',
+        { meta: Transport.NoMessageMeta; startOptions: PostMessage.StartOptions<MessagePort> }
+      >
     >()
+  })
+
+  test('`StartOptions` is the deferrable subset (`close`, `target`, `targetOrigin`)', () => {
+    expectTypeOf<PostMessage.StartOptions<Window>>().toEqualTypeOf<{
+      close?: ((handle: Window) => void | Promise<void>) | undefined
+      target?: (() => Window | Promise<Window>) | undefined
+      targetOrigin?: string | undefined
+    }>()
+    // `start` accepts the deferred `targetOrigin`.
+    postMessage().start({ targetOrigin: 'https://app.example' })
   })
 })

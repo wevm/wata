@@ -5,17 +5,17 @@
  * Implements the consumer half of the uRPC `relay` transport spec. On
  * `start()` the transport generates fresh bootstrap material (ephemeral
  * keypair + 32-byte `pairing_secret`), locks its relay slot over a
- * signed SSE subscription, and surfaces the pairing link — `start()`
- * resolves with the `'prompt'` payload (and also emits it as an event)
- * — render it as a QR code or deep link for the host device. Once the
- * host's `hello` arrives, the transport
+ * signed SSE subscription, and surfaces the pairing link on
+ * `session.prompt` (and also emits it as a `'prompt'` event) — render
+ * it as a QR code or deep link for the host device. Once the host's
+ * `hello` arrives, the transport
  * verifies `host_proof` in constant time, derives the per-direction
  * AEAD keys, confirms with an encrypted `ready` frame, and from then on
  * carries `rpc-requests` / `rpc-responses` envelopes sealed end-to-end —
  * the relay only ever sees ciphertext.
  *
  * Outbound envelopes sent before the session is keyed are buffered and
- * flushed after `ready`, so `wata.send(...)` can be called immediately —
+ * flushed after `ready`, so `session.send(...)` can be called immediately —
  * it resolves once the host answers.
  *
  * The pairing link's target can be chosen at construction
@@ -28,22 +28,22 @@
  * ```ts
  * import { Wata, relay } from 'wata'
  *
- * const wata = Wata.create({
+ * const session = await Wata.create({
  *   transports: [relay({ url: 'https://relay.example' })],
- * })
+ * }).start()
  *
- * // `start()` resolves with the pairing prompt — render it out-of-band
- * // (QR code, deep link, …). (Or subscribe via `wata.onPrompt`.)
- * const { uri } = await wata.start()
- * renderQrCode(uri)
+ * // The prompt is available on the session — render it out-of-band
+ * // (QR code, deep link, …). (Or subscribe via `session.onPrompt`.)
+ * if (session.prompt) renderQrCode(session.prompt.uri)
  *
- * const { result } = await wata.send({ method: 'wallet_connect', params: [] })
+ * const { result } = await session.send({ method: 'wallet_connect', params: [] })
  * ```
  *
  * @example
  * ```ts
  * // Target a specific wallet chosen out of band.
- * await wata.relay.start({ target: 'example-wallet' }) // example-wallet://?version=1&...
+ * const session = await wata.relay.start({ target: 'example-wallet' })
+ * console.log(session.prompt?.uri) // example-wallet://?version=1&...
  * ```
  */
 
@@ -53,7 +53,7 @@ import * as Crypto from '../../core/Crypto.js'
 import * as Envelope from '../../core/Envelope.js'
 import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
-import * as Session from '../../core/Session.js'
+import * as SessionKey from '../../core/SessionKey.js'
 import * as Transport from '../../core/Transport.js'
 import * as Relay from '../../internal/Relay.js'
 
@@ -109,28 +109,37 @@ export type Options = {
    * Overridable per call via `start({ target })`.
    */
   target?: string | undefined
-  /** Relay server base URL (HTTPS, or HTTP loopback for development). */
-  url: string
-}
-
-/** Options for the relay transport's {@link Transport.Transport.start | start}. */
-export type StartOptions = {
   /**
-   * Target of this pairing link, overriding the construction-time
-   * {@link Options.target}: a bare scheme (`'example-wallet'` → `example-wallet://`),
-   * a full universal link (`'https://wallet.example/urpc'`), or omitted
-   * for the construction-time default (falling back to the shared
-   * `urpc://` scheme). Reach for it to direct a freshly built pairing
-   * link at a wallet chosen out of band:
-   * `await wata.relay.start({ target: 'example-wallet' })`.
+   * Relay server base URL (HTTPS, or HTTP loopback for development).
+   * Omit it to supply the relay at start time instead via
+   * `wata.relay.start({ url })`, so a single hoisted
+   * `Wata.create({ transports: [relay()] })` can be pointed at a relay
+   * chosen out of band. `start` throws {@link Transport.TransportError}
+   * when neither construction nor start supplies a url.
    */
-  target?: string | undefined
+  url?: string | undefined
 }
 
 /**
+ * Options for the relay transport's {@link Transport.Transport.start | start},
+ * derived from the deferrable subset of {@link Options} (`target`, `url`)
+ * so their docs live in one place. Parameterized by the construction
+ * {@link Options}: a per-session `url` is **required** here only when it
+ * was not supplied at construction (`relay()`); once `relay({ url })`
+ * pins it, both fields are optional per-session overrides.
+ */
+export type StartOptions<options = Options> = Transport.StartOptions<
+  options,
+  Options,
+  { optional: 'target'; required: 'url' }
+>
+
+/**
  * Create a consumer-side `relay` transport. Its `start` additionally
- * accepts a {@link StartOptions} so the pairing link's target can be
- * supplied at start time.
+ * accepts a {@link StartOptions} so the relay url and the pairing link's
+ * target can be supplied at start time — and requires `url` there when
+ * it was omitted at construction (the construction {@link Options} flow
+ * through to flip the start-time `url` between optional and required).
  *
  * @example
  * ```ts
@@ -139,12 +148,12 @@ export type StartOptions = {
  * const transport = relay({ url: 'https://relay.example' })
  * ```
  */
-export function relay(
-  options: Options,
+export function relay<options extends Options>(
+  options: options = {} as options,
 ): Transport.Transport<
   'consumer',
   'relay',
-  { prompt: Prompt; startOptions: StartOptions; startReturn: Prompt }
+  { prompt: Prompt; startOptions: StartOptions<options>; startReturn: Prompt }
 > {
   const {
     allowPrivateNetwork,
@@ -232,7 +241,7 @@ export function relay(
         })
       }
     })()
-    const sharedSecret = Session.shared({
+    const sharedSecret = SessionKey.shared({
       privateKey: keypair.x25519.privateKey,
       publicKey: hostPublicKey,
     })
@@ -246,7 +255,7 @@ export function relay(
     // structured peer-visible error before the encrypted channel exists.
     if (!constantTimeEqual(proof, Bytes.from(expected)))
       throw new PairingFailedError('host proof verification failed')
-    const keys = Session.derive({
+    const keys = SessionKey.derive({
       peer: { publicKey: hostPublicKey },
       role: 'consumer',
       self: keypair.x25519,
@@ -335,7 +344,7 @@ export function relay(
     emitter.emit('message', inner)
   }
 
-  async function start(options: StartOptions = {}): Promise<Prompt> {
+  async function start(options: Pick<Options, 'target' | 'url'> = {}): Promise<Prompt> {
     if (state.started) {
       if (!prompt)
         throw new Transport.ClosedError('relay session is started without a pairing prompt')
@@ -344,6 +353,11 @@ export function relay(
     if (startPromise) return startPromise
     startPromise = (async () => {
       try {
+        const url_resolved = options.url ?? url
+        if (!url_resolved)
+          throw new Transport.TransportError(
+            'relay url must be supplied to `relay({ url })` or `start({ url })`',
+          )
         const keypair_local = Crypto.randomKeypair()
         const pairingSecret_local = Hex.fromBytes(Bytes.random(32))
         const controller = new AbortController()
@@ -358,7 +372,7 @@ export function relay(
           peer: 'consumer',
           pollInterval,
           receive,
-          url,
+          url: url_resolved,
         })
         // Expose the controller before subscribing so a concurrent
         // `close()` can cancel an in-flight `start()`.
@@ -383,7 +397,7 @@ export function relay(
           allowPrivateNetwork,
           consumerPublicKey: keypair_local.x25519.publicKey,
           pairingSecret: pairingSecret_local,
-          relay: url,
+          relay: url_resolved,
           target: options.target ?? target,
         })
         prompt = { expiresAt: Date.now() + expiresIn, uri }

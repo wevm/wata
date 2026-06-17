@@ -28,7 +28,7 @@
  * ```ts
  * import { Store, Wata, webhookCallback } from 'wata'
  *
- * const wata = Wata.create({
+ * const session = await Wata.create({
  *   baseUrl: 'https://acme.dev',
  *   meta,
  *   identity,
@@ -39,14 +39,14 @@
  *       store: Store.memory(),
  *     }),
  *   ],
- * })
+ * }).start()
  *
- * wata.onEnvelope((envelope, meta) => {
+ * session.onEnvelope((envelope, meta) => {
  *   if (envelope.type !== 'rpc-responses') return
  *   console.log(envelope.payload, meta)
  * })
  *
- * const registration = await wata.send({ method: 'wallet_connect', params: [] })
+ * const registration = await session.send({ method: 'wallet_connect', params: [] })
  * console.log(`Visit ${registration.verificationUri}`)
  * ```
  */
@@ -93,8 +93,15 @@ export type Options = {
    * {@link Discovery.HostDocument}. URL form is the 90% path;
    * pre-parsed is for deterministic tests, caching, pinning, or
    * rotating docs without reconstructing the transport.
+   *
+   * Omit it to supply the host at start time instead via
+   * `wata.webhookCallback.start({ host })`, so a single hoisted
+   * `Wata.create({ transports: [webhookCallback()] })` can be pointed
+   * at a host chosen out of band. `start` throws
+   * {@link Transport.TransportError} when neither construction nor start
+   * supplies a host.
    */
-  host: string | Discovery.HostDocument
+  host?: string | Discovery.HostDocument | undefined
   /**
    * Path the webhook listener responds on. Combined with the bound
    * `Wata.create({ baseUrl })` to derive the callback URL advertised
@@ -117,14 +124,29 @@ export type Options = {
 }
 
 /**
+ * Options for the webhook-callback transport's
+ * {@link Transport.Transport.start | start}, derived from the deferrable
+ * subset of {@link Options} so their docs live in one place.
+ * Parameterized by the construction {@link Options}: a per-session
+ * `host` is **required** here only when it was not supplied at
+ * construction (`webhookCallback()`); once `webhookCallback({ host })`
+ * pins it, both fields are optional per-session overrides.
+ */
+export type StartOptions<options = Options> = Transport.StartOptions<
+  options,
+  Options,
+  { optional: 'registerUrl'; required: 'host' }
+>
+
+/**
  * Webhook-callback transport extension: bare {@link Transport.Transport}
  * plus the `.fetch` handler the consumer needs to serve
  * incoming webhook deliveries, plus an explicit {@link cancel} hook.
  */
-export type WebhookCallback = Transport.Transport<
+export type WebhookCallback<options = Options> = Transport.Transport<
   'consumer',
   'webhookCallback',
-  { sendValue: Registration }
+  { sendValue: Registration; startOptions: StartOptions<options> }
 > &
   Http.Server & {
     /**
@@ -149,14 +171,20 @@ export type WebhookCallback = Transport.Transport<
  * })
  * ```
  */
-export function webhookCallback(options: Options): WebhookCallback {
+export function webhookCallback<options extends Options>(
+  options: options = {} as options,
+): WebhookCallback<options> {
   const {
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
     fetchTimeout = 30_000,
-    host,
     path,
     store,
   } = options
+
+  // Per-session start-time overrides, captured when `start()` runs and
+  // read by the `send()`-driven register exchange. Start values win
+  // over construction.
+  let start_options: Pick<Options, 'host' | 'registerUrl'> = {}
 
   const webhookPath = Uri.normalizePath(path)
   let baseUrl_bound: string | undefined
@@ -205,8 +233,24 @@ export function webhookCallback(options: Options): WebhookCallback {
     started: false,
   }
 
+  /** Host input (url or pre-parsed doc) from start ?? construction. */
+  function resolveHostInput(): string | Discovery.HostDocument {
+    const host = start_options.host ?? options.host
+    if (!host)
+      throw new Transport.TransportError(
+        'webhook-callback host must be supplied to `webhookCallback({ host })` or `start({ host })`',
+      )
+    return host
+  }
+
+  /** Host `register_url` override from start ?? construction. */
+  function registerUrlOverride(): string | undefined {
+    return start_options.registerUrl ?? options.registerUrl
+  }
+
   /** Host doc fetched at registration time, unless supplied as trusted config. */
   async function resolveHost(): Promise<Discovery.HostDocument> {
+    const host = resolveHostInput()
     if (typeof host === 'string') return Discovery.fetchHost(host, { fetch: fetchImpl })
     return host
   }
@@ -217,7 +261,7 @@ export function webhookCallback(options: Options): WebhookCallback {
   ): NonNullable<Discovery.HostDocument['transports']['webhook-callback']> | undefined {
     const binding = doc.transports['webhook-callback']
     if (!binding) {
-      if (options.registerUrl) return undefined
+      if (registerUrlOverride()) return undefined
       throw new Transport.UnsupportedError(
         'host does not advertise a `webhook-callback` transport binding',
       )
@@ -226,11 +270,12 @@ export function webhookCallback(options: Options): WebhookCallback {
     return binding
   }
 
-  /** Host `register_url` — constructor override wins, else read from discovery binding. */
+  /** Host `register_url` — override wins, else read from discovery binding. */
   function resolveRegisterUrl(
     binding: NonNullable<Discovery.HostDocument['transports']['webhook-callback']> | undefined,
   ): string {
-    if (options.registerUrl) return options.registerUrl
+    const override = registerUrlOverride()
+    if (override) return override
     if (!binding)
       throw new Transport.UnsupportedError(
         'host does not advertise a `webhook-callback` transport binding',
@@ -550,6 +595,15 @@ export function webhookCallback(options: Options): WebhookCallback {
     settle(undefined, new Transport.ClosedError('webhook-callback cancelled'))
   }
 
+  async function start(options: Pick<Options, 'host' | 'registerUrl'> = {}): Promise<void> {
+    if (state.closed) throw new Transport.ClosedError('webhook-callback transport already closed')
+    start_options = options
+    // Fail fast: surface a missing host at `start()` rather than waiting
+    // for the first `send()` to fire the register request.
+    resolveHostInput()
+    state.started = true
+  }
+
   return {
     bind(binding) {
       const { baseUrl, identity } = binding
@@ -585,7 +639,7 @@ export function webhookCallback(options: Options): WebhookCallback {
         throw new Transport.TransportError(
           'webhook-callback is single-exchange; a previous send is still in flight',
         )
-      if (!state.started) state.started = true
+      if (!state.started) await start()
       state.inFlight = true
       const registration = await runRegister(envelope).catch((cause) => {
         settle(undefined, cause as Error)
@@ -597,10 +651,7 @@ export function webhookCallback(options: Options): WebhookCallback {
       // event.
       return registration
     },
-    async start() {
-      if (state.closed) throw new Transport.ClosedError('webhook-callback transport already closed')
-      state.started = true
-    },
+    start,
   }
 }
 

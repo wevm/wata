@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, test } from 'vp/test'
-import { Discovery, Transport, Wata, deviceCode } from 'wata'
+import { DeviceCode, Discovery, Session, Transport, Wata, deviceCode } from 'wata'
 
 describe('deviceCode (consumer)', () => {
   test('returns a single-exchange consumer-role transport', () => {
@@ -32,5 +32,41 @@ describe('deviceCode (consumer)', () => {
       consumerUrl: 'https://acme.dev',
       url: 'https://wallet.example/auth/device',
     })
+  })
+
+  test('start requires url when it was omitted at construction', () => {
+    const transport = deviceCode()
+    expectTypeOf(transport.start)
+      .parameter(0)
+      .toEqualTypeOf<
+        Required<Pick<DeviceCode.Options, 'url'>> &
+          Pick<DeviceCode.Options, 'consumerUrl' | 'meta' | 'pollingInterval' | 'pollingTimeout'>
+      >()
+    expectTypeOf(transport.start({ url: 'https://wallet.example/auth/device' })).toEqualTypeOf<
+      Promise<void>
+    >()
+    // @ts-expect-error url is required when it was omitted at construction
+    transport.start()
+    // @ts-expect-error url is required when it was omitted at construction
+    transport.start({ pollingInterval: 1000 })
+  })
+
+  test('start makes url optional when it was pinned at construction', () => {
+    const transport = deviceCode({ url: 'https://wallet.example/auth/device' })
+    expectTypeOf(transport.start)
+      .parameter(0)
+      .toEqualTypeOf<DeviceCode.StartOptions<{ url: string }> | undefined>()
+    expectTypeOf(transport.start()).toEqualTypeOf<Promise<void>>()
+    expectTypeOf(transport.start({ meta: { name: 'Acme CLI' } })).toEqualTypeOf<Promise<void>>()
+    expectTypeOf(transport.start({ url: 'https://other.example' })).toEqualTypeOf<Promise<void>>()
+  })
+
+  test('forces url at `wata.start` when the transport was built without one', () => {
+    const wata = Wata.create({ transports: [deviceCode()] })
+    expectTypeOf(wata.start({ url: 'https://wallet.example/auth/device' })).toEqualTypeOf<
+      Promise<Session.Session<undefined, (typeof wata.transports)[0]>>
+    >()
+    // @ts-expect-error url is required when the transport was built without one
+    wata.start()
   })
 })

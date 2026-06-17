@@ -49,7 +49,8 @@
  *     }),
  *   ],
  * })
- * wata.onRequest(async (event) => {
+ * const session = await wata.start()
+ * session.onRequest(async (event) => {
  *   await event.respond({ ok: true })
  * })
  *
@@ -243,7 +244,7 @@ export type DeviceCode = Transport.Transport<'host', 'deviceCode'> & Http.Server
  * ```ts
  * import { Store, Wata, deviceCode } from 'wata/host'
  *
- * const wata = Wata.create({
+ * const config = Wata.create({
  *   baseUrl: 'https://wallet.example',
  *   transports: [
  *     deviceCode({

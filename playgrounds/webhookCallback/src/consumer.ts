@@ -61,6 +61,8 @@ const wata = Wata.create({
   ],
 })
 
+const session = await wata.start()
+
 // Boot the listener. `wata.fetch` serves both
 // `/.well-known/urpc/consumer.json` (auto-built from `meta` +
 // `identity` + `transport.callbackUrls`) and the
@@ -95,7 +97,7 @@ const spinner = Clack.spinner()
 
 try {
   const result = new Promise<unknown>((resolve, reject) => {
-    wata.onEnvelope((envelope) => {
+    session.onEnvelope((envelope) => {
       if (envelope.type !== 'rpc-responses') return
       const response = envelope.payload[0]
       if (!response) return
@@ -104,7 +106,7 @@ try {
     })
   })
   spinner.start('registering...')
-  const registration = await wata.send({
+  const registration = await session.send({
     method: method as string,
     params: params as never,
   })

@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Button, ScrollView, Text, TextInput, View } from 'react-native'
-import { Wata, relay } from 'wata/host'
+import { Session, Wata, relay } from 'wata/host'
 
 // `allowPrivateNetwork` lets the host pair from a LAN pairing link
 // (`relay=http://192.168.x.x:4860`) when scanning the dev consumer.
@@ -12,33 +12,24 @@ const wata = Wata.create({
 export default function App() {
   const [lines, setLines] = React.useState<readonly string[]>(['ready — paste a pairing uri'])
   const [connected, setConnected] = React.useState(false)
-  const [pending, setPending] = React.useState<readonly Wata.RequestEvent[]>([])
+  const [pending, setPending] = React.useState<readonly Session.RequestEvent[]>([])
   const [uri, setUri] = React.useState('')
+  const session = React.useRef<Awaited<ReturnType<typeof wata.relay.start>> | undefined>(undefined)
 
   const append = React.useCallback((line: string) => setLines((lines) => [...lines, line]), [])
 
-  // Register the hoisted session's listeners once.
-  React.useEffect(() => {
-    const subscriptions = [
-      wata.onRequest((event) => {
-        append(`request: ${event.method} ${JSON.stringify(event.params)} — approve or deny`)
-        setPending((queue) => [...queue, event])
-      }),
-      wata.onClose((cause) => {
-        append(cause ? `closed: ${cause.message}` : 'closed')
-        setConnected(false)
-        setPending([])
-      }),
-      wata.onError((error) => append(`error: ${error.message}`)),
-    ]
-    return () => subscriptions.forEach((subscription) => subscription.abort())
-  }, [append])
+  React.useEffect(
+    () => () => {
+      void session.current?.close()
+    },
+    [],
+  )
 
-  function settle(event: Wata.RequestEvent) {
+  function settle(event: Session.RequestEvent) {
     setPending((queue) => queue.filter((queued) => queued !== event))
   }
 
-  async function approve(event: Wata.RequestEvent) {
+  async function approve(event: Session.RequestEvent) {
     try {
       await event.respond({ message: 'pong from mobile' })
       append(`approved: ${event.method}`)
@@ -49,7 +40,7 @@ export default function App() {
     }
   }
 
-  async function deny(event: Wata.RequestEvent) {
+  async function deny(event: Session.RequestEvent) {
     try {
       await event.reject({ code: 4001, message: 'User rejected the request' })
       append(`denied: ${event.method}`)
@@ -63,7 +54,22 @@ export default function App() {
   async function connect() {
     try {
       append('connecting…')
-      await wata.relay.start({ pairingUri: uri.trim() })
+      const next = await wata.relay.start({ uri: uri.trim() })
+      session.current = next
+      const subscriptions = [
+        next.onRequest((event) => {
+          append(`request: ${event.method} ${JSON.stringify(event.params)} — approve or deny`)
+          setPending((queue) => [...queue, event])
+        }),
+        next.onClose((cause) => {
+          append(cause ? `closed: ${cause.message}` : 'closed')
+          session.current = undefined
+          setConnected(false)
+          setPending([])
+        }),
+        next.onError((error) => append(`error: ${error.message}`)),
+      ]
+      next.onClose(() => subscriptions.forEach((subscription) => subscription.abort()))
       append('connected')
       setConnected(true)
     } catch (error) {
@@ -89,14 +95,16 @@ export default function App() {
           <>
             <Button
               onPress={() => {
-                wata
+                const current = session.current
+                if (!current) return
+                current
                   .notify({ method: 'accountsChanged', params: [['0xabc']] })
                   .then(() => append('notified accountsChanged'))
                   .catch((error: Error) => append(`error: ${error.message}`))
               }}
               title="Notify accountsChanged"
             />
-            <Button onPress={() => void wata.close()} title="Disconnect" />
+            <Button onPress={() => void session.current?.close()} title="Disconnect" />
           </>
         )
       ) : (

@@ -21,7 +21,9 @@ const wata = Wata.create({
   ],
 })
 
-wata.onEnvelope((envelope) => {
+const session = await wata.start()
+
+session.onEnvelope((envelope) => {
   if (envelope.type !== 'rpc-responses') return
   const response = envelope.payload[0]
   if (!response) return
@@ -42,7 +44,7 @@ const app = new Hono()
   .post('/send', async (c) => {
     const form = await c.req.formData()
     const message = String(form.get('message') ?? '')
-    const registration = await wata.send({
+    const registration = await session.send({
       method: 'message.send',
       params: [{ text: message }],
     })

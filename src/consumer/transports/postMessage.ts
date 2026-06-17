@@ -17,16 +17,18 @@
  * ```ts
  * import { Wata, postMessage } from 'wata'
  *
- * const wata = Wata.create({
+ * const session = await Wata.create({
  *   transports: [
  *     postMessage({
  *       host: 'https://wallet.example',
  *       target: ({ host }) => window.open(host, '_blank', 'popup=1'),
  *     }),
  *   ],
- * })
+ * }).start()
  *
- * const { result } = await wata.send({ method: 'wallet_connect', params: [] })
+ * // `target` runs on the first `send`, so the popup opens inside the user
+ * // gesture — call `send` from a click handler to avoid popup blockers.
+ * const { result } = await session.send({ method: 'wallet_connect', params: [] })
  * ```
  *
  * @example iframe
@@ -116,13 +118,31 @@ export type Options<target extends Target> = {
    */
   source?: WindowLike | undefined
   /**
-   * Called lazily when the transport starts to acquire the postMessage
-   * target. For popup-blocker-sensitive flows, call `wata.send` or
-   * `wata.start` from the user-gesture handler. Receives the caller's
-   * `host` value (or `undefined` for `MessagePort` targets that omitted it).
+   * Acquires the postMessage target. Called lazily on the consumer's first
+   * outbound frame (`send` / `notify`) rather than at `start()`, so the popup
+   * opens inside the user gesture that triggers the request — `start()` can
+   * safely run at module scope. Receives the caller's `host` value (or
+   * `undefined` for `MessagePort` targets that omitted it).
+   *
+   * Optional: when the mount isn't known at construction time, defer it
+   * to `start({ target })`. The first `send` throws
+   * {@link TargetRequiredError} when neither construction nor start supplies
+   * a `target`.
    */
-  target: (parameters: { host: string | undefined }) => target | Promise<target>
+  target?: ((parameters: { host: string | undefined }) => target | Promise<target>) | undefined
 }
+
+/**
+ * Options for the consumer `postMessage` transport's
+ * {@link Transport.Transport.start | start}, derived from the deferrable
+ * subset of {@link Options} (`close`, `host`, `target`) so their docs
+ * live in one place. Each is an optional per-session override of the
+ * construction value.
+ */
+export type StartOptions<target extends Target = Target> = Pick<
+  Options<target>,
+  'close' | 'host' | 'target'
+>
 
 /** Minimal `Window`-shaped contract used internally. */
 export type WindowLike = {
@@ -145,20 +165,31 @@ export type WindowLike = {
  * })
  * ```
  */
-export function postMessage<const target extends Target>(
-  options: Options<target>,
-): Transport.Transport<'consumer', 'postMessage', { meta: MessageMeta<target> }> {
+export function postMessage<const target extends Target = Target>(
+  options: Options<target> = {},
+): Transport.Transport<
+  'consumer',
+  'postMessage',
+  { meta: MessageMeta<target>; startOptions: StartOptions<target> }
+> {
   const { close, host, source, target: acquire } = options
-  const targetOrigin = host ? originFrom(host) : undefined
-  return createSide<'consumer', target>({
-    options: {
-      close,
-      source,
-      target: () => acquire({ host }),
-      targetOrigin,
-    },
+  return createSide({
     handshake: { expect: protocol.hostReady.type, send: protocol.consumerHello },
+    resolve: (start?: StartOptions<target>) => {
+      const host_resolved = start?.host ?? host
+      const acquire_resolved = start?.target ?? acquire
+      if (!acquire_resolved)
+        throw new TargetRequiredError(
+          '`target` must be supplied to `postMessage({ target })` or `start({ target })`',
+        )
+      return {
+        close: start?.close ?? close,
+        target: () => acquire_resolved({ host: host_resolved }),
+        targetOrigin: host_resolved ? originFrom(host_resolved) : undefined,
+      }
+    },
     role: 'consumer',
+    source,
   })
 }
 
@@ -183,11 +214,25 @@ function originFrom(host: string): string {
  * so the actual transport object is built here. The host re-exports the
  * same routine via `wata/host`.
  */
-export function createSide<role extends 'consumer' | 'host', target extends Target>(
-  parameters: createSide.Options<role, target>,
-): Transport.Transport<role, 'postMessage', { meta: MessageMeta<target> }> {
-  const { handshake, options, role } = parameters
-  const source = options.source ?? (globalThis as { window?: WindowLike }).window
+export function createSide<
+  role extends 'consumer' | 'host',
+  target extends Target,
+  startOptions = never,
+>(
+  parameters: createSide.Options<role, target, startOptions>,
+): Transport.Transport<
+  role,
+  'postMessage',
+  { meta: MessageMeta<target>; startOptions: startOptions }
+> {
+  const { handshake, resolve, role, source: source_option } = parameters
+  const source = source_option ?? (globalThis as { window?: WindowLike }).window
+
+  // Resolved per-start: the effective `targetOrigin` / `close` for the
+  // active session, produced by `resolve(startOptions)` when `start`
+  // runs so start-time overrides win over construction values.
+  let targetOrigin: string | undefined
+  let close_fn: ((handle: Target) => void | Promise<void>) | undefined
 
   const emitter = Events.create<Transport.EventMap<MessageMeta<target>>>()
 
@@ -198,6 +243,11 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
   const state = { ready: false, started: false }
   let buffered: Envelope.Envelope[] = []
   let startPromise: Promise<void> | undefined
+  let connectPromise: Promise<void> | undefined
+  // Resolved target thunk for the active session. `start` binds it from
+  // `resolve(...)`; `connect` invokes it lazily so the consumer never
+  // acquires its target (e.g. opens a popup) until the first outbound frame.
+  let acquire: (() => Target | Promise<Target>) | undefined
   // Widened to `Target` internally — the public `target` generic constrains
   // only the caller's `target` / `close` shapes, not internal storage.
   let handle: Target | undefined
@@ -214,6 +264,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     state.ready = false
     buffered = []
     handle = undefined
+    acquire = undefined
     if (unsubscribeMessage) {
       unsubscribeMessage()
       unsubscribeMessage = undefined
@@ -236,11 +287,11 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
       handle.postMessage(wire)
       return
     }
-    if (!options.targetOrigin)
+    if (!targetOrigin)
       throw new TargetOriginRequiredError(
         '`targetOrigin` is required for Window / WindowProxy targets',
       )
-    handle.postMessage(wire, options.targetOrigin)
+    handle.postMessage(wire, targetOrigin)
   }
 
   function emitMessage(envelope: Envelope.Envelope, meta?: MessageMeta<target>) {
@@ -270,7 +321,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
       throw new TargetOriginRequiredError(
         'no `source` window available to receive postMessage events',
       )
-    const expectedOrigin = options.targetOrigin
+    const expectedOrigin = targetOrigin
     const listener = (event: MessageEvent) => {
       // Window targets — only honour events whose origin is pinned.
       // `'*'` means "accept any origin"; matches the postMessage outbound
@@ -359,32 +410,58 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     }, 250)
   }
 
-  async function start(): Promise<void> {
+  async function start(options?: startOptions): Promise<void> {
     if (state.started) return
     if (startPromise) return startPromise
+    // Keep the cleanup in this function's `finally` rather than the IIFE's:
+    // the consumer path has no `await`, so an inner `finally` would run
+    // synchronously *before* the `startPromise = …` assignment and leak a
+    // resolved promise that wedges the next `start`.
     startPromise = (async () => {
-      try {
-        const acquired = await options.target()
-        if (acquired === null || acquired === undefined)
-          throw new PopupBlockedError(
-            '`target` returned null — popup blocked or window unavailable',
-          )
-        if (!protocol.isWindowLike(acquired) && !protocol.isPortLike(acquired))
-          throw new InvalidTargetError(
-            '`target` must return a Window, WindowProxy, or MessagePort handle',
-          )
-        handle = acquired
-        state.started = true
-        attachListener()
-        attachClosedPoll()
-        // Send our hello after the listener is attached so the peer's reply
-        // is never missed.
-        postRaw(handshake.send)
-      } finally {
-        startPromise = undefined
-      }
+      const resolved = resolve(options)
+      targetOrigin = resolved.targetOrigin
+      close_fn = resolved.close as ((handle: Target) => void | Promise<void>) | undefined
+      acquire = resolved.target
+      // The host responds to inbound traffic, so it acquires its target and
+      // attaches listeners now. The consumer initiates: it defers connection
+      // to the first outbound frame (see `connect` / `send`) so `start` never
+      // acquires a target — e.g. opens a popup — outside a user gesture.
+      if (role === 'host') await connect()
+      state.started = true
     })()
-    return startPromise
+    try {
+      await startPromise
+    } finally {
+      startPromise = undefined
+    }
+  }
+
+  // Acquire the target, attach inbound listeners, and announce hello. Runs on
+  // `start` for the host and on the first outbound frame for the consumer.
+  async function connect(): Promise<void> {
+    if (handle) return
+    if (connectPromise) return connectPromise
+    connectPromise = (async () => {
+      if (!acquire) throw new Transport.ClosedError('postMessage transport is not started')
+      const acquired = await acquire()
+      if (acquired === null || acquired === undefined)
+        throw new PopupBlockedError('`target` returned null — popup blocked or window unavailable')
+      if (!protocol.isWindowLike(acquired) && !protocol.isPortLike(acquired))
+        throw new InvalidTargetError(
+          '`target` must return a Window, WindowProxy, or MessagePort handle',
+        )
+      handle = acquired
+      attachListener()
+      attachClosedPoll()
+      // Send our hello after the listener is attached so the peer's reply
+      // is never missed.
+      postRaw(handshake.send)
+    })()
+    try {
+      await connectPromise
+    } finally {
+      connectPromise = undefined
+    }
   }
 
   return {
@@ -396,8 +473,7 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
       if (!state.started) return
       const handle_local = handle
       try {
-        if (handle_local && options.close)
-          await (options.close as (handle: Target) => void | Promise<void>)(handle_local)
+        if (handle_local && close_fn) await close_fn(handle_local)
         else if (
           handle_local &&
           'close' in handle_local &&
@@ -416,6 +492,10 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
     role,
     async send(envelope) {
       if (!state.started) await start()
+      // Lazily connect on the first outbound frame — acquires the target
+      // (e.g. opens the popup) inside the caller's gesture rather than at
+      // `start`. No-op once connected.
+      await connect()
       if (!state.ready) {
         buffered.push(envelope)
         return
@@ -427,30 +507,38 @@ export function createSide<role extends 'consumer' | 'host', target extends Targ
 }
 
 /**
- * Internal options shape consumed by {@link createSide}. The public
- * consumer / host {@link Options} shapes are normalized into this form
- * before being handed off — `targetOrigin` is derived from the caller's
- * `host` (consumer) or defaulted to `'*'` (host), and `target` is bound
- * to a parameterless callback.
+ * Per-start options shape returned by a side's `resolve` callback. The
+ * consumer / host factories merge their construction {@link Options} with
+ * the start-time overrides and normalize the result into this form —
+ * `targetOrigin` is derived from the caller's `host` (consumer) or passed
+ * through (host), and `target` is bound to a parameterless callback.
  *
  * @internal
  */
 export type InternalOptions<target extends Target> = {
   close?: ((handle: target) => void | Promise<void>) | undefined
-  source?: WindowLike | undefined
   target: () => target | Promise<target>
   targetOrigin: string | undefined
 }
 
 export declare namespace createSide {
   /** Parameters for {@link createSide}. */
-  type Options<role extends 'consumer' | 'host', target extends Target> = {
-    /** Normalized options for the underlying `postMessage` transport. */
-    options: InternalOptions<target>
-    /** Side of the protocol this transport speaks for. */
-    role: role
+  type Options<role extends 'consumer' | 'host', target extends Target, startOptions> = {
     /** Outbound control frame and the inbound frame type to wait for. */
     handshake: { expect: protocol.WireFrame['type']; send: protocol.WireFrame }
+    /**
+     * Produce the effective per-start {@link InternalOptions} from the
+     * start-time overrides, merging them over the construction values
+     * (start wins). Invoked once each time `start` runs.
+     */
+    resolve: (options?: startOptions) => InternalOptions<target>
+    /** Side of the protocol this transport speaks for. */
+    role: role
+    /**
+     * `Window` / `WindowProxy` realm where inbound `message` events are
+     * received. Construction-only; defaults to the global `window`.
+     */
+    source?: WindowLike | undefined
   }
 }
 
@@ -473,6 +561,17 @@ export class TargetOriginRequiredError<
   cause extends Error | undefined = Error | undefined,
 > extends Errors.ProtocolError<cause> {
   override name = 'PostMessage.TargetOriginRequiredError'
+}
+
+/**
+ * Thrown when `start()` runs but no `target` was supplied at construction
+ * (`postMessage({ target })`) or at start (`start({ target })`) — the
+ * transport has no way to acquire a `Window` / `MessagePort` handle.
+ */
+export class TargetRequiredError<
+  cause extends Error | undefined = Error | undefined,
+> extends Errors.ProtocolError<cause> {
+  override name = 'PostMessage.TargetRequiredError'
 }
 
 /**

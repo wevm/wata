@@ -26,7 +26,7 @@
  * @example
  * ```ts
  * try {
- *   await wata.send({ method: 'ping', params: [] })
+ *   await session.send({ method: 'ping', params: [] })
  * } catch (error) {
  *   if (error instanceof Aead.OpenError) {
  *     // tampered ciphertext

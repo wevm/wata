@@ -15,7 +15,7 @@
  * ```ts
  * import { Wata, mobileLink } from 'wata'
  *
- * const wata = Wata.create({
+ * const session = await Wata.create({
  *   baseUrl: 'https://app.example',
  *   transports: [
  *     mobileLink({
@@ -24,12 +24,12 @@
  *       openLink: (url) => Linking.openURL(url),
  *     }),
  *   ],
- * })
+ * }).start()
  *
  * // Feed OS-routed callback deep links back into the transport.
- * Linking.addEventListener('url', ({ url }) => wata.mobileLink.handleUrl(url))
+ * Linking.addEventListener('url', ({ url }) => session.mobileLink.handleUrl(url))
  *
- * const { result } = await wata.send({ method: 'wallet_connect', params: [] })
+ * const { result } = await session.send({ method: 'wallet_connect', params: [] })
  * ```
  */
 
@@ -43,7 +43,7 @@ import * as Errors from '../../core/Errors.js'
 import * as Events from '../../core/Events.js'
 import * as Nonce from '../../core/Nonce.js'
 import * as Rpc from '../../core/Rpc.js'
-import * as Session from '../../core/Session.js'
+import * as SessionKey from '../../core/SessionKey.js'
 import * as Transport from '../../core/Transport.js'
 import * as MobileLinkEnvelope from '../../internal/MobileLinkEnvelope.js'
 import * as Uri from '../../internal/Uri.js'
@@ -58,9 +58,10 @@ export type Options = {
   /**
    * Host discovery doc. Accepts a host origin string or a pre-parsed
    * {@link Discovery.HostDocument}. Optional: when the target host isn't
-   * known at construction time, defer it to
-   * {@link StartOptions.host | `start({ host })`}. A host supplied to
-   * `start` wins over this constructor value.
+   * known at construction time, defer it to `start({ host })` (which a
+   * supplied host wins over). `start` throws
+   * {@link Transport.TransportError} when neither construction nor start
+   * supplies a host.
    */
   host?: string | Discovery.HostDocument | undefined
   /**
@@ -85,64 +86,58 @@ export type Options = {
    */
   returnUrl: string
   /**
-   * Override the host's custom URL scheme (e.g. `examplewallet`). When
-   * omitted, the transport uses the host's `mobile-link` discovery
-   * binding, preferring its `universal_link`. Overridable per call via
-   * {@link StartOptions.scheme | `start({ scheme })`}.
+   * Target app to open: a bare scheme (`'examplewallet'` →
+   * `examplewallet://request`) or a full universal/app link
+   * (`'https://wallet.example/urpc'`). When omitted, the transport uses
+   * the host's `mobile-link` discovery binding, preferring its
+   * `universal_link`. Overridable per call via `start({ target })`.
    */
-  scheme?: string | undefined
-  /**
-   * Override the host's universal/app-link prefix. When omitted, the
-   * transport uses the host's `mobile-link` discovery binding.
-   * Overridable per call via
-   * {@link StartOptions.universalLink | `start({ universalLink })`}.
-   */
-  universalLink?: string | undefined
+  target?: string | undefined
 }
 
-/** Options for the mobile-link transport's {@link Transport.Transport.start | start}. */
-export type StartOptions = {
-  /**
-   * Target host to connect to, overriding the construction-time
-   * {@link Options.host}. Accepts a host origin string or a pre-parsed
-   * {@link Discovery.HostDocument}. Reach for it to direct the session at
-   * a wallet chosen out of band:
-   * `await wata.mobileLink.start({ host: 'https://wallet.example' })`.
-   */
-  host?: string | Discovery.HostDocument | undefined
-  /**
-   * Target custom URL scheme, overriding the construction-time
-   * {@link Options.scheme}.
-   */
-  scheme?: string | undefined
-  /**
-   * Target universal/app-link prefix, overriding the construction-time
-   * {@link Options.universalLink}.
-   */
-  universalLink?: string | undefined
-}
+/**
+ * Options for the mobile-link transport's {@link Transport.Transport.start | start},
+ * derived from the deferrable subset of {@link Options} (`host`,
+ * `target`) so their docs live in one place. Parameterized by the
+ * construction {@link Options}: a per-session `host` is **required** here
+ * only when it was not supplied at construction; once `mobileLink({ host })`
+ * pins it, both fields are optional per-session overrides.
+ */
+export type StartOptions<options = Options> = Transport.StartOptions<
+  options,
+  Options,
+  { optional: 'target'; required: 'host' }
+>
 
 /** Consumer-side mobile-link transport. */
-export type MobileLink = Transport.Transport<
+export type MobileLink<options = Options> = Transport.Transport<
   'consumer',
   'mobileLink',
-  { startOptions: StartOptions }
+  { startOptions: StartOptions<options> }
 > & {
   /** Feed an OS-routed inbound callback deep link into the transport. */
   handleUrl: (url: string) => void
 }
 
 /**
- * Create a consumer-side `mobile-link` transport.
+ * Create a consumer-side `mobile-link` transport. Its `start` additionally
+ * accepts a {@link StartOptions} so the host and the deep-link target can
+ * be supplied at start time — and requires `host` there when it was
+ * omitted at construction. Overloaded so a construction-time `host` makes
+ * the start-time `host` an optional override; omitting it makes the
+ * start-time `host` mandatory.
  */
+export function mobileLink(
+  options: Options & { host: string | Discovery.HostDocument },
+): MobileLink<{ host: string | Discovery.HostDocument }>
+export function mobileLink(options: Options): MobileLink
 export function mobileLink(options: Options): MobileLink {
   const {
     fetch: fetchImpl = globalThis.fetch.bind(globalThis),
     host,
     openLink,
     returnUrl,
-    scheme,
-    universalLink,
+    target,
   } = options
   const open = (url: string) => {
     if (!openLink)
@@ -192,12 +187,11 @@ export function mobileLink(options: Options): MobileLink {
     target: undefined,
   }
 
-  function resolveTarget(
-    hostDoc: Discovery.HostDocument,
-    options: { scheme: string | undefined; universalLink: string | undefined },
-  ): string {
-    if (options.universalLink) return options.universalLink
-    if (options.scheme) return `${options.scheme}://request`
+  function resolveTarget(hostDoc: Discovery.HostDocument, target: string | undefined): string {
+    if (target) {
+      if (target.includes('://')) return target
+      return `${target}://request`
+    }
     const binding = hostDoc.transports['mobile-link']
     if (!binding)
       throw new Transport.UnsupportedError(
@@ -308,7 +302,10 @@ export function mobileLink(options: Options): MobileLink {
 
     const shared = (() => {
       try {
-        return Session.shared({ privateKey: keypair.x25519.privateKey, publicKey: publicKeyHost })
+        return SessionKey.shared({
+          privateKey: keypair.x25519.privateKey,
+          publicKey: publicKeyHost,
+        })
       } catch (cause) {
         emitError(state.requestId, -32600, 'Mobile-link key agreement failed.', cause as Error)
         return undefined
@@ -442,7 +439,7 @@ export function mobileLink(options: Options): MobileLink {
       if (state.session) return await sendSubsequent(envelope)
       return await sendHandshake(envelope, keypair)
     },
-    async start(options = {}) {
+    async start(options: Pick<Options, 'host' | 'target'> = {}) {
       if (state.closed) throw new Transport.ClosedError('mobile-link transport already closed')
       if (state.started) return
       const host_resolved = options.host ?? host
@@ -455,10 +452,7 @@ export function mobileLink(options: Options): MobileLink {
           ? await Discovery.fetchHost(host_resolved, { fetch: fetchImpl })
           : host_resolved
       state.identityPublicKey = Crypto.decodePublicKey(hostDoc.identity_pubkey)
-      state.target = resolveTarget(hostDoc, {
-        scheme: options.scheme ?? scheme,
-        universalLink: options.universalLink ?? universalLink,
-      })
+      state.target = resolveTarget(hostDoc, options.target ?? target)
       state.keypair = Crypto.randomKeypair()
       state.started = true
     },

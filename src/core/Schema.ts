@@ -105,7 +105,7 @@ export type Schema<
 /**
  * Create a method-registry schema. The `const` generic on `methods`
  * preserves the literal method-name keys so consumers see the right
- * narrowed type when they call `wata.send({ method: 'ping', ... })`.
+ * narrowed type when they call `session.send({ method: 'ping', ... })`.
  *
  * @example
  * ```ts

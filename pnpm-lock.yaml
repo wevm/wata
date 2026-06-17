@@ -169,9 +169,9 @@ importers:
       typescript:
         specifier: latest
         version: 6.0.3
-      vp:
+      vite:
         specifier: latest
-        version: 1.0.3
+        version: 8.0.16(@types/node@25.9.3)(esbuild@0.28.0)(jiti@2.7.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
 
   examples/relay:
     devDependencies:
@@ -5363,10 +5363,6 @@ packages:
 
   vlq@1.0.1:
     resolution: {integrity: sha512-gQpnTgkubC6hQgdIcRdYGDSDc+SaujOdyesZQMv6JlfQee/9Mp0Qhnys6WxDWvQnL5WZdT7o2Ul187aSt0Rq+w==}
-
-  vp@1.0.3:
-    resolution: {integrity: sha512-wM8Qjkk05Kj0YhVHeLUaMSd+OHnAA11GX9/45IjscyJJabnTMxtEJPcVT1sSgQ3fSKC5fECfpOWgHT3P4XM4dw==}
-    hasBin: true
 
   wait-on@9.0.10:
     resolution: {integrity: sha512-rCoJEhvMr0X6alHmwc9abbrA5ZrLZFKpFQVKPNFwl2h7DapXOGdmimIHDtLOWhT4PjhZhxFEtZoQgEXbkDWdZw==}
@@ -11272,8 +11268,6 @@ snapshots:
       - msw
 
   vlq@1.0.1: {}
-
-  vp@1.0.3: {}
 
   wait-on@9.0.10:
     dependencies:

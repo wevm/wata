@@ -3,6 +3,11 @@ import * as Identity from 'wata/identity'
 
 export const baseUrl = 'http://localhost:5173'
 
+const targetOrigin =
+  typeof location === 'undefined'
+    ? undefined
+    : (new URL(location.href).searchParams.get('origin') ?? undefined)
+
 export const host = Wata.create({
   baseUrl,
   identity: Identity.fromPrivateKey(
@@ -55,7 +60,7 @@ export const host = Wata.create({
       pollingInterval: 1_000,
       store: Store.memory(),
     }),
-    postMessage({ targetOrigin: new URL(location.href).searchParams.get('origin') ?? undefined }),
+    postMessage(targetOrigin ? { targetOrigin } : {}),
     webhookCallback({
       html: {
         async authenticate({ actions, code, request }) {
@@ -96,9 +101,4 @@ export const host = Wata.create({
       validateOutboundRequest() {},
     }),
   ],
-})
-
-host.onRequest(async (event) => {
-  await event.respond({ message: 'pong from host', transport: event.transport })
-  if (typeof window !== 'undefined') window.close()
 })

@@ -42,19 +42,19 @@ describe('webhookCallback (consumer)', () => {
     expectTypeOf(wata.role).toEqualTypeOf<'consumer'>()
   })
 
-  test('Wata.send returns registration metadata for a single webhookCallback transport', async () => {
+  test('session.send returns registration metadata for a single webhookCallback transport', async () => {
     const transport = webhookCallback({
       host: 'https://wallet.example',
       path: '/cb',
       store: Store.memory(),
     })
-    const wata = Wata.create({
+    const session = await Wata.create({
       baseUrl: 'https://acme.dev',
       meta: { name: 'Acme CLI' },
       identity: fromPrivateKey('0x' as Hex.Hex),
       transports: [transport],
-    })
-    const registration = await wata.send({ method: 'ping', params: [] })
+    }).start()
+    const registration = await session.send({ method: 'ping', params: [] })
     expectTypeOf(registration).toEqualTypeOf<WebhookCallback.Registration>()
     expectTypeOf(registration.verificationUri).toEqualTypeOf<string>()
   })
@@ -74,8 +74,36 @@ describe('webhookCallback (consumer)', () => {
     expectTypeOf<WebhookCallback.Options['store']>().toEqualTypeOf<Store.Store>()
   })
 
-  test('host accepts string OR pre-parsed HostDocument', () => {
-    expectTypeOf<WebhookCallback.Options['host']>().toMatchTypeOf<string | object>()
+  test('host accepts string OR pre-parsed HostDocument, deferrable to start', () => {
+    expectTypeOf<WebhookCallback.Options['host']>().toMatchTypeOf<string | object | undefined>()
+  })
+
+  test('start requires host when it was omitted at construction', () => {
+    const transport = webhookCallback({ path: '/cb', store: Store.memory() })
+    expectTypeOf(transport.start)
+      .parameter(0)
+      .toEqualTypeOf<
+        Required<Pick<WebhookCallback.Options, 'host'>> &
+          Pick<WebhookCallback.Options, 'registerUrl'>
+      >()
+    expectTypeOf(transport.start({ host: 'https://wallet.example' })).toEqualTypeOf<Promise<void>>()
+    // @ts-expect-error host is required when it was omitted at construction
+    transport.start()
+    // @ts-expect-error host is required when it was omitted at construction
+    transport.start({ registerUrl: 'https://wallet.example/register' })
+  })
+
+  test('start makes host optional when it was pinned at construction', () => {
+    const transport = webhookCallback({
+      host: 'https://wallet.example',
+      path: '/cb',
+      store: Store.memory(),
+    })
+    expectTypeOf(transport.start)
+      .parameter(0)
+      .toEqualTypeOf<WebhookCallback.StartOptions<{ host: string }> | undefined>()
+    expectTypeOf(transport.start()).toEqualTypeOf<Promise<void>>()
+    expectTypeOf(transport.start({ host: 'https://other.example' })).toEqualTypeOf<Promise<void>>()
   })
 
   test('registration omits consumer-facing correlation handles', () => {

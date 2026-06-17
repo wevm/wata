@@ -15,6 +15,8 @@ export const consumer = Wata.create({
     }),
     postMessage({
       host: `${baseUrl}/host.html`,
+      // `target` runs on the first `send` (not at `start()`), so the popup
+      // opens inside the click gesture and `start()` can run at module scope.
       target({ host }) {
         if (typeof window === 'undefined')
           throw new PostMessage.PopupBlockedError('postMessage demo runs in the browser')
@@ -31,10 +33,4 @@ export const consumer = Wata.create({
       store: Store.memory(),
     }),
   ],
-})
-
-consumer.onPrompt((prompt) => {
-  if (prompt.transport !== 'deviceCode') return
-  console.log(`open ${prompt.verificationUriFull}`)
-  console.log(`user_code: ${prompt.userCode}`)
 })

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vp/test'
-import { Crypto, Envelope, Session } from 'wata'
+import { Crypto, Envelope, SessionKey } from 'wata'
 
 import * as Relay from './Relay.js'
 
@@ -348,14 +348,14 @@ describe('createCipher', () => {
   function pair() {
     const consumer = Crypto.randomKeypair()
     const host = Crypto.randomKeypair()
-    const keys_consumer = Session.derive({
+    const keys_consumer = SessionKey.derive({
       peer: { publicKey: host.x25519.publicKey },
       role: 'consumer',
       self: consumer.x25519,
       transportContext: pairingSecret,
       transportId: Relay.transportId,
     })
-    const keys_host = Session.derive({
+    const keys_host = SessionKey.derive({
       peer: { publicKey: consumer.x25519.publicKey },
       role: 'host',
       self: host.x25519,
