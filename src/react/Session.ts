@@ -73,58 +73,50 @@ export function useSession(
   const callbacks = React.useRef(options)
   callbacks.current = options
 
-  // Keep the latest handle in a ref too, so `start` stays stable across
-  // renders even when the handle is an inline factory (e.g. `() =>
-  // Session.compose([...])`) whose identity changes every render.
-  const handleRef = React.useRef(handle)
-  handleRef.current = handle
-
   const entry = React.useRef<Entry | undefined>(undefined)
 
-  const start = React.useCallback((...args: never[]) => {
-    if (entry.current) return entry.current.promise
-    const current: Entry = { controllers: [], promise: undefined as never }
-    entry.current = current
-    dispatch({ type: 'start' })
-    current.promise = (async () => {
-      try {
-        // A handle is either a transport handle (`{ start }`) or a bare
-        // factory function — the latter lets callers compose several
-        // sessions into one (`() => Session.compose([...])`).
-        const handle = handleRef.current
-        const open = typeof handle === 'function' ? handle : handle.start.bind(handle)
-        const next = (await open(...args)) as useSession.AnySession
-        // Subscribe only to the events this session actually exposes —
-        // consumer sessions emit `prompt` / `notification`, host sessions
-        // emit `request`; both share `error` / `close`.
-        current.controllers = [
-          next.onPrompt?.((value) => {
-            dispatch({ prompt: value, type: 'prompt' })
-            callbacks.current.onPrompt?.(value as never)
-          }),
-          next.onNotification?.((event) => callbacks.current.onNotification?.(event as never)),
-          next.onRequest?.((event) => callbacks.current.onRequest?.(event as never)),
-          next.onError?.((cause) => {
-            dispatch({ error: cause, type: 'error' })
-            callbacks.current.onError?.(cause as never)
-          }),
-          next.onClose?.((cause) => {
-            for (const controller of current.controllers) controller.abort()
-            entry.current = undefined
-            dispatch({ type: 'close' })
-            callbacks.current.onClose?.(cause as never)
-          }),
-        ].filter((controller) => controller !== undefined)
-        dispatch({ session: next, type: 'open' })
-        return next
-      } catch (cause) {
-        entry.current = undefined
-        dispatch({ error: cause as Error, type: 'session-error' })
-        throw cause
-      }
-    })()
-    return current.promise
-  }, [])
+  const start = React.useCallback(
+    (...args: never[]) => {
+      if (entry.current) return entry.current.promise
+      const current: Entry = { controllers: [], promise: undefined as never }
+      entry.current = current
+      dispatch({ type: 'start' })
+      current.promise = (async () => {
+        try {
+          const next = (await handle.start(...args)) as useSession.AnySession
+          // Subscribe only to the events this session actually exposes —
+          // consumer sessions emit `prompt` / `notification`, host sessions
+          // emit `request`; both share `error` / `close`.
+          current.controllers = [
+            next.onPrompt?.((value) => {
+              dispatch({ prompt: value, type: 'prompt' })
+              callbacks.current.onPrompt?.(value as never)
+            }),
+            next.onNotification?.((event) => callbacks.current.onNotification?.(event as never)),
+            next.onRequest?.((event) => callbacks.current.onRequest?.(event as never)),
+            next.onError?.((cause) => {
+              dispatch({ error: cause, type: 'error' })
+              callbacks.current.onError?.(cause as never)
+            }),
+            next.onClose?.((cause) => {
+              for (const controller of current.controllers) controller.abort()
+              entry.current = undefined
+              dispatch({ type: 'close' })
+              callbacks.current.onClose?.(cause as never)
+            }),
+          ].filter((controller) => controller !== undefined)
+          dispatch({ session: next, type: 'open' })
+          return next
+        } catch (cause) {
+          entry.current = undefined
+          dispatch({ error: cause as Error, type: 'session-error' })
+          throw cause
+        }
+      })()
+      return current.promise
+    },
+    [handle],
+  )
 
   const close = React.useCallback(async () => {
     const current = entry.current
@@ -185,26 +177,11 @@ function reducer(state: State, action: Action): State {
 }
 
 export declare namespace useSession {
-  /**
-   * Minimal shape the hook needs to open a session. Either a transport
-   * handle exposing `start()` (e.g. `wata` or `wata.relay`), or a bare
-   * factory function that resolves with a session — the latter lets you
-   * compose several sessions into one with `Session.compose`:
-   *
-   * ```ts
-   * useSession(() => Session.compose([wata.a.start(), wata.b.start()]))
-   * ```
-   */
-  type Handle =
-    | { start: (...args: never[]) => Promise<unknown> }
-    | ((...args: never[]) => Promise<unknown>)
-
-  /** Extract the `start()`/factory function from a {@link Handle}. */
-  type StartFnOf<handle extends Handle> = handle extends (...args: never[]) => Promise<unknown>
-    ? handle
-    : handle extends { start: infer fn extends (...args: never[]) => Promise<unknown> }
-      ? fn
-      : never
+  /** Minimal shape the hook needs: anything with a `start()` factory. */
+  type Handle = {
+    /** Open the session and resolve with it. */
+    start: (...args: never[]) => Promise<unknown>
+  }
 
   /**
    * Structural session surface the hook subscribes to internally. Every
@@ -222,7 +199,7 @@ export declare namespace useSession {
   }
 
   /** The live session type produced by a {@link Handle}. */
-  type SessionOf<handle extends Handle> = Awaited<ReturnType<StartFnOf<handle>>>
+  type SessionOf<handle extends Handle> = Awaited<ReturnType<handle['start']>>
 
   /**
    * Payload type of an `onX(listener)` subscriber method on a session.
@@ -254,7 +231,7 @@ export declare namespace useSession {
   type PromptOf<session> = session extends { prompt: infer prompt } ? prompt : undefined
 
   /** Start options accepted by a {@link Handle}'s `start()`. */
-  type StartArg<handle extends Handle> = Parameters<StartFnOf<handle>>[0]
+  type StartArg<handle extends Handle> = Parameters<handle['start']>[0]
 
   /** Options accepted by {@link useSession}. */
   type Options<handle extends Handle> = {
@@ -290,7 +267,7 @@ export declare namespace useSession {
      * Open the session (forwarding any start options the transport
      * accepts) and resolve with it. Idempotent while open.
      */
-    start: (...args: Parameters<StartFnOf<handle>>) => Promise<SessionOf<handle>>
+    start: (...args: Parameters<handle['start']>) => Promise<SessionOf<handle>>
     /** Lifecycle status of the session. */
     status: Status
   }
