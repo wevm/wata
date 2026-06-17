@@ -7,7 +7,7 @@ function fromPrivateKey(privateKey: Hex.Hex) {
 }
 
 describe('webhookCallback (consumer)', () => {
-  test('returns a single-exchange consumer-role transport with `.fetch`', () => {
+  test('returns an ongoing consumer-role transport with `.fetch`', () => {
     const transport = webhookCallback({
       host: 'https://wallet.example',
       path: '/cb',
@@ -23,7 +23,7 @@ describe('webhookCallback (consumer)', () => {
       >
     >()
     expectTypeOf(transport.fetch).toEqualTypeOf<(request: Request) => Promise<Response>>()
-    expectTypeOf(transport.cancel).toEqualTypeOf<() => Promise<void>>()
+    expectTypeOf(transport.cancel).toEqualTypeOf<(authReqId?: string) => Promise<void>>()
     expectTypeOf(transport.callbackUrls).toEqualTypeOf<readonly string[] | undefined>()
   })
 

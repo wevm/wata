@@ -1,6 +1,6 @@
 /**
  * Consumer-side `webhook-callback` transport — HTTP-server-shaped,
- * single-exchange.
+ * multi-intent.
  *
  * Implements the consumer half of the uRPC `webhook-callback` spec.
  * `transport.send(envelope)`:
@@ -18,7 +18,11 @@
  *    protection, then emit the `rpc-responses` envelope as
  *    `'message'` so the wrapping `Wata` resolves the pending
  *    `send()`.
- * 4. Auto-closes on terminal response (single-exchange).
+ * 4. Concurrent intents: each `send()` registers an independent
+ *    `auth_req_id` intent. Multiple intents can be in flight at once;
+ *    inbound webhooks are routed to the matching intent by
+ *    `auth_req_id`, and each intent settles (or is cancelled)
+ *    independently without tearing down the transport.
  *
  * Optional cancellation: {@link Cancel} is exposed on the returned
  * transport for callers who need to abort an in-flight intent. Sends
@@ -67,6 +71,12 @@ import * as Uri from '../../internal/Uri.js'
 
 /** Information returned by `send()` once `/register` succeeds. */
 export type Registration = {
+  /**
+   * Opaque per-intent identifier minted by the host. Pass it to
+   * {@link WebhookCallback.cancel} to abort this specific in-flight
+   * intent while others continue.
+   */
+  authReqId: string
   /** Approval-window lifetime (seconds) advertised by the host. */
   expiresIn: number
   /** Retry-budget hint (seconds) advertised by the host. */
@@ -150,11 +160,13 @@ export type WebhookCallback<options = Options> = Transport.Transport<
 > &
   Http.Server & {
     /**
-     * RFC 9421-signed cancellation of the in-flight `auth_req_id`
-     * (no-op when no request is pending). Mirrors the spec's
+     * RFC 9421-signed cancellation. Pass an `authReqId` (from the
+     * {@link Registration} returned by `send()`) to abort that single
+     * in-flight intent; omit it to cancel every in-flight intent.
+     * No-op when no matching intent is pending. Mirrors the spec's
      * `DELETE <register_url>/<auth_req_id>` route.
      */
-    cancel: () => Promise<void>
+    cancel: (authReqId?: string) => Promise<void>
   }
 
 /**
@@ -214,24 +226,27 @@ export function webhookCallback<options extends Options>(
 
   const emitter = Events.create<Transport.EventMap>()
 
-  // Single-exchange state. `inFlight` guards concurrent `send()`
-  // calls; `closed` flips once the terminal response arrives.
+  // Multi-intent state. Each in-flight `send()` registers an intent
+  // keyed by its `auth_req_id`; concurrent sends are independent and
+  // settle (or cancel) one at a time. `closed` flips on teardown.
   type State = {
-    activeAuthReqId: string | undefined
-    activeHostPubkey: string | undefined
-    activeRegisterUrl: string | undefined
     closed: boolean
-    inFlight: boolean
     started: boolean
   }
   const state: State = {
-    activeAuthReqId: undefined,
-    activeHostPubkey: undefined,
-    activeRegisterUrl: undefined,
     closed: false,
-    inFlight: false,
     started: false,
   }
+  // Per-intent state needed to verify inbound deliveries (the host's
+  // pinned identity key) and to cancel (the resolved `register_url`).
+  type Intent = {
+    hostPubkey: string
+    registerUrl: string
+  }
+  // Active intents keyed by `auth_req_id`. An intent lives from a
+  // successful `/register` until its webhook delivery — or a
+  // `cancel()` — removes it.
+  const intents = new Map<string, Intent>()
 
   /** Host input (url or pre-parsed doc) from start ?? construction. */
   function resolveHostInput(): string | Discovery.HostDocument {
@@ -281,21 +296,6 @@ export function webhookCallback<options extends Options>(
         'host does not advertise a `webhook-callback` transport binding',
       )
     return binding.register_url
-  }
-
-  function settle(message: Envelope.Envelope | undefined, cause?: Error) {
-    if (state.closed) return
-    state.inFlight = false
-    state.closed = true
-    // Clear the active intent so any subsequent inbound webhook for
-    // the same `auth_req_id` is treated as a no-op (idempotent 200)
-    // rather than re-emitting `message`.
-    state.activeAuthReqId = undefined
-    state.activeHostPubkey = undefined
-    state.activeRegisterUrl = undefined
-    if (cause) emitter.emit('error', cause)
-    if (message) emitter.emit('message', message)
-    emitter.emit('close', cause)
   }
 
   const fetchWithTimeout = Fetch.withTimeout(fetchImpl, fetchTimeout)
@@ -425,11 +425,13 @@ export function webhookCallback<options extends Options>(
     if (codeValues[0] === data.auth_req_id)
       throw new Errors.ProtocolError('verification_uri code must not equal `auth_req_id`')
 
-    state.activeAuthReqId = data.auth_req_id
-    state.activeHostPubkey = hostDoc.identity_pubkey
-    state.activeRegisterUrl = registerUrl
+    intents.set(data.auth_req_id, {
+      hostPubkey: hostDoc.identity_pubkey,
+      registerUrl,
+    })
 
     return {
+      authReqId: data.auth_req_id,
       expiresIn: data.expires_in,
       retrySeconds: data.retry_seconds,
       verificationUri,
@@ -448,9 +450,10 @@ export function webhookCallback<options extends Options>(
     const request = c.req.raw
     const authReqId = request.headers.get('urpc-auth-req-id')
     if (!authReqId) return c.json({ error: 'missing `uRPC-Auth-Req-Id`' }, { status: 400 })
-    // §3.4.2 step 1: not the active intent → idempotent 200.
-    if (state.activeAuthReqId !== authReqId)
-      return c.json({ idempotent: true, ok: true }, { status: 200 })
+    // §3.4.2 step 1: no matching in-flight intent (unknown or already
+    // consumed / cancelled) → idempotent 200.
+    const intent = intents.get(authReqId)
+    if (!intent) return c.json({ idempotent: true, ok: true }, { status: 200 })
 
     const contentEncoding = request.headers.get('content-encoding')
     if (contentEncoding && contentEncoding.toLowerCase() !== 'identity')
@@ -460,9 +463,7 @@ export function webhookCallback<options extends Options>(
 
     const bodyText = await request.text()
     const declaredPubkey = request.headers.get('urpc-public-key')
-    const pinned = state.activeHostPubkey
-    if (!pinned)
-      return c.json({ error: 'webhook arrived before register completed' }, { status: 401 })
+    const pinned = intent.hostPubkey
     if (!declaredPubkey || !constantTimeEqual(declaredPubkey, pinned))
       return c.json(
         { error: 'uRPC-Public-Key does not match pinned host identity' },
@@ -548,18 +549,26 @@ export function webhookCallback<options extends Options>(
       return c.json({ error: 'expected `rpc-responses` envelope' }, { status: 400 })
 
     await store.set(dedupKey, true, { ttl: 86400 })
-    settle(envelope)
+    // Terminal for this intent: drop it so any later delivery for the
+    // same `auth_req_id` is an idempotent no-op, then surface the
+    // response to the wrapping session. Other intents keep running.
+    intents.delete(authReqId)
+    emitter.emit('message', envelope)
     return c.json({ ok: true }, { status: 200 })
   })
 
   const { fetch } = Http.fromHono(app)
 
-  async function cancel(): Promise<void> {
-    if (!state.activeAuthReqId) return
-    const authReqId = state.activeAuthReqId
-    const registerUrl =
-      state.activeRegisterUrl ?? resolveRegisterUrl(resolveWebhookBinding(await resolveHost()))
-    const url = `${registerUrl}/${encodeURIComponent(authReqId)}`
+  async function cancel(authReqId?: string): Promise<void> {
+    const targets =
+      authReqId !== undefined ? (intents.has(authReqId) ? [authReqId] : []) : [...intents.keys()]
+    for (const id of targets) await cancelIntent(id)
+  }
+
+  async function cancelIntent(authReqId: string): Promise<void> {
+    const intent = intents.get(authReqId)
+    if (!intent) return
+    const url = `${intent.registerUrl}/${encodeURIComponent(authReqId)}`
     const nonce = generateNonce()
     const created = Math.floor(Date.now() / 1000)
     const identity = getIdentity()
@@ -592,15 +601,20 @@ export function webhookCallback<options extends Options>(
         `webhook-callback cancel returned status ${response.status}: ${text}`,
       )
     }
-    settle(undefined, new Transport.ClosedError('webhook-callback cancelled'))
+    // Drop the intent so any in-flight webhook for it becomes an
+    // idempotent no-op. Other intents are untouched.
+    intents.delete(authReqId)
   }
 
   async function start(options: Pick<Options, 'host' | 'registerUrl'> = {}): Promise<void> {
-    if (state.closed) throw new Transport.ClosedError('webhook-callback transport already closed')
     start_options = options
     // Fail fast: surface a missing host at `start()` rather than waiting
     // for the first `send()` to fire the register request.
     resolveHostInput()
+    // Re-arm after a prior `close()` so the session handle can re-open
+    // (it drops the cached session on close and re-`start()`s the same
+    // transport instance — matching `relay`).
+    state.closed = false
     state.started = true
   }
 
@@ -620,11 +634,14 @@ export function webhookCallback<options extends Options>(
     },
     async close(cause) {
       if (state.closed) return
-      state.inFlight = false
       state.closed = true
+      state.started = false
+      // Abandon any in-flight intents; subsequent deliveries become
+      // idempotent no-ops.
+      intents.clear()
       emitter.emit('close', cause)
     },
-    exchange: 'single_exchange',
+    exchange: 'ongoing',
     fetch,
     name: 'webhookCallback',
     on: emitter.on,
@@ -635,21 +652,14 @@ export function webhookCallback<options extends Options>(
     routes: [webhookPath],
     async send(envelope) {
       if (state.closed) throw new Transport.ClosedError('webhook-callback transport already closed')
-      if (state.inFlight)
-        throw new Transport.TransportError(
-          'webhook-callback is single-exchange; a previous send is still in flight',
-        )
       if (!state.started) await start()
-      state.inFlight = true
-      const registration = await runRegister(envelope).catch((cause) => {
-        settle(undefined, cause as Error)
-        throw cause
-      })
-      // `send()` resolves with registration metadata once `/register`
-      // succeeds; the actual `rpc-responses` envelope arrives later
-      // via the webhook listener and is dispatched as a `'message'`
-      // event.
-      return registration
+      // Concurrent sends are independent: each registers its own
+      // `auth_req_id` intent. `send()` resolves with registration
+      // metadata once `/register` succeeds; the actual `rpc-responses`
+      // envelope arrives later via the webhook listener and is
+      // dispatched as a `'message'` event, routed to the matching
+      // intent.
+      return runRegister(envelope)
     },
     start,
   }
