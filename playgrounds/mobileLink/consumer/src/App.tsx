@@ -38,7 +38,7 @@ export default function App() {
   function start() {
     if (!startedRef.current)
       startedRef.current = consumer.mobileLink
-        .start({ host: hostOrigin, scheme: hostScheme })
+        .start({ host: hostOrigin, target: hostScheme })
         .then((session) => {
           sessionRef.current = session
           session.onClose((cause) => setLog(`closed${cause ? `: ${cause.message}` : ''}`))

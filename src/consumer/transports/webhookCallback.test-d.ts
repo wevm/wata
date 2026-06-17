@@ -106,7 +106,7 @@ describe('webhookCallback (consumer)', () => {
     expectTypeOf(transport.start({ host: 'https://other.example' })).toEqualTypeOf<Promise<void>>()
   })
 
-  test('registration omits consumer-facing correlation handles', () => {
-    expectTypeOf<WebhookCallback.Registration>().not.toHaveProperty('authReqId')
+  test('registration exposes the per-intent cancellation handle', () => {
+    expectTypeOf<WebhookCallback.Registration>().toHaveProperty('authReqId').toEqualTypeOf<string>()
   })
 })

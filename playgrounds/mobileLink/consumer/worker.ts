@@ -1,6 +1,6 @@
 import { Wata, mobileLink } from 'wata'
 
-import { consumerOrigin, consumerReturnUrl } from './src/config.js'
+import { consumerOrigin, consumerReturnUrl, hostOrigin } from './src/config.js'
 
 const consumer = Wata.create({
   baseUrl: consumerOrigin,
@@ -8,7 +8,7 @@ const consumer = Wata.create({
   transports: [mobileLink({ returnUrl: consumerReturnUrl })],
 })
 
-const started = consumer.mobileLink.start()
+const started = consumer.mobileLink.start({ host: hostOrigin })
 const fetch = consumer.fetch as never as typeof globalThis.fetch
 
 export default {
