@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, test } from 'vp/test'
 import { Wata, relay } from 'wata'
-import { Wata as HostWata, relay as hostRelay } from 'wata/host'
+import { Session, Wata as HostWata, relay as hostRelay } from 'wata/host'
 import { useSession } from 'wata/react'
 
 describe('useSession', () => {
@@ -50,5 +50,28 @@ describe('useSession', () => {
       },
       start: { uri: 'urpc://?consumer_pubkey=abc' },
     })
+  })
+
+  test('accepts a factory handle composing several sessions', () => {
+    const a = HostWata.create({ transports: [hostRelay({ receive: 'poll' })] })
+    const b = HostWata.create({ transports: [hostRelay({ receive: 'poll' })] })
+
+    type Result = ReturnType<
+      typeof useSession<
+        () => ReturnType<typeof Session.compose<[ReturnType<typeof a.relay.start>]>>
+      >
+    >
+
+    useSession(() => Session.compose([a.relay.start(), b.relay.start()]), {
+      onRequest: (event) => {
+        expectTypeOf(event.method).toEqualTypeOf<string>()
+        expectTypeOf(event.respond).toBeFunction()
+      },
+    })
+
+    // The composed session flows through as `session`.
+    expectTypeOf<Result['status']>().toEqualTypeOf<
+      'closed' | 'error' | 'idle' | 'open' | 'pending'
+    >()
   })
 })

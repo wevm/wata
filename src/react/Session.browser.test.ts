@@ -2,7 +2,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test } from 'vp/test'
 import { Wata, loopback } from 'wata'
-import { Wata as HostWata } from 'wata/host'
+import { Session, Wata as HostWata } from 'wata/host'
 import { useSession } from 'wata/react'
 
 // React's `act` requires this flag in a test environment.
@@ -107,6 +107,55 @@ describe('useSession', () => {
     expect(first).toBe(second)
 
     await harness.unmount()
+  })
+
+  test('composes multiple sessions into one via Session.compose', async () => {
+    const a = loopback()
+    const b = loopback()
+    const hostA = HostWata.create({ transports: [a.host] })
+    const hostB = HostWata.create({ transports: [b.host] })
+
+    const requests: { method: string }[] = []
+    type Result = ReturnType<typeof useSession>
+    let result: Result = undefined as never
+    function Harness() {
+      result = useSession(() => Session.compose([hostA.loopback.start(), hostB.loopback.start()]), {
+        onRequest: (event) => {
+          requests.push({ method: event.method })
+          void event.respond({ ok: true })
+        },
+      })
+      return null
+    }
+    const root = createRoot(document.createElement('div'))
+    await act(async () => {
+      root.render(createElement(Harness))
+    })
+    await act(async () => {
+      await result.start()
+    })
+    expect(result.status).toBe('open')
+
+    // A request arriving on either composed member reaches the one handler.
+    const consumerA = await Wata.create({ transports: [a.consumer] }).start()
+    const consumerB = await Wata.create({ transports: [b.consumer] }).start()
+    let sentA: unknown
+    let sentB: unknown
+    await act(async () => {
+      sentA = (await consumerA.send({ method: 'pingA', params: [] })).result
+      sentB = (await consumerB.send({ method: 'pingB', params: [] })).result
+    })
+
+    expect(requests).toEqual([{ method: 'pingA' }, { method: 'pingB' }])
+    expect(sentA).toEqual({ ok: true })
+    expect(sentB).toEqual({ ok: true })
+
+    await act(async () => {
+      await result.close()
+    })
+    expect(result.status).toBe('closed')
+
+    await act(async () => root.unmount())
   })
 
   test('host: onRequest fires and respond resolves the consumer send', async () => {
