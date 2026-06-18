@@ -528,6 +528,102 @@ describe('postMessage (consumer)', () => {
 
     await transport.close()
   })
+
+  test('connect: eager sends hello during start, before any outbound frame', async () => {
+    const { port1, port2 } = new MessageChannel()
+    const transport = postMessage_consumer({ connect: 'eager', target: () => port1 })
+
+    const seen: unknown[] = []
+    port2.addEventListener('message', (event) => {
+      seen.push(event.data)
+    })
+    port2.start()
+
+    // No `send` / `connect` throwaway — `start` itself must connect and hello.
+    await transport.start()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    const hello = seen[0] as { type: string; id: string }
+    expect({ count: seen.length, type: hello.type }).toMatchInlineSnapshot(`
+      {
+        "count": 1,
+        "type": "urpc.hello",
+      }
+    `)
+
+    await transport.close()
+  })
+
+  test('connect: eager receives a proactive host frame without an outbound request', async () => {
+    const { port1, port2 } = new MessageChannel()
+    const transport = postMessage_consumer({ connect: 'eager', target: () => port1 })
+
+    // Host readies as soon as it hears the consumer hello, then proactively
+    // pushes a notification — the consumer must receive it without ever
+    // sending an outbound request.
+    port2.addEventListener('message', (event) => {
+      const inbound = protocol.readFrame(event.data)
+      if (inbound && (inbound.frame as { type?: string }).type === protocol.consumerHello.type) {
+        port2.postMessage(protocol.withId(protocol.hostReady))
+        port2.postMessage(
+          protocol.withId(
+            Envelope.rpcRequests([
+              Rpc.notification({ method: 'accountsChanged', params: [['0xabc']] }),
+            ]),
+          ),
+        )
+      }
+    })
+    port2.start()
+
+    const received = new Promise<Envelope.Envelope>((resolve) => {
+      transport.on('message', (envelope) => resolve(envelope))
+    })
+
+    await transport.start()
+
+    expect(await received).toMatchInlineSnapshot(`
+      {
+        "payload": [
+          {
+            "jsonrpc": "2.0",
+            "method": "accountsChanged",
+            "params": [
+              [
+                "0xabc",
+              ],
+            ],
+          },
+        ],
+        "type": "rpc-requests",
+      }
+    `)
+
+    await transport.close()
+  })
+
+  test('connect: lazy (default) defers hello to the first outbound frame', async () => {
+    const { port1, port2 } = new MessageChannel()
+    const transport = postMessage_consumer({ target: () => port1 })
+
+    const seen: unknown[] = []
+    port2.addEventListener('message', (event) => {
+      seen.push(event.data)
+    })
+    port2.start()
+
+    // `start` alone must NOT connect for a lazy consumer — no hello yet.
+    await transport.start()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(seen.length).toMatchInlineSnapshot(`0`)
+
+    // The first outbound frame is what connects and sends hello.
+    await connect(transport)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect((seen[0] as { type: string }).type).toMatchInlineSnapshot(`"urpc.hello"`)
+
+    await transport.close()
+  })
 })
 
 const integrationSchema = Schema.create({

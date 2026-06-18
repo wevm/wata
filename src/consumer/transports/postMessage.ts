@@ -37,6 +37,10 @@
  *   transports: [
  *     postMessage({
  *       host: 'https://wallet.example/auth',
+ *       // The iframe needs no user gesture, so connect during `start()` —
+ *       // the handshake completes up front and proactive host notifications
+ *       // arrive without first sending a request.
+ *       connect: 'eager',
  *       target: ({ host }) => {
  *         const iframe = document.createElement('iframe')
  *         iframe.src = host
@@ -105,6 +109,20 @@ export type Options<target extends Target> = {
    */
   close?: ((handle: target) => void | Promise<void>) | undefined
   /**
+   * When to establish the connection (acquire the target, attach the
+   * inbound listener, send hello).
+   *
+   * - `'lazy'` (default) defers all of that to the first outbound frame
+   *   (`send` / `notify`), so the `target` callback runs inside the user
+   *   gesture that triggers the request — required for popups, which the
+   *   browser only opens (and Safari only sizes) from a gesture.
+   * - `'eager'` connects during `start()`. Use it when the target needs no
+   *   gesture (an iframe, an already-open window, a `MessagePort`) so the
+   *   handshake completes up front and proactive host notifications (e.g.
+   *   `accountsChanged`) arrive without first sending a request.
+   */
+  connect?: 'eager' | 'lazy' | undefined
+  /**
    * URL or origin of the host the consumer is connecting to. Drives
    * `postMessage`'s `targetOrigin` (inbound events whose `origin`
    * doesn't match are rejected) and is forwarded to `target` so the
@@ -141,7 +159,7 @@ export type Options<target extends Target> = {
  */
 export type StartOptions<target extends Target = Target> = Pick<
   Options<target>,
-  'close' | 'host' | 'target'
+  'close' | 'connect' | 'host' | 'target'
 >
 
 /** Minimal `Window`-shaped contract used internally. */
@@ -172,7 +190,7 @@ export function postMessage<const target extends Target = Target>(
   'postMessage',
   { meta: MessageMeta<target>; startOptions: StartOptions<target> }
 > {
-  const { close, host, source, target: acquire } = options
+  const { close, connect, host, source, target: acquire } = options
   return createSide({
     handshake: { expect: protocol.hostReady.type, send: protocol.consumerHello },
     resolve: (start?: StartOptions<target>) => {
@@ -184,6 +202,7 @@ export function postMessage<const target extends Target = Target>(
         )
       return {
         close: start?.close ?? close,
+        connect: start?.connect ?? connect,
         target: () => acquire_resolved({ host: host_resolved }),
         targetOrigin: host_resolved ? originFrom(host_resolved) : undefined,
       }
@@ -423,10 +442,14 @@ export function createSide<
       close_fn = resolved.close as ((handle: Target) => void | Promise<void>) | undefined
       acquire = resolved.target
       // The host responds to inbound traffic, so it acquires its target and
-      // attaches listeners now. The consumer initiates: it defers connection
+      // attaches listeners now. The consumer defaults to deferring connection
       // to the first outbound frame (see `connect` / `send`) so `start` never
-      // acquires a target — e.g. opens a popup — outside a user gesture.
-      if (role === 'host') await connect()
+      // acquires a target — e.g. opens a popup — outside a user gesture. A
+      // consumer whose target needs no gesture (an iframe, an already-open
+      // window, a MessagePort) can opt into `connect: 'eager'` so the
+      // handshake completes during `start` and proactive host notifications
+      // (e.g. `accountsChanged`) are received without an outbound request.
+      if (role === 'host' || resolved.connect === 'eager') await connect()
       state.started = true
     })()
     try {
@@ -517,6 +540,13 @@ export function createSide<
  */
 export type InternalOptions<target extends Target> = {
   close?: ((handle: target) => void | Promise<void>) | undefined
+  /**
+   * When the connection is established. `'eager'` acquires the target,
+   * attaches listeners, and sends hello during `start()`; `'lazy'`
+   * (default) defers all of that to the first outbound frame. The host
+   * always connects eagerly regardless of this value.
+   */
+  connect?: 'eager' | 'lazy' | undefined
   target: () => target | Promise<target>
   targetOrigin: string | undefined
 }
