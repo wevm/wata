@@ -64,7 +64,7 @@ describe('deviceCode (consumer)', () => {
   test('forces url at `wata.start` when the transport was built without one', () => {
     const wata = Wata.create({ transports: [deviceCode()] })
     expectTypeOf(wata.start({ url: 'https://wallet.example/auth/device' })).toEqualTypeOf<
-      Promise<Session.Session<undefined, (typeof wata.transports)[0]>>
+      Session.Session<undefined, (typeof wata.transports)[0]>
     >()
     // @ts-expect-error url is required when the transport was built without one
     wata.start()

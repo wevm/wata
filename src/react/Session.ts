@@ -179,8 +179,11 @@ function reducer(state: State, action: Action): State {
 export declare namespace useSession {
   /** Minimal shape the hook needs: anything with a `start()` factory. */
   type Handle = {
-    /** Open the session and resolve with it. */
-    start: (...args: never[]) => Promise<unknown>
+    /**
+     * Open the session. Consumer handles return the session synchronously;
+     * host handles resolve with it. `SessionOf` unwraps either via `Awaited`.
+     */
+    start: (...args: never[]) => unknown
   }
 
   /**

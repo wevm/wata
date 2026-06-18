@@ -414,6 +414,19 @@ export type StartFn<startOptions, startReturn> = [startOptions] extends [never]
     ? (options?: startOptions) => Promise<startReturn>
     : (options: startOptions) => Promise<startReturn>
 
+/**
+ * Synchronous counterpart of {@link StartFn}: same options
+ * required/optional discipline, but returns `startReturn` directly rather
+ * than wrapped in a `Promise`. Used by the consumer handle's `start`, which
+ * hands back the live session synchronously and connects in the background
+ * (await `session.ready` or subscribe to `'ready'` to observe the connect).
+ */
+export type SyncStartFn<startOptions, startReturn> = [startOptions] extends [never]
+  ? (options?: never) => startReturn
+  : {} extends startOptions
+    ? (options?: startOptions) => startReturn
+    : (options: startOptions) => startReturn
+
 /** Metadata emitted by a concrete transport. */
 export type MessageMetaOf<transport extends Any> =
   transport extends Transport<Role, string, { meta: infer meta extends MessageMeta }>

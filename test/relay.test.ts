@@ -28,14 +28,16 @@ describe('relay', () => {
       transports: [relay({ fetch: serverFetch(server), url: 'https://relay.test' })],
     })
 
-    // No `onPrompt` — read the pairing link straight off the session.
-    const session = await consumer.start()
+    // No `onPrompt` — read the pairing link straight off the session once
+    // it's ready (the prompt is produced as the transport starts).
+    const session = consumer.start()
+    await session.ready
     const { expiresAt, uri } = session.prompt!
     expect(uri).toMatch(/^urpc:\/\/\?consumer_pubkey=/)
     expect(typeof expiresAt).toBe('number')
 
     // A second `start()` is idempotent and returns the same session prompt.
-    const again = await consumer.start()
+    const again = consumer.start()
     expect(again.prompt?.uri).toBe(uri)
 
     await consumer.close()
