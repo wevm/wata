@@ -1,5 +1,5 @@
 ---
-"wata": minor
+"wata": patch
 ---
 
 Added a `connect` option to the consumer `postMessage` transport controlling when the connection (target acquisition, listener attach, hello) is established.
