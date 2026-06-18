@@ -14,15 +14,15 @@ export default function App() {
         title="Connect wallet"
         onPress={() => {
           setLog('Waiting for approval…')
-          wata
-            .start({
-              host: hostOrigin,
-              openAuthSession: async ({ authorizationUrl, callback }) => {
-                const result = await WebBrowser.openAuthSessionAsync(authorizationUrl, callback)
-                return result.type === 'success' ? result.url : undefined
-              },
-            })
-            .then((session) => session.send({ method: 'eth_requestAccounts', params: [] }))
+          const session = wata.start({
+            host: hostOrigin,
+            openAuthSession: async ({ authorizationUrl, callback }) => {
+              const result = await WebBrowser.openAuthSessionAsync(authorizationUrl, callback)
+              return result.type === 'success' ? result.url : undefined
+            },
+          })
+          session
+            .send({ method: 'eth_requestAccounts', params: [] })
             .then((response) => setLog(`Connected: ${JSON.stringify(response.result)}`))
             .catch((cause: Error) => setLog(`${cause.name}: ${cause.message}`))
         }}

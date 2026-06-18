@@ -85,7 +85,7 @@ describe('mobileWebAuth (consumer)', () => {
       ],
     })
     expectTypeOf(wata.start({ host: 'https://wallet.example' })).toEqualTypeOf<
-      Promise<Session.Session<undefined, (typeof wata.transports)[0]>>
+      Session.Session<undefined, (typeof wata.transports)[0]>
     >()
     // @ts-expect-error host is required when the transport was built without one
     wata.start()

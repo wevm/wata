@@ -52,10 +52,10 @@ describe('relay (consumer)', () => {
   test('forwards the target through a single-transport `wata.start` and resolves with the session', () => {
     const wata = Wata.create({ transports: [relay({ url: 'https://relay.example' })] })
     expectTypeOf(wata.start({ target: 'example-wallet' })).toEqualTypeOf<
-      Promise<Session.Session<undefined, (typeof wata.transports)[0]>>
+      Session.Session<undefined, (typeof wata.transports)[0]>
     >()
     expectTypeOf(wata.start()).toEqualTypeOf<
-      Promise<Session.Session<undefined, (typeof wata.transports)[0]>>
+      Session.Session<undefined, (typeof wata.transports)[0]>
     >()
   })
 
@@ -70,14 +70,14 @@ describe('relay (consumer)', () => {
       .parameter(0)
       .toEqualTypeOf<Relay.StartOptions<{ url: string }> | undefined>()
     expectTypeOf(wata.relay.start({ target: 'example-wallet' })).toEqualTypeOf<
-      Promise<Session.Session<undefined, (typeof wata.transports)[number]>>
+      Session.Session<undefined, (typeof wata.transports)[number]>
     >()
   })
 
   test('forces url at `wata.start` when the relay was built without one', () => {
     const wata = Wata.create({ transports: [relay()] })
     expectTypeOf(wata.start({ url: 'https://relay.example' })).toEqualTypeOf<
-      Promise<Session.Session<undefined, (typeof wata.transports)[0]>>
+      Session.Session<undefined, (typeof wata.transports)[0]>
     >()
     // @ts-expect-error url is required when the relay was built without one
     wata.start()

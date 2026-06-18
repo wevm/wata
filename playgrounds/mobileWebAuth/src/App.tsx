@@ -37,12 +37,10 @@ export default function App() {
           setLog('waiting for approval...')
           void consumer
             .start()
-            .then((session) =>
-              session.send({
-                method: 'ping',
-                params: [],
-              }),
-            )
+            .send({
+              method: 'ping',
+              params: [],
+            })
             .then((response) => setLog(JSON.stringify(response.result, undefined, 2)))
             .catch((cause: Error) => setLog(`${cause.name}: ${cause.message}`))
         }}

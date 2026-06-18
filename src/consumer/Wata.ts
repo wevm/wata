@@ -31,7 +31,14 @@ import * as Wellknown from '../core/Wellknown.js'
 import type * as Session from './Session.js'
 
 /** Consumer event names, used to derive the `onX` / `offX` surface. */
-const consumerEventNames = ['close', 'envelope', 'error', 'notification', 'prompt'] as const
+const consumerEventNames = [
+  'close',
+  'envelope',
+  'error',
+  'notification',
+  'prompt',
+  'ready',
+] as const
 
 /** Non-empty tuple of consumer transports accepted by {@link create}. */
 export type ConsumerTransports = readonly [
@@ -75,18 +82,21 @@ export type ConsumerHandle<
   context extends Rpc.RequestContext = Rpc.RequestContext,
 > = {
   /**
-   * Open the session for this transport and resolve with it. Idempotent
-   * while the session is active: repeat calls return the same session.
-   * Once the session closes, a fresh `start()` opens a new one.
+   * Open the session for this transport and return it synchronously. The
+   * transport handshake runs in the background — await `session.ready` or
+   * subscribe to the `'ready'` event to observe when it completes (and to
+   * surface connect failures). Idempotent while the session is active:
+   * repeat calls return the same session. Once the session closes, a fresh
+   * `start()` opens a new one.
    *
    * Forwards any start options the wrapped transport accepts (e.g. the
    * relay transport's `{ target, url }`). The options parameter follows
-   * {@link Transport.StartFn} — required when the transport defers a
+   * {@link Transport.SyncStartFn} — required when the transport defers a
    * mandatory value to start (e.g. a `relay()` built without a `url`),
    * optional otherwise. Passing options to an already-started handle
    * throws — close the session first to restart with new options.
    */
-  start: Transport.StartFn<
+  start: Transport.SyncStartFn<
     Transport.StartOptionsOf<transport>,
     Session.Session<schema, transport, context>
   >
@@ -201,7 +211,7 @@ export declare namespace Consumer {
  *   if (event.method === 'ping') await event.respond({ ok: true })
  * })
  *
- * const session = await Wata.create({ transports: [consumer] }).start()
+ * const session = Wata.create({ transports: [consumer] }).start()
  * const { result } = await session.send({ method: 'ping', params: [] })
  * ```
  */
@@ -293,7 +303,6 @@ function createConsumerHandle<
   const { context, schema, transport } = parameters
   type ConsumerSession = Session.Session<schema, transport, Session.RequestContextOf<context>>
   let active: ConsumerSession | undefined
-  let startPromise: Promise<ConsumerSession> | undefined
 
   return {
     async close(cause) {
@@ -305,22 +314,19 @@ function createConsumerHandle<
           throw new Errors.BaseError(
             `transport \`${transport.name}\` is already started; close the session before restarting with new options`,
           )
-        return Promise.resolve(active)
+        return active
       }
-      if (startPromise) return startPromise
-      startPromise = (async () => {
-        const { session, start } = createConsumerSession({ context, schema, transport })
-        // Drop the cached session on close so the next `start()` is fresh.
-        session.onClose(() => {
-          active = undefined
-        })
-        await start(options)
-        active = session
-        return session
-      })().finally(() => {
-        startPromise = undefined
+      const { session, start } = createConsumerSession({ context, schema, transport })
+      active = session
+      // Drop the cached session on close so the next `start()` is fresh.
+      session.onClose(() => {
+        active = undefined
       })
-      return startPromise
+      // Kick off the transport handshake in the background; failures surface
+      // via `session.ready`, the `'ready'`/`'error'` events, and the first
+      // `send()`/`notify()` rejection.
+      void start(options).catch(() => {})
+      return session
     },
   }
 }
@@ -366,6 +372,21 @@ function createConsumerSession<
     started: false,
   }
   let startPromise: Promise<void> | undefined
+  // Resolves once the transport has started; surfaced as `session.ready`
+  // and the `'ready'` event. `start` settles it on its first run; the
+  // internal `catch` keeps an unawaited `ready` from raising an unhandled
+  // rejection while still letting callers observe the failure.
+  let resolveReady!: () => void
+  let rejectReady!: (cause: Error) => void
+  const readyPromise = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve
+    rejectReady = reject
+  })
+  void readyPromise.catch(() => {})
+  // Tracks whether the transport has started so late `onReady` subscribers
+  // are notified immediately (the `'ready'` event fires during `start()`,
+  // before this session is handed to the caller).
+  let isReady = false
   // Most-recent pairing prompt, captured from the transport's `'prompt'`
   // event during `start()`. Exposed as `session.prompt` and replayed to
   // late `onPrompt` subscribers (the event fires before the session
@@ -569,6 +590,12 @@ function createConsumerSession<
           transport.start as (options?: Transport.StartOptionsOf<transport>) => Promise<unknown>
         )(options)
         state.started = true
+        isReady = true
+        resolveReady()
+        emitter.emit('ready', undefined)
+      } catch (cause) {
+        rejectReady(cause as Error)
+        throw cause
       } finally {
         startPromise = undefined
       }
@@ -611,9 +638,16 @@ function createConsumerSession<
         (listener as (payload: Session.ConsumerPromptEvent<transport>) => unknown)(lastPrompt)
       return subscribers.onPrompt(listener)
     },
+    onReady(listener) {
+      // Replay to late subscribers — `'ready'` fires during `start()`,
+      // before this session is handed to the caller.
+      if (isReady) (listener as () => unknown)()
+      return subscribers.onReady(listener)
+    },
     get prompt() {
       return lastPrompt
     },
+    ready: readyPromise,
     role: 'consumer',
     schema,
     async send(opts) {

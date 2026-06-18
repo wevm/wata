@@ -52,7 +52,7 @@ describe('useSession', () => {
     const wata = Wata.create({ transports: [consumer] })
 
     const notifications: unknown[] = []
-    type Result = ReturnType<typeof useSession>
+    type Result = ReturnType<typeof useSession<typeof wata>>
     let result: Result = undefined as never
     function Harness() {
       result = useSession(wata, { onNotification: (event) => notifications.push(event) })

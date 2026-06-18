@@ -81,6 +81,12 @@ export type ConsumerEventMap<
    * exact payload of the transport that produced it.
    */
   prompt: prompt
+  /**
+   * Emitted exactly once when the session's transport has started — the
+   * point the awaited {@link Session.ready} promise resolves. Fires after
+   * the connection is established for eager / connected transports.
+   */
+  ready: undefined
 }
 
 /**
@@ -133,6 +139,11 @@ export type ConsumerListeners<map extends Record<string, unknown>> = {
    */
   offPrompt: (listener: core_Session.Listener<map['prompt']>) => void
   /**
+   * Remove a previously subscribed `'ready'` listener (matched by
+   * reference).
+   */
+  offReady: (listener: core_Session.Listener<map['ready']>) => void
+  /**
    * Subscribe to the session closing, cleanly or with a cause. Fires
    * exactly once per session.
    */
@@ -160,6 +171,13 @@ export type ConsumerListeners<map extends Record<string, unknown>> = {
    * before the session handle is returned to the caller.
    */
   onPrompt: (listener: core_Session.Listener<map['prompt']>) => AbortController
+  /**
+   * Subscribe to the session becoming ready — its transport has started
+   * (connection established for eager / connected transports). Fires
+   * exactly once per session; mirrors the awaited {@link Session.ready}
+   * promise.
+   */
+  onReady: (listener: core_Session.Listener<map['ready']>) => AbortController
 }
 
 /**
@@ -188,6 +206,14 @@ type Core<
    * payload is also replayed to late `onPrompt` subscribers.
    */
   prompt: ConsumerPromptEvent<transport> | undefined
+  /**
+   * Resolves once the session's transport has started — the connection is
+   * established for eager / connected transports. Rejects if the start
+   * fails (e.g. a blocked popup). Await it when you need to surface the
+   * connect outcome or render a connecting state; `send` / `notify` already
+   * await it internally, so most callers can ignore it.
+   */
+  ready: Promise<void>
   /** Side of the protocol this wata speaks for. */
   role: 'consumer'
   /** Optional method-registry schema flowed through `send` / `notify`. */
