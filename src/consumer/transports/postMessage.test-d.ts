@@ -65,9 +65,17 @@ describe('postMessage (consumer)', () => {
     postMessage().start({ target: () => popupHandle })
   })
 
-  test('`StartOptions` is the deferrable subset (`close`, `host`, `target`)', () => {
+  test('`connect` accepts `eager` / `lazy`', () => {
+    postMessage({ connect: 'eager', host: 'https://wallet.example', target: () => popupHandle })
+    postMessage({ connect: 'lazy', host: 'https://wallet.example', target: () => popupHandle })
+    // @ts-expect-error only 'eager' | 'lazy' are valid
+    postMessage({ connect: 'whenever', target: () => popupHandle })
+  })
+
+  test('`StartOptions` is the deferrable subset (`close`, `connect`, `host`, `target`)', () => {
     expectTypeOf<PostMessage.StartOptions<Window>>().toEqualTypeOf<{
       close?: ((handle: Window) => void | Promise<void>) | undefined
+      connect?: 'eager' | 'lazy' | undefined
       host?: string | undefined
       target?: ((parameters: { host: string | undefined }) => Window | Promise<Window>) | undefined
     }>()
