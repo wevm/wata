@@ -70,20 +70,18 @@ const wata = Wata.create({
   ],
 })
 
-const ready = wata.start().then((session) => {
-  session.onRequest(async (event) => {
-    if (event.method === 'eth_requestAccounts') {
-      await event.respond(['0x0000000000000000000000000000000000000001'])
-      return
-    }
-    await event.reject({ code: -32601, message: `method not found: ${event.method}` })
-  })
-  return session
+const session = wata.start()
+session.onRequest(async (event) => {
+  if (event.method === 'eth_requestAccounts') {
+    await event.respond(['0x0000000000000000000000000000000000000001'])
+    return
+  }
+  await event.reject({ code: -32601, message: `method not found: ${event.method}` })
 })
 
 /** Web-standard fetch handler for the discovery + authorization routes. */
 export async function handler(request: Request): Promise<Response> {
-  await ready
+  await session.ready
   return wata.fetch(request)
 }
 

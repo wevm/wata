@@ -33,14 +33,13 @@ export default function App() {
     let onClose: AbortController | undefined
     let onError: AbortController | undefined
     let onRequest: AbortController | undefined
-    void host.mobileLink.start().then((session) => {
-      sessionRef.current = session
-      onClose = session.onClose((cause) => setLog(`closed${cause ? `: ${cause.message}` : ''}`))
-      onError = session.onError((cause) => setLog(`error: ${cause.name}: ${cause.message}`))
-      onRequest = session.onRequest((event) => {
-        setLog(`request: ${event.method} ${JSON.stringify(event.params)} — awaiting approval`)
-        setPending((queue) => [...queue, event])
-      })
+    const session = host.mobileLink.start()
+    sessionRef.current = session
+    onClose = session.onClose((cause) => setLog(`closed${cause ? `: ${cause.message}` : ''}`))
+    onError = session.onError((cause) => setLog(`error: ${cause.name}: ${cause.message}`))
+    onRequest = session.onRequest((event) => {
+      setLog(`request: ${event.method} ${JSON.stringify(event.params)} — awaiting approval`)
+      setPending((queue) => [...queue, event])
     })
     const subscription = Linking.addEventListener('url', ({ url }) => {
       void sessionRef.current?.handleUrl(url)

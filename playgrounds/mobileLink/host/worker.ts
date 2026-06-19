@@ -9,12 +9,12 @@ const host = Wata.create({
   transports: [mobileLink({ scheme: hostScheme })],
 })
 
-const started = host.mobileLink.start()
+const session = host.mobileLink.start()
 const fetch = host.fetch as never as typeof globalThis.fetch
 
 export default {
   async fetch(request: Request) {
-    await started
+    await session.ready
     return await fetch(request)
   },
 }
