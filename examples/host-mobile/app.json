@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "wata host-mobile",
+    "slug": "example-host-mobile",
+    "scheme": "com.wata.host",
+    "platforms": ["ios", "android"],
+    "ios": {
+      "bundleIdentifier": "com.wata.example.hostmobile"
+    }
+  }
+}

@@ -1,13 +1,14 @@
 {
-  "name": "example-relay",
+  "name": "example-directory",
   "private": true,
   "type": "module",
   "scripts": {
     "check:types": "tsc",
-    "dev": "node --import tsx src/relay.ts"
+    "dev": "node --import tsx src/directory.ts"
   },
   "dependencies": {
     "@hono/node-server": "latest",
+    "hono": "latest",
     "wata": "latest"
   },
   "devDependencies": {

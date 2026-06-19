@@ -25,13 +25,60 @@ bun i wata
 | `relay`           | Remote session over an untrusted HTTPS relay; the web consumer shows a QR/link, the mobile host scans it, exchanging end-to-end-encrypted bodies (SSE or long-poll). | Web ⇄ Mobile      |
 | `mobileLink`      | Direct, ongoing same-device session between two mobile apps over OS deep links                                                                                       | Mobile ⇄ Mobile   |
 
+## Examples
+
+The [`examples/`](./examples) are organized by **app type**. Each consumer
+**discovers** wallets from the [`directory`](./examples/directory), then picks a
+transport from what the selected wallet's `host.json` advertises — so a single
+consumer connects to either host without hardcoding it.
+
+| Consumer ↓ \ Host →                             | [`host-web`](./examples/host-web) | [`host-mobile`](./examples/host-mobile) |
+| ----------------------------------------------- | --------------------------------- | --------------------------------------- |
+| [`consumer-cli`](./examples/consumer-cli)       | `deviceCode`                      | `relay`                                 |
+| [`consumer-mobile`](./examples/consumer-mobile) | `mobileWebAuth`                   | `mobileLink`                            |
+| [`consumer-web`](./examples/consumer-web)       | `postMessage`                     | `relay`                                 |
+
+Shared services:
+
+- [`directory`](./examples/directory) — indexes the hosts so consumers can
+  discover them (`GET /v1/hosts`).
+- [`relay`](./examples/relay) — broker for the `relay` flows
+  (web/CLI consumer ⇄ mobile host).
+
+### Running them together
+
+From the repo root, one command brings up an example with its counterparts:
+
+```sh
+pnpm install
+
+pnpm example:web      # directory + relay + host-web + consumer-web → http://localhost:5183
+pnpm example:servers  # directory + relay + host-web (backend for consumer-cli)
+```
+
+Then, in another terminal:
+
+```sh
+pnpm --filter example-consumer-cli dev --wallet Web   # CLI consumer
+```
+
+To also list/reach the **mobile** wallet, additionally run its discovery worker
+and Expo apps (each in its own terminal):
+
+```sh
+pnpm --filter example-host-mobile dev:worker      # host.json on :8788
+pnpm --filter example-host-mobile dev             # the wallet (Expo)
+pnpm --filter example-consumer-mobile dev:worker  # consumer.json on :8789
+pnpm --filter example-consumer-mobile dev         # the app (Expo)
+```
+
 ## Usage
 
 ### `postMessage`
 
 Same-device browser session over a `Window`, `WindowProxy`, or `MessagePort`. The consumer supplies a `target` (popup, iframe, or channel port); the host defaults to its opener.
 
-[See example →](./examples/postMessage)
+[See example →](./examples/consumer-web) (consumer) · [host-web](./examples/host-web)
 
 #### Consumer
 
@@ -80,7 +127,7 @@ session.onRequest(async (c) => {
 
 Cross-device session over HTTP using the OAuth 2.0 Device Authorization Grant (RFC 8628) with PKCE. The consumer surfaces a short `user_code` to the user and polls until the host approves.
 
-[See example →](./examples/deviceCode)
+[See example →](./examples/consumer-cli) (consumer) · [host-web](./examples/host-web)
 
 #### Consumer
 
@@ -153,7 +200,7 @@ createServer(Server.node(wata).listener).listen(3000)
 
 Same-device mobile flow where the consumer opens the host's HTTPS authorization URL in a system-browser auth session, then receives an app-link / private-scheme callback carrying the encrypted response.
 
-[See example →](./examples/mobileWebAuth)
+[See example →](./examples/consumer-mobile) (consumer) · [host-web](./examples/host-web)
 
 #### Consumer
 
@@ -236,8 +283,6 @@ createServer(Server.node(wata).listener).listen(3000)
 ### `webhookCallback`
 
 Server-to-server session where the consumer registers a signed intent with the host, sends the user to a verification URL, then receives the signed JSON-RPC response at its webhook endpoint.
-
-[See example →](./examples/webhookCallback)
 
 #### Consumer
 
@@ -323,7 +368,7 @@ session.onRequest(async (event) => {
 
 Remote session between a web consumer and a mobile host, brokered by an untrusted HTTPS relay. The consumer issues a pairing link (typically shown as a QR code); the mobile host scans it and connects. All bodies are end-to-end encrypted, so the relay only forwards opaque ciphertext. Receivers default to SSE and can fall back to long-poll with `receive: 'poll'`.
 
-[See example →](./examples/relay)
+[See example →](./examples/consumer-web) (consumer) · [host-mobile](./examples/host-mobile) · [relay](./examples/relay)
 
 #### Consumer
 
@@ -380,7 +425,7 @@ createServer(Server.node(relay).listener).listen(8787)
 
 Direct, ongoing same-device session between two mobile apps over OS deep links. Feed OS-routed callbacks back in via `session.handleUrl(url)`.
 
-[See example →](./playgrounds/mobileLink)
+[See example →](./examples/consumer-mobile) (consumer) · [host-mobile](./examples/host-mobile)
 
 #### Consumer
 

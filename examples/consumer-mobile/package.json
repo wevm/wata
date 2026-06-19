@@ -1,0 +1,27 @@
+{
+  "name": "example-consumer-mobile",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "scripts": {
+    "check:types": "tsc && tsc -p tsconfig.worker.json",
+    "dev": "expo start --port 8082",
+    "dev:worker": "wrangler dev"
+  },
+  "dependencies": {
+    "expo": "latest",
+    "expo-crypto": "~56.0.4",
+    "expo-dev-client": "latest",
+    "expo-linking": "latest",
+    "expo-web-browser": "latest",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "wata": "latest"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "@types/react": "latest",
+    "typescript": "latest",
+    "wrangler": "latest"
+  }
+}

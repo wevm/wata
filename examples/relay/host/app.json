@@ -1,7 +1,0 @@
-{
-  "expo": {
-    "name": "relay example",
-    "platforms": ["ios", "android"],
-    "slug": "example-relay-host"
-  }
-}

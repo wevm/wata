@@ -6,6 +6,8 @@
     "check": "vp lint --fix --ignore-pattern package.json && vp fmt src test examples playgrounds",
     "check:types": "tsc -b && pnpm -r --filter=!wata check:types",
     "dev": "zile dev",
+    "example:servers": "pnpm --parallel --filter example-directory --filter example-relay --filter example-host-web dev",
+    "example:web": "pnpm --parallel --filter example-directory --filter example-relay --filter example-host-web --filter example-consumer-web dev",
     "test": "vp test",
     "test:browser": "vp test --project browser",
     "test:node": "vp test --project node",

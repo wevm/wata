@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "wata consumer-mobile",
+    "slug": "example-consumer-mobile",
+    "scheme": "com.wata.consumer",
+    "platforms": ["ios", "android"],
+    "ios": {
+      "bundleIdentifier": "com.wata.example.consumermobile"
+    }
+  }
+}

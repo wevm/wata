@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wata Web Wallet — host-web</title>
+  </head>
+  <body>
+    <main>
+      <h1>Wata Web Wallet</h1>
+      <p>This is the web host for the wata examples. It speaks three transports:</p>
+      <ul>
+        <li>
+          <code>deviceCode</code> at <code>/auth/device</code> — for
+          <code>consumer-cli</code>
+        </li>
+        <li>
+          <code>mobileWebAuth</code> at <code>/auth/mobile</code> — for <code>consumer-mobile</code>
+        </li>
+        <li>
+          <code>postMessage</code> via <a href="/host.html">/host.html</a> — for
+          <code>consumer-web</code>
+        </li>
+      </ul>
+      <p>Discovery: <code>/.well-known/urpc/host.json</code></p>
+    </main>
+  </body>
+</html>

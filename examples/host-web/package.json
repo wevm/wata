@@ -1,0 +1,22 @@
+{
+  "name": "example-host-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check:types": "tsc",
+    "dev": "vite dev",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "hono": "latest",
+    "wata": "latest"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "latest",
+    "@cloudflare/workers-types": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "wrangler": "latest"
+  }
+}

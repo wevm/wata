@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "esnext",
+    "lib": ["esnext"],
+    "types": ["@cloudflare/workers-types"],
+    "noEmit": true,
+    "paths": {},
+
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["worker.ts", "src/config.ts"]
+}

@@ -47,6 +47,7 @@ import * as protocol from '../../consumer/transports/internal/protocol.js'
 import * as ConsumerPostMessage from '../../consumer/transports/postMessage.js'
 import * as Errors from '../../core/Errors.js'
 import * as Transport from '../../core/Transport.js'
+import * as Uri from '../../internal/Uri.js'
 
 /**
  * Options accepted by the host-side {@link postMessage}. `target`
@@ -84,6 +85,15 @@ export type Options<target extends ConsumerPostMessage.Target = Window> = {
    * defer it to `start({ targetOrigin })`.
    */
   targetOrigin?: string | undefined
+  /**
+   * URL of the host page a consumer loads as the embedded host browsing
+   * context (popup / iframe). Published in `host.json` as the `window`
+   * transport binding so a directory consumer can discover that this
+   * origin speaks `postMessage`. Accepts an absolute URL or a path
+   * resolved against the wrapping `Wata.create({ baseUrl })`; defaults to
+   * `baseUrl` (the origin root) when omitted.
+   */
+  url?: string | undefined
 }
 
 /**
@@ -120,7 +130,7 @@ export function postMessage<const target extends ConsumerPostMessage.Target = Wi
   'postMessage',
   { meta: ConsumerPostMessage.MessageMeta<target>; startOptions: StartOptions<target> }
 > {
-  const { close, source, target, targetOrigin } = options
+  const { close, source, target, targetOrigin, url } = options
   const defaultTarget = (() => {
     const peer = window.opener ?? (window.parent !== window ? window.parent : undefined)
     if (!peer)
@@ -131,6 +141,12 @@ export function postMessage<const target extends ConsumerPostMessage.Target = Wi
   }) as () => target | Promise<target>
 
   return ConsumerPostMessage.createSide({
+    discovery: {
+      binding(baseUrl) {
+        return { url: resolveUrl(baseUrl, url) }
+      },
+      id: 'window',
+    },
     handshake: { expect: protocol.consumerHello.type, send: protocol.hostReady },
     resolve: (start?: StartOptions<target>) => ({
       close: start?.close ?? close,
@@ -140,6 +156,13 @@ export function postMessage<const target extends ConsumerPostMessage.Target = Wi
     role: 'host',
     source,
   })
+}
+
+/** Resolve the host-page `url` (absolute or path) against `baseUrl`. */
+function resolveUrl(baseUrl: string, url: string | undefined): string {
+  if (!url) return baseUrl
+  if (/^https?:\/\//.test(url)) return url
+  return `${Uri.trimTrailingSlash(baseUrl)}${url.startsWith('/') ? url : `/${url}`}`
 }
 
 /**

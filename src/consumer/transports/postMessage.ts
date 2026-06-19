@@ -244,7 +244,7 @@ export function createSide<
   'postMessage',
   { meta: MessageMeta<target>; startOptions: startOptions }
 > {
-  const { handshake, resolve, role, source: source_option } = parameters
+  const { discovery, handshake, resolve, role, source: source_option } = parameters
   const source = source_option ?? (globalThis as { window?: WindowLike }).window
 
   // Resolved per-start: the effective `targetOrigin` / `close` for the
@@ -509,6 +509,7 @@ export function createSide<
         emitClose(cause)
       }
     },
+    ...(discovery ? { discovery } : {}),
     exchange: 'ongoing',
     name: 'postMessage',
     on: emitter.on,
@@ -554,6 +555,12 @@ export type InternalOptions<target extends Target> = {
 export declare namespace createSide {
   /** Parameters for {@link createSide}. */
   type Options<role extends 'consumer' | 'host', target extends Target, startOptions> = {
+    /**
+     * Optional discovery contribution. The host side passes a `window`
+     * binding so the published `host.json` advertises that this origin
+     * speaks `postMessage`; the consumer side omits it.
+     */
+    discovery?: Transport.DiscoveryBinding | undefined
     /** Outbound control frame and the inbound frame type to wait for. */
     handshake: { expect: protocol.WireFrame['type']; send: protocol.WireFrame }
     /**
