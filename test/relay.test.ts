@@ -243,9 +243,9 @@ describe('relay', () => {
     const host = HostWata.create({
       transports: [hostRelay({ fetch: serverFetch(server) })],
     })
-    const started = host.relay.start() // waits for a pairing uri
+    const started = host.relay.start() // pairing handshake runs in the background
     await host.close()
-    await expect(started).rejects.toThrow()
+    await expect(started.ready).rejects.toThrow()
   })
 })
 

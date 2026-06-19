@@ -81,12 +81,6 @@ export type ConsumerEventMap<
    * exact payload of the transport that produced it.
    */
   prompt: prompt
-  /**
-   * Emitted exactly once when the session's transport has started — the
-   * point the awaited {@link Session.ready} promise resolves. Fires after
-   * the connection is established for eager / connected transports.
-   */
-  ready: undefined
 }
 
 /**

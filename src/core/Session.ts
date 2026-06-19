@@ -99,6 +99,12 @@ export type LifecycleEventMap<
   ]
   /** Emitted when the transport surfaces an error (network, parse, AEAD). */
   error: Error
+  /**
+   * Emitted exactly once when the session's transport has started — the
+   * point the awaited {@link ready} promise resolves. Fires after the
+   * connection is established for eager / connected transports.
+   */
+  ready: undefined
 }
 
 /** Request context value inferred from an optional Wata-wide context schema. */
