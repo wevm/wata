@@ -1,4 +1,5 @@
 allowBuilds:
+  '@reown/appkit': false
   esbuild: true
   msgpackr-extract: false
   sharp: true
@@ -18,6 +19,7 @@ catalog:
   react: ^19.0.0
   react-dom: ^19.0.0
   '@vitest/coverage-v8': 4.1.5
+  '@walletconnect/ethereum-provider': ^2.23.9
   ox: ~0.14.20
   playwright: ^1.60.0
   typescript: ^5.9.3
@@ -29,6 +31,8 @@ minimumReleaseAge: 1440
 
 overrides:
   wata: workspace:*
+  # cuer passes `border: 0` (raw grid; it draws its own quiet zone); qr@0.6 rejects it.
+  cuer>qr: 0.5.5
 
 minimumReleaseAgeExclude:
   - regen-ui
@@ -51,5 +55,8 @@ strictDepBuilds: true
 trustPolicy: no-downgrade
 
 trustPolicyExclude:
+  - '@noble/curves'
+  - '@noble/hashes'
   - reselect
   - semver
+  - slow-redact

@@ -3,6 +3,7 @@
 export * as Aad from './core/Aad.js'
 export * as Aead from './core/Aead.js'
 export * as Crypto from './core/Crypto.js'
+export * as Directory from './core/Directory.js'
 export * as Discovery from './core/Discovery.js'
 export * as Envelope from './core/Envelope.js'
 export * as Errors from './core/Errors.js'

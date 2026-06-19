@@ -30,7 +30,8 @@
       "wata/host/transports/webhookCallback": ["./src/host/transports/webhookCallback.ts"],
       "wata/identity": ["./src/identity.ts"],
       "wata/internal/Outbound": ["./src/internal/Outbound.ts"],
-      "wata/server": ["./src/server/index.ts"]
+      "wata/server": ["./src/server/index.ts"],
+      "wata/walletConnect": ["./src/walletConnect/index.ts"]
     },
     "types": ["node"],
 

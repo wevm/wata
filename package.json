@@ -17,6 +17,7 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitest/coverage-v8": "catalog:",
+    "@walletconnect/ethereum-provider": "catalog:",
     "playwright": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
@@ -44,10 +45,14 @@
     "zod": "catalog:"
   },
   "peerDependencies": {
+    "@walletconnect/ethereum-provider": ">=2",
     "expo-crypto": "*",
     "react": ">=18"
   },
   "peerDependenciesMeta": {
+    "@walletconnect/ethereum-provider": {
+      "optional": true
+    },
     "expo-crypto": {
       "optional": true
     },
@@ -188,6 +193,12 @@
       "src": "./src/server/index.ts",
       "react-native": "./dist/server/index.js",
       "default": "./dist/server/index.js"
+    },
+    "./walletConnect": {
+      "types": "./dist/walletConnect/index.d.ts",
+      "src": "./src/walletConnect/index.ts",
+      "react-native": "./dist/walletConnect/index.js",
+      "default": "./dist/walletConnect/index.js"
     }
   }
 }

@@ -20,7 +20,7 @@
  *
  * The pairing link's target can be chosen at construction
  * (`relay({ target })`) or per call (`wata.relay.start({ target })`),
- * defaulting to the shared `urpc://` scheme — direct a freshly built
+ * defaulting to the shared `urpc://` scheme -- direct a freshly built
  * link at a wallet selected out of band (a wallet modal or deep link)
  * without rendering a QR code at all.
  *

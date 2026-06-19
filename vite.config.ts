@@ -8,6 +8,7 @@ export default defineConfig({
       'wata/host': path.resolve(import.meta.dirname, 'src/host/index.ts'),
       'wata/react': path.resolve(import.meta.dirname, 'src/react/index.ts'),
       'wata/server': path.resolve(import.meta.dirname, 'src/server/index.ts'),
+      'wata/walletConnect': path.resolve(import.meta.dirname, 'src/walletConnect/index.ts'),
       wata: path.resolve(import.meta.dirname, 'src'),
     },
     dedupe: ['vp'],
