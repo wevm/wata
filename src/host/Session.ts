@@ -276,6 +276,11 @@ export type HostListeners<map extends Record<string, unknown>> = {
    */
   offNotification: (listener: core_Session.Listener<map['notification']>) => void
   /**
+   * Remove a previously subscribed `'ready'` listener (matched by
+   * reference).
+   */
+  offReady: (listener: core_Session.Listener<map['ready']>) => void
+  /**
    * Subscribe to the session closing, cleanly or with a cause. Fires
    * exactly once per session.
    */
@@ -295,6 +300,12 @@ export type HostListeners<map extends Record<string, unknown>> = {
    * Subscribe to inbound JSON-RPC notifications from the consumer.
    */
   onNotification: (listener: core_Session.Listener<map['notification']>) => AbortController
+  /**
+   * Subscribe to the session becoming ready — its transport has started
+   * (connection established for connected transports). Fires exactly once
+   * per session; mirrors the awaited {@link Session.ready} promise.
+   */
+  onReady: (listener: core_Session.Listener<map['ready']>) => AbortController
 }
 
 /** A started session or a still-pending `start()` promise. */
@@ -359,6 +370,13 @@ type Core<
    * @param result - Success `result` payload to send.
    */
   respond: <result = unknown>(id: Rpc.Id, result: result) => Promise<void>
+  /**
+   * Resolves once the session's transport has started — the connection is
+   * established for connected transports. Rejects if the start fails. Await
+   * it when you need to surface the start outcome; the request/notification
+   * surface already operates once the transport is live.
+   */
+  ready: Promise<void>
   /** Side of the protocol this wata speaks for. */
   role: 'host'
   /** Optional method-registry schema flowed through `'request'` / `'notification'` events. */

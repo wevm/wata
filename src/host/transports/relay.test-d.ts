@@ -37,7 +37,7 @@ describe('relay (host)', () => {
       .parameter(0)
       .toEqualTypeOf<Relay.relay.StartOptions | undefined>()
     expectTypeOf(wata.relay.start({ uri: uri })).toEqualTypeOf<
-      Promise<Session.Session<undefined, (typeof wata.transports)[0]>>
+      Session.Session<undefined, (typeof wata.transports)[0]>
     >()
   })
 

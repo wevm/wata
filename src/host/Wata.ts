@@ -35,7 +35,7 @@ export type HostTransport = Transport.Transport<
  * `offX` surface. `'request'` is handled separately by
  * {@link Host.onRequest} (method overloads + return-to-answer).
  */
-const hostEventNames = ['close', 'envelope', 'error', 'notification'] as const
+const hostEventNames = ['close', 'envelope', 'error', 'notification', 'ready'] as const
 
 /** Metadata delivered to host request and notification listeners. */
 export type HostEventMeta<transport extends HostTransport = HostTransport> =
@@ -59,18 +59,21 @@ export type HostHandle<
   context extends Rpc.RequestContext = Rpc.RequestContext,
 > = {
   /**
-   * Open the session for this transport and resolve with it. Idempotent
-   * while the session is active: repeat calls return the same session.
-   * Once the session closes, a fresh `start()` opens a new one.
+   * Open the session for this transport and return it synchronously. The
+   * transport handshake runs in the background — await `session.ready` or
+   * subscribe to the `'ready'` event to observe when it completes (and to
+   * surface start failures). Idempotent while the session is active: repeat
+   * calls return the same session. Once the session closes, a fresh
+   * `start()` opens a new one.
    *
    * Forwards any start options the wrapped transport accepts (e.g. the
    * relay transport's `{ uri }`). The options parameter follows
-   * {@link Transport.StartFn} — required when the transport defers a
+   * {@link Transport.SyncStartFn} — required when the transport defers a
    * mandatory value to start, optional otherwise. Passing options to an
    * already-started handle throws — close the session first to restart
    * with new options.
    */
-  start: Transport.StartFn<
+  start: Transport.SyncStartFn<
     Transport.StartOptionsOf<transport>,
     Session.Session<schema, transport, context>
   >
@@ -309,7 +312,6 @@ function createHostHandle<
   const { context, schema, transport } = parameters
   type HostSession = Session.Session<schema, transport, core_Session.RequestContextOf<context>>
   let active: HostSession | undefined
-  let startPromise: Promise<HostSession> | undefined
 
   return {
     async close(cause) {
@@ -321,30 +323,23 @@ function createHostHandle<
           throw new Errors.BaseError(
             `transport \`${transport.name}\` is already started; close the session before restarting with new options`,
           )
-        return Promise.resolve(active)
+        return active
       }
-      if (startPromise) return startPromise
-      startPromise = (async () => {
-        const { session, start } = createHostSession({ context, schema, transport })
-        // Drop the cached session on close so the next `start()` is fresh.
-        session.onClose(() => {
-          active = undefined
-        })
-        // Cache eagerly so `handle.close()` can tear down a pending start
-        // (e.g. a relay host blocked on pairing). A failed start emits no
-        // `close`, so clear the cache here to avoid stranding a dead session.
-        active = session
-        try {
-          await start(options)
-        } catch (error) {
-          active = undefined
-          throw error
-        }
-        return session
-      })().finally(() => {
-        startPromise = undefined
+      const { session, start } = createHostSession({ context, schema, transport })
+      active = session
+      // Drop the cached session on close so the next `start()` is fresh.
+      session.onClose(() => {
+        active = undefined
       })
-      return startPromise
+      // Kick off the transport handshake in the background; failures surface
+      // via `session.ready`, the `'ready'`/`'error'` events, and (for a
+      // relay host blocked on pairing) `handle.close()` can tear down the
+      // pending start. A failed start emits no `close`, so clear the cache
+      // here to avoid stranding a dead session.
+      void start(options).catch(() => {
+        active = undefined
+      })
+      return session
     },
   }
 }
@@ -423,6 +418,21 @@ function createHostSession<
   type State = { phase: 'pre-key' | 'keyed'; started: boolean }
   const state: State = { phase: 'pre-key', started: false }
   let startPromise: Promise<void> | undefined
+  // Resolves once the transport has started; surfaced as `session.ready`
+  // and the `'ready'` event. `start` settles it on its first run; the
+  // internal `catch` keeps an unawaited `ready` from raising an unhandled
+  // rejection while still letting callers observe the failure.
+  let resolveReady!: () => void
+  let rejectReady!: (cause: Error) => void
+  const readyPromise = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve
+    rejectReady = reject
+  })
+  void readyPromise.catch(() => {})
+  // Tracks whether the transport has started so late `onReady` subscribers
+  // are notified immediately (the `'ready'` event fires during `start()`,
+  // before this session is handed to the caller).
+  let isReady = false
   const invalid_context = Symbol('invalid context')
   const pending = new Map<Rpc.Id, Rpc.Request>()
 
@@ -482,6 +492,12 @@ function createHostSession<
           transport.start as (options?: Transport.StartOptionsOf<transport>) => Promise<unknown>
         )(options)
         state.started = true
+        isReady = true
+        resolveReady()
+        emitter.emit('ready', undefined)
+      } catch (cause) {
+        rejectReady(cause as Error)
+        throw cause
       } finally {
         startPromise = undefined
       }
@@ -810,6 +826,13 @@ function createHostSession<
       )
       return controller
     },
+    onReady(listener) {
+      // Replay to late subscribers — `'ready'` fires during `start()`,
+      // before this session is handed to the caller.
+      if (isReady) (listener as () => unknown)()
+      return subscribers.onReady(listener)
+    },
+    ready: readyPromise,
     reject,
     respond,
     role: 'host',

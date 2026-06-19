@@ -68,7 +68,7 @@ const wata = Wata.create({
   transports: [postMessage()],
 })
 
-const session = await wata.start()
+const session = wata.start()
 
 session.onRequest(async (c) => {
   if (c.method === 'wallet_connect')
@@ -139,7 +139,7 @@ const wata = Wata.create({
     }),
   ],
 })
-const session = await wata.start()
+const session = wata.start()
 
 session.onRequest(async (c) => {
   if (c.method === 'wallet_connect')
@@ -223,7 +223,7 @@ const wata = Wata.create({
   ],
 })
 
-const session = await wata.start()
+const session = wata.start()
 
 session.onRequest(async (event) => {
   if (event.method === 'wallet_connect')
@@ -311,7 +311,7 @@ const wata = Wata.create({
     }),
   ],
 })
-const session = await wata.start()
+const session = wata.start()
 
 session.onRequest(async (event) => {
   if (event.method === 'wallet_connect')
@@ -359,7 +359,7 @@ const wata = Wata.create({
 })
 
 // Start the session with the scanned/pasted pairing uri.
-const session = await wata.start({ uri })
+const session = wata.start({ uri })
 
 session.onRequest((event) => event.respond('pong'))
 ```
@@ -431,7 +431,7 @@ const wata = Wata.create({
     }),
   ],
 })
-const session = await wata.start()
+const session = wata.start()
 
 session.onRequest(async (event) => {
   if (event.method === 'wallet_connect')

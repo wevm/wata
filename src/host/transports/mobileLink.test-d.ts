@@ -11,10 +11,10 @@ describe('mobileLink (host)', () => {
     expectTypeOf(transport).toMatchTypeOf<Transport.Transport<'host', 'mobileLink'>>()
   })
 
-  test('feeds Wata.create as a host transport', async () => {
+  test('feeds Wata.create as a host transport', () => {
     const transport = mobileLink({ openLink: () => {}, scheme: 'examplewallet' })
     const wata = Wata.create({ transports: [transport] })
-    const session = await wata.mobileLink.start()
+    const session = wata.mobileLink.start()
     expectTypeOf(wata.role).toEqualTypeOf<'host'>()
     expectTypeOf(wata.mobileLink).toEqualTypeOf<Pick<typeof wata.mobileLink, 'start'>>()
     // handleUrl lives on the started session, not the handle.
