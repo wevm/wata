@@ -1,5 +1,11 @@
 # wata
 
+## 0.4.1
+
+### Patch Changes
+
+- e922518: Kept device-code polling active while an approved response was being persisted.
+
 ## 0.4.0
 
 ### Minor Changes
