@@ -158,6 +158,117 @@ describe('wata-device-code', () => {
     `)
   })
 
+  test('`/token` stays pending while an approved response is being persisted', async () => {
+    const backing = Store.memory()
+    const responseWrite = Promise.withResolvers<void>()
+    const resumeWrite = Promise.withResolvers<void>()
+    const store = Store.from({
+      delete: (key: string) => backing.delete(key),
+      async get<value = unknown>(key: string) {
+        const value = await backing.get<value>(key)
+        return value === undefined ? undefined : structuredClone(value)
+      },
+      async set(key: string, value: unknown, options?: { ttl?: number | undefined }) {
+        if (
+          key.startsWith('device:') &&
+          value !== null &&
+          typeof value === 'object' &&
+          'response' in value
+        ) {
+          responseWrite.resolve()
+          await resumeWrite.promise
+        }
+        await backing.set(key, structuredClone(value), options)
+      },
+    })
+    const baseUrl = 'https://wallet.example/auth/device'
+    const host = hostDeviceCode({
+      baseUrl: 'https://wallet.example',
+      html: {
+        authenticate: async ({ actions, request }) => {
+          const form = await request.formData()
+          await actions.approve(String(form.get('user_code') ?? ''))
+          return new Response('ok')
+        },
+        render: () => new Response('ok'),
+      },
+      path: '/auth/device',
+      pollingInterval: 1,
+      store,
+    })
+    const hostSession = await HostWata.create({ transports: [host] }).start()
+    const response = Promise.withResolvers<void>()
+    hostSession.onRequest((event) => {
+      if (event.method === 'ping')
+        void event.respond({ ok: true }).then(response.resolve, response.reject)
+    })
+    const verifier = 'test-device-code-verifier-0123456789'
+    const registerResponse = await host.fetch(
+      new Request(`${baseUrl}/register`, {
+        body: JSON.stringify({
+          code_challenge: HostDeviceCode.pkceChallenge(verifier),
+          code_challenge_method: 'S256',
+          message: Envelope.rpcRequests([{ id: 1, jsonrpc: '2.0', method: 'ping', params: [] }]),
+        }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      }),
+    )
+    const registered = (await registerResponse.json()) as {
+      device_code: string
+      user_code: string
+    }
+    const form = new FormData()
+    form.set('user_code', registered.user_code)
+    const verification = host.fetch(
+      new Request(`${baseUrl}/verify`, { body: form, method: 'POST' }),
+    )
+    await responseWrite.promise
+
+    try {
+      const pending = await pollToken(host, baseUrl, {
+        code_verifier: verifier,
+        device_code: registered.device_code,
+        grant_type: grantType,
+      })
+      expect({ body: await pending.json(), status: pending.status }).toMatchInlineSnapshot(`
+        {
+          "body": {
+            "error": "authorization_pending",
+          },
+          "status": 400,
+        }
+      `)
+    } finally {
+      resumeWrite.resolve()
+    }
+
+    await response.promise
+    await expect(verification.then((response) => response.status)).resolves.toBe(200)
+    const completed = await pollToken(host, baseUrl, {
+      code_verifier: verifier,
+      device_code: registered.device_code,
+      grant_type: grantType,
+    })
+    expect({ body: await completed.json(), status: completed.status }).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "payload": [
+            {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "result": {
+                "ok": true,
+              },
+            },
+          ],
+          "type": "rpc-responses",
+        },
+        "status": 200,
+      }
+    `)
+  })
+
   test('url deferred to `start({ url })` drives the exchange', async () => {
     const { approve, baseUrl, fetch: fetchImpl, host } = pair()
     // url omitted at construction — supplied at start instead.

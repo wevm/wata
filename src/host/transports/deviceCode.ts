@@ -548,11 +548,9 @@ export function deviceCode(options: Options): DeviceCode {
       return c.json({ error: 'access_denied' }, { status: 400 })
     if (record.status === 'expired') return c.json({ error: 'expired_token' }, { status: 400 })
 
-    if (!record.response)
-      return c.json(
-        { error: 'server_error', error_description: 'approved but no response queued' },
-        { status: 500 },
-      )
+    // Approval dispatch is asynchronous, so approved status can become visible
+    // before the response write finishes.
+    if (!record.response) return c.json({ error: 'authorization_pending' }, { status: 400 })
 
     // Terminal: deliver the response, clean up the record. Subsequent
     // `transport.send()` rejects with `ClosedError` because the host
