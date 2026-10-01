@@ -25,11 +25,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            src/**/*.tsbuildinfo
-            test/**/*.tsbuildinfo
-            examples/**/*.tsbuildinfo
-            playgrounds/**/*.tsbuildinfo
-            !**/node_modules/**
+            src/*.tsbuildinfo
+            test/*.tsbuildinfo
+            examples/*/*.tsbuildinfo
+            examples/*/*/*.tsbuildinfo
+            playgrounds/*/*.tsbuildinfo
+            playgrounds/*/*/*.tsbuildinfo
           key: typescript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
             typescript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-
