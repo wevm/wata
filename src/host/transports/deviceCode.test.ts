@@ -1704,3 +1704,203 @@ describe('baseUrl optional', () => {
     `)
   })
 })
+
+/**
+ * Cloudflare Workers KV as seen from separate edge locations. Writes land in
+ * one central store (last write wins); each location then serves what it
+ * last read or wrote for `cacheTtl` ms before going back to the central
+ * store, like KV's default 60s read cache.
+ */
+function cloudflareKv(options: { cacheTtl: number }) {
+  const { cacheTtl } = options
+  const central = new Map<string, string>()
+
+  function location(): Store.cloudflare.Parameters {
+    const cache = new Map<string, { cachedAt: number; value: string | undefined }>()
+    function read(key: string) {
+      const cached = cache.get(key)
+      if (cached && Date.now() - cached.cachedAt < cacheTtl) return cached.value
+      const value = central.get(key)
+      cache.set(key, { cachedAt: Date.now(), value })
+      return value
+    }
+    function write(key: string, value: string | undefined) {
+      if (value === undefined) central.delete(key)
+      else central.set(key, value)
+      cache.set(key, { cachedAt: Date.now(), value })
+    }
+    return {
+      async delete(key) {
+        write(key, undefined)
+      },
+      async get(key) {
+        const value = read(key)
+        return value === undefined ? null : JSON.parse(value)
+      },
+      async put(key, value) {
+        write(key, value)
+      },
+    }
+  }
+
+  return { location }
+}
+
+/**
+ * Serves the host the way `accounts/server`'s `Handler.deviceCode` does for
+ * a wallet: every HTTP request gets a fresh transport and `Wata` session,
+ * and the approval page submits the wallet's RPC result as JSON.
+ */
+function walletHost(options: { pollingInterval: number; store: Store.Store }) {
+  const { pollingInterval, store } = options
+  return async (request: Request): Promise<Response> => {
+    const results = new Map<number | string, unknown>()
+    const responded = Promise.withResolvers<void>()
+    const wata = HostWata.create({
+      transports: [
+        hostDeviceCode({
+          baseUrl: 'https://wallet.example',
+          html: {
+            async authenticate({ actions, request }) {
+              const body = (await request.json()) as { result: unknown; user_code: string }
+              const record = await actions.get(body.user_code)
+              if (record?.status !== 'pending' || record.message.type !== 'rpc-requests')
+                return Response.json({ error: 'not_pending' }, { status: 409 })
+              const [pending] = record.message.payload as unknown as readonly {
+                id: number | string
+              }[]
+              results.set(pending!.id, body.result)
+              await actions.approve(body.user_code)
+              await responded.promise
+              return Response.json({ status: 'approved' })
+            },
+            render: ({ record }) =>
+              record
+                ? Response.json({ requests: record.message.payload, status: record.status })
+                : Response.json({ error: 'unknown_code' }, { status: 404 }),
+          },
+          path: '/auth/device',
+          pollingInterval,
+          store,
+        }),
+      ],
+    })
+    const session = wata.start()
+    session.onRequest(async (event) => {
+      await event.respond(results.get(event.id))
+      responded.resolve()
+    })
+    return await wata.fetch(request)
+  }
+}
+
+describe('eventually-consistent store', () => {
+  // `tempo wallet login --no-browser` on a headless host, approved from
+  // another device: the CLI's `/token` polls and the approval page reach the
+  // wallet through different Cloudflare locations sharing one KV namespace.
+  test('an approval from another device reaches a consumer polling through a different location', async () => {
+    const kv = cloudflareKv({ cacheTtl: 500 })
+    const pollingInterval = 25
+    const cliLocation = walletHost({ pollingInterval, store: Store.cloudflare(kv.location()) })
+    const approverLocation = walletHost({ pollingInterval, store: Store.cloudflare(kv.location()) })
+
+    let polls = 0
+    const session = Wata.create({
+      transports: [
+        deviceCode({
+          fetch: async (input, init) => {
+            const request = new Request(input, init)
+            if (new URL(request.url).pathname.endsWith('/token')) polls++
+            return await cliLocation(request)
+          },
+          pollingInterval,
+          url: 'https://wallet.example/auth/device',
+        }),
+      ],
+    }).start()
+    const prompted = Promise.withResolvers<{
+      userCode: string
+      verificationUri: string
+      verificationUriFull: string | undefined
+    }>()
+    session.onPrompt((prompt) => prompted.resolve(prompt))
+    // Like the `accounts` device-code adapter, give up after a fixed wait
+    // (5 minutes in the CLI).
+    const timeout = setTimeout(
+      () => void session.close(new Error('Timed out waiting for device code approval.')),
+      5_000,
+    )
+
+    const connecting = session.send({
+      method: 'wallet_connect',
+      params: [{ capabilities: { authorizeAccessKey: { expiry: 1, keyType: 'secp256k1' } } }],
+    })
+    connecting.catch(() => {})
+    const prompt = await prompted.promise
+
+    // The user approves a while after the code is printed, so the CLI's
+    // location is already caching the `pending` record.
+    while (polls < 3) await new Promise((resolve) => setTimeout(resolve, pollingInterval))
+
+    const page = await approverLocation(
+      new Request(prompt.verificationUriFull!, { headers: { accept: 'application/json' } }),
+    )
+    expect(await page.json()).toMatchInlineSnapshot(`
+      {
+        "requests": [
+          {
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "wallet_connect",
+            "params": [
+              {
+                "capabilities": {
+                  "authorizeAccessKey": {
+                    "expiry": 1,
+                    "keyType": "secp256k1",
+                  },
+                },
+              },
+            ],
+          },
+        ],
+        "status": "pending",
+      }
+    `)
+    const approval = await approverLocation(
+      new Request(prompt.verificationUri, {
+        body: JSON.stringify({
+          result: { accounts: [{ address: '0x0000000000000000000000000000000000000001' }] },
+          user_code: prompt.userCode,
+        }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      }),
+    )
+    expect({ body: await approval.json(), status: approval.status }).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "status": "approved",
+        },
+        "status": 200,
+      }
+    `)
+
+    try {
+      expect(await connecting).toMatchInlineSnapshot(`
+        {
+          "id": 1,
+          "result": {
+            "accounts": [
+              {
+                "address": "0x0000000000000000000000000000000000000001",
+              },
+            ],
+          },
+        }
+      `)
+    } finally {
+      clearTimeout(timeout)
+    }
+  }, 10_000)
+})
