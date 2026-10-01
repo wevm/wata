@@ -91,12 +91,6 @@ export type PendingRecord = {
   /** Epoch-ms expiry. */
   expiresAt: number
   /**
-   * Epoch-ms of the most recent `/token` poll for this `device_code`,
-   * used by the `slow_down` rate limiter (RFC 8628 §3.5). `undefined`
-   * before the first poll.
-   */
-  lastPolledAt?: number | undefined
-  /**
    * Inline {@link Discovery.Meta} supplied by the consumer at
    * `/register` time. Takes precedence over any `meta` resolved
    * lazily from `consumerUrl`. `undefined` when the consumer didn't
@@ -525,15 +519,17 @@ export function deviceCode(options: Options): DeviceCode {
       // `authorization_pending` returned when the consumer polls faster
       // than the advertised cadence. Heuristic: a poll arriving within
       // half of the registration `interval` of the previous poll for
-      // this `device_code` is "too fast". Always update `lastPolledAt`
+      // this `device_code` is "too fast". Always record the poll time
       // before responding so the next poll measures from this moment.
+      //
+      // The poll time lives under its own key: writing `record` back
+      // here would race `approve` / `send`, and on eventually-consistent
+      // stores (Cloudflare KV) a poll that read a stale `pending` copy
+      // would overwrite the approval for good.
       const now = Date.now()
-      const pollingIntervalMs = pollingInterval
-      const last = record.lastPolledAt
-      const tooFast = last !== undefined && now - last < pollingIntervalMs / 2
-      record.lastPolledAt = now
-      await store.set(deviceCodeKey(record.deviceCode), record)
-      await store.set(userCodeKey(record.userCode), record)
+      const last = await store.get<number>(polledAtKey(record.deviceCode))
+      const tooFast = last !== undefined && now - last < pollingInterval / 2
+      await store.set(polledAtKey(record.deviceCode), now, { ttl: expiresIn })
       if (tooFast) return c.json({ error: 'slow_down' }, { status: 400 })
       // RFC 8628 §3.5 — pending polls return `400` + the OAuth-style
       // `{ error: "authorization_pending" }`. The polling cadence is
@@ -655,7 +651,10 @@ export function deviceCode(options: Options): DeviceCode {
         throw new Transport.ClosedError(
           'pending device-code disappeared from store before response delivery',
         )
+      // `approve` already persisted `approved`; set it again so a stale
+      // read above can't write the response under `pending`.
       record.response = envelope
+      record.status = 'approved'
       await store.set(deviceCodeKey(record.deviceCode), record)
       await store.set(userCodeKey(record.userCode), record)
       // Single-exchange: the transport is now done. Mirror the consumer
@@ -677,6 +676,10 @@ function deviceCodeKey(deviceCode: string): string {
 
 function userCodeKey(userCode: string): string {
   return `user:${userCode.toUpperCase()}`
+}
+
+function polledAtKey(deviceCode: string): string {
+  return `polled:${deviceCode}`
 }
 
 function appendUserCode(verificationUri: string, userCode: string): string {
