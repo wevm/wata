@@ -21,6 +21,19 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Cache TypeScript build info
+        uses: actions/cache@v4
+        with:
+          path: |
+            src/**/*.tsbuildinfo
+            test/**/*.tsbuildinfo
+            examples/**/*.tsbuildinfo
+            playgrounds/**/*.tsbuildinfo
+            !**/node_modules/**
+          key: typescript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', '**/tsconfig*.json', '!**/node_modules/**') }}-${{ github.sha }}
+          restore-keys: |
+            typescript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', '**/tsconfig*.json', '!**/node_modules/**') }}-
+
       - name: Check types
         run: pnpm check:types
 

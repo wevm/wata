@@ -126,6 +126,8 @@
 
 ## Learned Workspace Facts
 
+- **CI caches pnpm packages and incremental TypeScript state** — keep installs frozen and preserve per-project `.tsbuildinfo` files across runs; always run type checks after restoring the cache so changed inputs are validated.
+
 - **Browser CI uses the hosted Ubuntu 24.04 shared libraries** — install only Playwright's Chromium headless shell; avoid `install-deps` / `--with-deps`, which run apt on every job. Revalidate browser launches when changing the runner image or Playwright version.
 
 - **Expo/Metro should get built entrypoints via `react-native` export conditions** — React Native consumers may resolve package `exports` before `default`, and loading `src/*.ts` directly can fail on `.js`-suffixed relative imports. For mobile consumers, add a `react-native` condition that points at `dist/*` entrypoints.
