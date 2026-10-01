@@ -30,9 +30,9 @@ jobs:
             examples/**/*.tsbuildinfo
             playgrounds/**/*.tsbuildinfo
             !**/node_modules/**
-          key: typescript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', '**/tsconfig*.json', '!**/node_modules/**') }}-${{ github.sha }}
+          key: typescript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
-            typescript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', '**/tsconfig*.json', '!**/node_modules/**') }}-
+            typescript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Check types
         run: pnpm check:types
