@@ -21,6 +21,20 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Cache TypeScript build info
+        uses: actions/cache@v4
+        with:
+          path: |
+            src/*.tsbuildinfo
+            test/*.tsbuildinfo
+            examples/*/*.tsbuildinfo
+            examples/*/*/*.tsbuildinfo
+            playgrounds/*/*.tsbuildinfo
+            playgrounds/*/*/*.tsbuildinfo
+          key: typescript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            typescript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
       - name: Check types
         run: pnpm check:types
 
@@ -41,7 +55,8 @@ jobs:
 
   test-browser:
     name: Test (browser)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
@@ -60,15 +75,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+          key: playwright-ubuntu-24.04-${{ runner.arch }}-headless-${{ steps.playwright-version.outputs.version }}
 
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Install Playwright system deps only
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: pnpm exec playwright install-deps chromium
+        timeout-minutes: 3
+        # The hosted Ubuntu image includes Chromium's shared libraries.
+        run: pnpm exec playwright install --only-shell chromium
 
       - name: Run browser tests
         run: pnpm test:browser --bail=1

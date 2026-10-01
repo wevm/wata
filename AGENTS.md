@@ -126,6 +126,10 @@
 
 ## Learned Workspace Facts
 
+- **CI caches pnpm packages and incremental TypeScript state** — keep installs frozen and preserve per-project `.tsbuildinfo` files across runs; always run type checks after restoring the cache so changed inputs are validated.
+
+- **Browser CI uses the hosted Ubuntu 24.04 shared libraries** — install only Playwright's Chromium headless shell; avoid `install-deps` / `--with-deps`, which run apt on every job. Revalidate browser launches when changing the runner image or Playwright version.
+
 - **Expo/Metro should get built entrypoints via `react-native` export conditions** — React Native consumers may resolve package `exports` before `default`, and loading `src/*.ts` directly can fail on `.js`-suffixed relative imports. For mobile consumers, add a `react-native` condition that points at `dist/*` entrypoints.
 - **Expo playgrounds under `pnpm` need a local app entry** — relying on Expo's default `expo/AppEntry` can resolve `../../App` from the symlinked package-store path instead of the playground directory. Set a local `main` (for example `./index.js`) and register the root component there.
 - **`zile dev` symlinked `dist/*` is not Metro-safe** — when local `dist/*.js` entrypoints symlink back to `src/*.ts`, Metro will follow them and choke on `.js`-suffixed relative imports inside source. For React Native playgrounds in this workspace, use a local Metro resolver shim (or real built files) instead of assuming symlinked `dist` is consumable.

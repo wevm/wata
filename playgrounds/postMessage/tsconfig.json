@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "incremental": true,
     "module": "esnext",
     "moduleResolution": "bundler",
     "target": "esnext",
